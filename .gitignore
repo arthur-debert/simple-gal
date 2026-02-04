@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Coverage files
+lcov.info
+coverage/
+*.profraw
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development
+.envrc
+.direnv/
+local
+
+# Specs test artifacts
+specs/**/*.ast.*
+specs/**/*.treeviz
+specs/**/*.treeviz.*
+.padz
