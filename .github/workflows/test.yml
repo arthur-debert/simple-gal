@@ -16,22 +16,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Cache apt packages
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        id: apt-cache
-        with:
-          path: |
-            /var/cache/apt/archives
-            /var/lib/apt/lists
-          key: ${{ runner.os }}-apt-imagemagick-v1
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick webp libavif-bin
-          # Verify ImageMagick is working
-          magick -version
+          # Verify ImageMagick is working (Ubuntu uses 'convert' not 'magick')
+          convert -version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
