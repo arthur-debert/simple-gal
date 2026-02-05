@@ -359,11 +359,51 @@ fn generate_nav(items: &[NavItem], current_path: &str) -> String {
                     title = html_escape(&item.title),
                 )
             } else {
-                let children_html = generate_nav(&item.children, current_path);
+                let children_html = generate_nav_list(&item.children, current_path);
                 format!(
                     r#"<li{class}>
                         <span class="nav-group">{title}</span>
-                        <ul>{children}</ul>
+                        {children}
+                    </li>"#,
+                    class = class,
+                    title = html_escape(&item.title),
+                    children = children_html,
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Wrap in details/summary for collapsible menu
+    format!(
+        r#"<details class="nav-menu">
+            <summary>Menu</summary>
+            <ul>{}</ul>
+        </details>"#,
+        items_html
+    )
+}
+
+fn generate_nav_list(items: &[NavItem], current_path: &str) -> String {
+    let items_html: String = items
+        .iter()
+        .map(|item| {
+            let is_current = item.path == current_path || current_path.starts_with(&format!("{}/", item.path));
+            let class = if is_current { r#" class="current""# } else { "" };
+
+            if item.children.is_empty() {
+                format!(
+                    r#"<li{class}><a href="/{path}/">{title}</a></li>"#,
+                    class = class,
+                    path = item.path,
+                    title = html_escape(&item.title),
+                )
+            } else {
+                let children_html = generate_nav_list(&item.children, current_path);
+                format!(
+                    r#"<li{class}>
+                        <span class="nav-group">{title}</span>
+                        {children}
                     </li>"#,
                     class = class,
                     title = html_escape(&item.title),

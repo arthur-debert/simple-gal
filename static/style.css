@@ -74,11 +74,42 @@ img {
     left: 0;
     width: var(--nav-width);
     height: 100vh;
-    padding: 2rem 1.5rem;
+    padding: 1rem 1.5rem;
     border-right: 1px solid var(--color-border);
     overflow-y: auto;
     font-size: var(--font-size-small);
     z-index: 100;
+}
+
+.nav-menu {
+    user-select: none;
+}
+
+.nav-menu summary {
+    cursor: pointer;
+    padding: 0.5rem 0;
+    color: var(--color-text-muted);
+    font-weight: 500;
+    list-style: none;
+}
+
+.nav-menu summary::-webkit-details-marker {
+    display: none;
+}
+
+.nav-menu summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform var(--transition-speed);
+}
+
+.nav-menu[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.nav-menu > ul {
+    margin-top: 0.5rem;
+    padding-left: 0.5rem;
 }
 
 .site-nav ul {
@@ -280,22 +311,16 @@ body.image-view main {
         border-right: none;
         border-top: 1px solid var(--color-border);
         background: var(--color-bg);
-        transform: translateY(calc(100% - 3rem));
-        transition: transform var(--transition-speed);
         padding: 0.75rem 1rem;
     }
 
-    .site-nav:hover,
-    .site-nav:focus-within {
-        transform: translateY(0);
+    .nav-menu summary {
+        padding: 0.25rem 0;
     }
 
-    .site-nav::before {
-        content: "Menu";
-        display: block;
-        font-size: var(--font-size-small);
-        color: var(--color-text-muted);
-        margin-bottom: 0.5rem;
+    .nav-menu > ul {
+        max-height: 40vh;
+        overflow-y: auto;
     }
 
     main {
