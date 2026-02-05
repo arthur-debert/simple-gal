@@ -18,6 +18,13 @@ pub enum GenerateError {
 pub struct Manifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<Album>,
+    pub about: Option<AboutPage>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AboutPage {
+    pub title: String,
+    pub body: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -79,12 +86,20 @@ pub fn generate(
     fs::write(output_dir.join("index.html"), index_html)?;
     println!("Generated index.html");
 
+    // Generate about page if present
+    if let Some(about) = &manifest.about {
+        let about_html = generate_about_page(about, &manifest.navigation);
+        fs::write(output_dir.join("about.html"), about_html)?;
+        println!("Generated about.html");
+    }
+
     // Generate album pages
     for album in &manifest.albums {
         let album_dir = output_dir.join(&album.path);
         fs::create_dir_all(&album_dir)?;
 
-        let album_html = generate_album_page(album, &manifest.navigation);
+        let has_about = manifest.about.is_some();
+        let album_html = generate_album_page(album, &manifest.navigation, has_about);
         fs::write(album_dir.join("index.html"), album_html)?;
         println!("Generated {}/index.html", album.path);
 
@@ -97,7 +112,7 @@ pub fn generate(
             };
             let next = album.images.get(idx + 1);
 
-            let image_html = generate_image_page(album, image, prev, next, &manifest.navigation);
+            let image_html = generate_image_page(album, image, prev, next, &manifest.navigation, has_about);
             let image_filename = format!("{}.html", idx + 1);
             fs::write(album_dir.join(&image_filename), image_html)?;
         }
@@ -126,7 +141,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 fn generate_index(manifest: &Manifest) -> String {
-    let nav_html = generate_nav(&manifest.navigation, "");
+    let nav_html = generate_nav(&manifest.navigation, "", manifest.about.is_some());
 
     let albums_html: String = manifest
         .albums
@@ -172,8 +187,8 @@ fn generate_index(manifest: &Manifest) -> String {
     )
 }
 
-fn generate_album_page(album: &Album, navigation: &[NavItem]) -> String {
-    let nav_html = generate_nav(navigation, &album.path);
+fn generate_album_page(album: &Album, navigation: &[NavItem], has_about: bool) -> String {
+    let nav_html = generate_nav(navigation, &album.path, has_about);
 
     // Strip album path prefix since album page is inside the album directory
     let strip_prefix = |path: &str| -> String {
@@ -244,8 +259,9 @@ fn generate_image_page(
     prev: Option<&Image>,
     next: Option<&Image>,
     navigation: &[NavItem],
+    has_about: bool,
 ) -> String {
-    let nav_html = generate_nav(navigation, &album.path);
+    let nav_html = generate_nav(navigation, &album.path, has_about);
 
     // Strip album path prefix since image pages are inside the album directory
     let strip_prefix = |path: &str| -> String {
@@ -340,11 +356,7 @@ fn generate_image_page(
     )
 }
 
-fn generate_nav(items: &[NavItem], current_path: &str) -> String {
-    if items.is_empty() {
-        return String::new();
-    }
-
+fn generate_nav(items: &[NavItem], current_path: &str, has_about: bool) -> String {
     let items_html: String = items
         .iter()
         .map(|item| {
@@ -374,13 +386,22 @@ fn generate_nav(items: &[NavItem], current_path: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
 
+    // Add about link if present
+    let about_html = if has_about {
+        let class = if current_path == "about" { r#" class="current""# } else { "" };
+        format!(r#"<li{class}><a href="/about.html">About</a></li>"#, class = class)
+    } else {
+        String::new()
+    };
+
     // Wrap in details/summary for collapsible menu
     format!(
         r#"<details class="nav-menu">
             <summary>Menu</summary>
-            <ul>{}</ul>
+            <ul>{items}{about}</ul>
         </details>"#,
-        items_html
+        items = items_html,
+        about = about_html,
     )
 }
 
@@ -417,6 +438,46 @@ fn generate_nav_list(items: &[NavItem], current_path: &str) -> String {
     format!(r#"<ul>{}</ul>"#, items_html)
 }
 
+fn generate_about_page(about: &AboutPage, navigation: &[NavItem]) -> String {
+    let nav_html = generate_nav(navigation, "about", true);
+
+    // Convert newlines to paragraphs
+    let body_html: String = about
+        .body
+        .split("\n\n")
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| format!("<p>{}</p>", html_escape(p.trim())))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>{css}</style>
+</head>
+<body>
+    <nav class="site-nav">
+        {nav}
+    </nav>
+    <main class="about-page">
+        <article class="about-content">
+            <h1>{title}</h1>
+            {body}
+        </article>
+    </main>
+</body>
+</html>"#,
+        title = html_escape(&about.title),
+        css = CSS,
+        nav = nav_html,
+        body = body_html,
+    )
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -443,8 +504,16 @@ mod tests {
                 children: vec![],
             },
         ];
-        let html = generate_nav(&items, "");
+        let html = generate_nav(&items, "", false);
         assert!(html.contains("Album One"));
         assert!(html.contains("/010-one/"));
+    }
+
+    #[test]
+    fn nav_includes_about_when_present() {
+        let items = vec![];
+        let html = generate_nav(&items, "", true);
+        assert!(html.contains("About"));
+        assert!(html.contains("/about.html"));
     }
 }

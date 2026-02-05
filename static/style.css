@@ -221,6 +221,23 @@ main {
     opacity: 0.9;
 }
 
+/* ===== About Page ===== */
+.about-page {
+    max-width: 700px;
+}
+
+.about-content h1 {
+    font-size: var(--font-size-heading);
+    font-weight: 500;
+    margin-bottom: 1.5rem;
+}
+
+.about-content p {
+    margin-bottom: 1rem;
+    line-height: 1.7;
+    color: var(--color-text);
+}
+
 /* ===== Image Page ===== */
 body.image-view {
     overflow: hidden;

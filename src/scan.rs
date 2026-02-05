@@ -21,6 +21,15 @@ pub enum ScanError {
 pub struct Manifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<Album>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<AboutPage>,
+}
+
+/// About page content
+#[derive(Debug, Serialize)]
+pub struct AboutPage {
+    pub title: String,
+    pub body: String,
 }
 
 /// Navigation tree item (only numbered directories)
@@ -60,10 +69,31 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
 
     scan_directory(root, root, &mut albums, &mut nav_items)?;
 
+    // Check for about page
+    let about = parse_about_page(root)?;
+
     Ok(Manifest {
         navigation: nav_items,
         albums,
+        about,
     })
+}
+
+/// Parse about.txt file if it exists
+/// Format: First line is title, rest is body
+fn parse_about_page(root: &Path) -> Result<Option<AboutPage>, ScanError> {
+    let about_path = root.join("about.txt");
+    if !about_path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&about_path)?;
+    let mut lines = content.lines();
+
+    let title = lines.next().unwrap_or("About").trim().to_string();
+    let body = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+
+    Ok(Some(AboutPage { title, body }))
 }
 
 fn scan_directory(
