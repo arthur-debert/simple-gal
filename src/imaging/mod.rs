@@ -13,6 +13,6 @@ mod params;
 
 pub use backend::{BackendError, Dimensions, ImageBackend, ImageMagickBackend};
 pub use operations::{
-    create_responsive_images, create_thumbnail, get_dimensions, ResponsiveConfig, ThumbnailConfig,
+    ResponsiveConfig, ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
 pub use params::{Quality, Sharpening};

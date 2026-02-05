@@ -174,28 +174,40 @@ mod tests {
     fn fill_wider_source_to_portrait_target() {
         // 800x600 (4:3) → 400x500 target
         // Source is wider, so height matches: 500, width = 500 * (4/3) = 667
-        assert_eq!(calculate_fill_dimensions((800, 600), (400, 500)), (667, 500));
+        assert_eq!(
+            calculate_fill_dimensions((800, 600), (400, 500)),
+            (667, 500)
+        );
     }
 
     #[test]
     fn fill_taller_source_to_landscape_target() {
         // 600x800 (3:4) → 500x400 target
         // Source is taller, so width matches: 500, height = 500 * (4/3) = 667
-        assert_eq!(calculate_fill_dimensions((600, 800), (500, 400)), (500, 667));
+        assert_eq!(
+            calculate_fill_dimensions((600, 800), (500, 400)),
+            (500, 667)
+        );
     }
 
     #[test]
     fn fill_same_aspect_ratio() {
         // 800x600 (4:3) → 400x300 target (also 4:3)
         // Perfect match
-        assert_eq!(calculate_fill_dimensions((800, 600), (400, 300)), (400, 300));
+        assert_eq!(
+            calculate_fill_dimensions((800, 600), (400, 300)),
+            (400, 300)
+        );
     }
 
     #[test]
     fn fill_square_source_to_portrait() {
         // 400x400 (1:1) → 200x300 target
         // Source is wider (1:1 > 2:3), height matches: 300, width = 300
-        assert_eq!(calculate_fill_dimensions((400, 400), (200, 300)), (300, 300));
+        assert_eq!(
+            calculate_fill_dimensions((400, 400), (200, 300)),
+            (300, 300)
+        );
     }
 
     // =========================================================================

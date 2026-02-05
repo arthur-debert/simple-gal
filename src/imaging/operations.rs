@@ -5,8 +5,8 @@
 
 use super::backend::{BackendError, ImageBackend};
 use super::calculations::{
-    calculate_fill_dimensions, calculate_responsive_sizes, calculate_thumbnail_dimensions,
-    ResponsiveSize,
+    ResponsiveSize, calculate_fill_dimensions, calculate_responsive_sizes,
+    calculate_thumbnail_dimensions,
 };
 use super::params::{Quality, ResizeParams, Sharpening, ThumbnailParams};
 use std::path::Path;
@@ -171,8 +171,8 @@ pub fn create_thumbnail(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::imaging::backend::tests::{MockBackend, RecordedOp};
     use crate::imaging::Dimensions;
+    use crate::imaging::backend::tests::{MockBackend, RecordedOp};
 
     #[test]
     fn get_dimensions_calls_backend() {

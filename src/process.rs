@@ -45,8 +45,8 @@
 
 use crate::config::SiteConfig;
 use crate::imaging::{
-    create_responsive_images, create_thumbnail, get_dimensions, BackendError, ImageBackend,
-    ImageMagickBackend, Quality, ResponsiveConfig, Sharpening, ThumbnailConfig,
+    BackendError, ImageBackend, ImageMagickBackend, Quality, ResponsiveConfig, Sharpening,
+    ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -468,8 +468,8 @@ mod tests {
     // Process with mock backend tests (no ImageMagick required)
     // =========================================================================
 
-    use crate::imaging::backend::tests::MockBackend;
     use crate::imaging::Dimensions;
+    use crate::imaging::backend::tests::MockBackend;
 
     fn create_test_manifest(tmp: &Path) -> PathBuf {
         let manifest = r##"{

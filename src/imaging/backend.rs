@@ -94,12 +94,12 @@ impl ImageBackend for ImageMagickBackend {
             )));
         }
 
-        let width: u32 = parts[0].parse().map_err(|_| {
-            BackendError::InvalidOutput(format!("Invalid width: {}", parts[0]))
-        })?;
-        let height: u32 = parts[1].parse().map_err(|_| {
-            BackendError::InvalidOutput(format!("Invalid height: {}", parts[1]))
-        })?;
+        let width: u32 = parts[0]
+            .parse()
+            .map_err(|_| BackendError::InvalidOutput(format!("Invalid width: {}", parts[0])))?;
+        let height: u32 = parts[1]
+            .parse()
+            .map_err(|_| BackendError::InvalidOutput(format!("Invalid height: {}", parts[1])))?;
 
         Ok(Dimensions { width, height })
     }
