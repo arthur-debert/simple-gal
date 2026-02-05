@@ -6,6 +6,13 @@
     const prevUrl = zones.dataset.prev;
     const nextUrl = zones.dataset.next;
 
+    // Apply navigation direction class for view transitions
+    const navDirection = sessionStorage.getItem('nav-direction');
+    if (navDirection) {
+        document.documentElement.classList.add('nav-' + navDirection);
+        sessionStorage.removeItem('nav-direction');
+    }
+
     // Click navigation
     document.addEventListener('click', function(e) {
         // Ignore clicks on nav, links, etc.
@@ -13,20 +20,20 @@
 
         const x = e.clientX / window.innerWidth;
         if (x < 0.3) {
-            navigate(prevUrl);
+            navigate(prevUrl, 'back');
         } else if (x > 0.7) {
-            navigate(nextUrl);
+            navigate(nextUrl, 'forward');
         }
     });
 
     // Keyboard navigation
     document.addEventListener('keydown', function(e) {
         if (e.key === 'ArrowLeft' || e.key === 'h') {
-            navigate(prevUrl);
+            navigate(prevUrl, 'back');
         } else if (e.key === 'ArrowRight' || e.key === 'l') {
-            navigate(nextUrl);
+            navigate(nextUrl, 'forward');
         } else if (e.key === 'Escape') {
-            navigate('index.html');
+            navigate('index.html', 'back');
         }
     });
 
@@ -50,9 +57,9 @@
         // Only trigger if horizontal swipe is dominant
         if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
             if (deltaX > 0) {
-                navigate(prevUrl);
+                navigate(prevUrl, 'back');
             } else {
-                navigate(nextUrl);
+                navigate(nextUrl, 'forward');
             }
         }
     }, { passive: true });
@@ -70,8 +77,12 @@
     preload(prevUrl);
     preload(nextUrl);
 
-    function navigate(url) {
+    function navigate(url, direction) {
         if (url) {
+            // Store direction for the next page to pick up
+            if (direction) {
+                sessionStorage.setItem('nav-direction', direction);
+            }
             window.location.href = url;
         }
     }

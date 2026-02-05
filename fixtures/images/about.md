@@ -1,4 +1,4 @@
-About This Gallery
+# About This Gallery
 
 This is a sample photography portfolio built with LightTable.
 

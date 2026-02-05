@@ -1,5 +1,85 @@
 /* LightTable - Minimal Photo Gallery Styles */
 
+/* ===== View Transitions ===== */
+@view-transition {
+    navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation-duration: 0.25s;
+}
+
+/* Fade transition for page content */
+::view-transition-old(root) {
+    animation: fade-out 0.25s ease-out;
+}
+
+::view-transition-new(root) {
+    animation: fade-in 0.25s ease-in;
+}
+
+@keyframes fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Header stays in place during transitions */
+::view-transition-old(header),
+::view-transition-new(header) {
+    animation: none;
+}
+
+/* Main content slides and fades */
+::view-transition-old(main-content) {
+    animation: slide-out-left 0.25s ease-out;
+}
+
+::view-transition-new(main-content) {
+    animation: slide-in-right 0.25s ease-out;
+}
+
+@keyframes slide-out-left {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(-20px); }
+}
+
+@keyframes slide-in-right {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slide-out-right {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(20px); }
+}
+
+@keyframes slide-in-left {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+/* Reverse animation direction when navigating back */
+.nav-back::view-transition-old(main-content) {
+    animation: slide-out-right 0.25s ease-out;
+}
+
+.nav-back::view-transition-new(main-content) {
+    animation: slide-in-left 0.25s ease-out;
+}
+
+/* Disable transitions for users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    @view-transition {
+        navigation: none;
+    }
+}
+
 /* ===== Reset ===== */
 *, *::before, *::after {
     box-sizing: border-box;
@@ -8,14 +88,8 @@
 }
 
 /* ===== CSS Custom Properties ===== */
+/* Note: Color variables (--color-*) are generated from config.toml */
 :root {
-    --color-bg: #ffffff;
-    --color-text: #111111;
-    --color-text-muted: #666666;
-    --color-border: #e0e0e0;
-    --color-link: #333333;
-    --color-link-hover: #000000;
-
     --frame-width: clamp(1rem, 3vw, 2.5rem);
     --header-height: 3rem;
     --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -25,17 +99,6 @@
 
     --thumbnail-gap: 1rem;
     --transition-speed: 0.2s;
-}
-
-@media (prefers-color-scheme: dark) {
-    :root {
-        --color-bg: #0a0a0a;
-        --color-text: #eeeeee;
-        --color-text-muted: #999999;
-        --color-border: #333333;
-        --color-link: #cccccc;
-        --color-link-hover: #ffffff;
-    }
 }
 
 /* ===== Base ===== */
@@ -82,6 +145,7 @@ img {
     background: var(--color-bg);
     font-size: var(--font-size-small);
     z-index: 100;
+    view-transition-name: header;
 }
 
 /* ===== Breadcrumb ===== */
@@ -167,6 +231,7 @@ main {
     margin-top: var(--header-height);
     padding: 2rem;
     min-height: calc(100vh - var(--header-height));
+    view-transition-name: main-content;
 }
 
 /* ===== Index Page ===== */

@@ -4,11 +4,11 @@ LightTable requires these system-level tools for image processing.
 
 ## Required
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| ImageMagick | 7.x | Resizing, format conversion, EXIF handling |
-| libavif | 1.x | AVIF encoding (via ImageMagick) |
-| libwebp | 1.x | WebP encoding (via ImageMagick) |
+| Tool | Commands Used | Purpose |
+|------|---------------|---------|
+| ImageMagick | `convert`, `identify` | Resizing, format conversion, dimension detection |
+| libavif | - | AVIF encoding (via ImageMagick) |
+| libwebp | - | WebP encoding (via ImageMagick) |
 
 ## Installation
 
@@ -34,12 +34,24 @@ sudo pacman -S imagemagick libwebp libavif
 ### Verify Installation
 
 ```bash
-# Check ImageMagick with AVIF/WebP support
-magick -list format | grep -E 'AVIF|WEBP'
+# Check required commands exist
+convert -version
+identify -version
+
+# Check AVIF/WebP support
+convert -list format | grep -E 'AVIF|WEBP'
 ```
 
 Expected output should show both AVIF and WEBP formats.
 
+## Automated Installation
+
+Use the provided script which handles detection and verification:
+
+```bash
+./scripts/install-deps.sh
+```
+
 ## GitHub Actions
 
-The workflow uses `scripts/install-deps.sh` which handles Ubuntu installation.
+The CI workflow installs dependencies via apt and verifies the `convert` command.

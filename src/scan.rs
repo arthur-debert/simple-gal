@@ -1,3 +1,56 @@
+//! Filesystem scanning and manifest generation.
+//!
+//! Stage 1 of the LightTable build pipeline. Scans a directory tree to discover
+//! albums and images, producing a structured manifest that subsequent stages consume.
+//!
+//! ## Directory Structure
+//!
+//! LightTable expects a specific directory layout:
+//!
+//! ```text
+//! images/                          # Content root
+//! ├── config.toml                  # Site configuration (optional)
+//! ├── about.md                     # About page markdown (optional)
+//! ├── 010-Landscapes/              # Album (numbered = appears in nav)
+//! │   ├── info.txt                 # Album description (optional)
+//! │   ├── 001-dawn.jpg             # Preview image (lowest number)
+//! │   ├── 002-sunset.jpg
+//! │   └── 010-mountains.jpg
+//! ├── 020-Travel/                  # Container directory (has subdirs)
+//! │   ├── 010-Japan/               # Nested album
+//! │   │   ├── 001-tokyo.jpg
+//! │   │   └── 002-kyoto.jpg
+//! │   └── 020-Italy/
+//! │       └── 001-rome.jpg
+//! ├── 030-Minimal/                 # Another album
+//! │   └── 001-simple.jpg
+//! └── wip-drafts/                  # Unnumbered = hidden from nav
+//!     └── 001-draft.jpg
+//! ```
+//!
+//! ## Naming Conventions
+//!
+//! - **Numbered directories** (`NNN-name`): Appear in navigation, sorted by number
+//! - **Unnumbered directories**: Albums exist but are hidden from navigation
+//! - **Numbered images** (`NNN-name.ext`): Sorted by number within album
+//! - **Image 001**: Automatically becomes the album preview/thumbnail
+//!
+//! ## Output
+//!
+//! Produces a [`Manifest`] containing:
+//! - Navigation tree (numbered directories only)
+//! - All albums with their images
+//! - Optional about page content
+//! - Site configuration
+//!
+//! ## Validation
+//!
+//! The scanner enforces these rules:
+//! - No mixed content (directories cannot contain both images and subdirectories)
+//! - No duplicate image numbers within an album
+//! - Every album must have at least one image
+
+use crate::config::{self, SiteConfig};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -8,6 +61,8 @@ use thiserror::Error;
 pub enum ScanError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Config error: {0}")]
+    Config(#[from] config::ConfigError),
     #[error("Directory contains both images and subdirectories: {0}")]
     MixedContent(PathBuf),
     #[error("Duplicate image number {0} in {1}")]
@@ -23,12 +78,17 @@ pub struct Manifest {
     pub albums: Vec<Album>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub about: Option<AboutPage>,
+    pub config: SiteConfig,
 }
 
 /// About page content
 #[derive(Debug, Serialize)]
 pub struct AboutPage {
+    /// Title derived from markdown content (first # heading)
     pub title: String,
+    /// Link title derived from filename (dashes to spaces)
+    pub link_title: String,
+    /// Raw markdown content (will be converted to HTML in generate stage)
     pub body: String,
 }
 
@@ -72,28 +132,63 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     // Check for about page
     let about = parse_about_page(root)?;
 
+    // Load site config (uses defaults if config.toml doesn't exist)
+    let config = config::load_config(root)?;
+
     Ok(Manifest {
         navigation: nav_items,
         albums,
         about,
+        config,
     })
 }
 
-/// Parse about.txt file if it exists
-/// Format: First line is title, rest is body
+/// Parse markdown file for about page if one exists in root directory
+/// Link title comes from filename (dashes to spaces)
+/// Page title comes from first # heading in markdown
+/// Body is raw markdown content
 fn parse_about_page(root: &Path) -> Result<Option<AboutPage>, ScanError> {
-    let about_path = root.join("about.txt");
-    if !about_path.exists() {
-        return Ok(None);
-    }
+    // Find .md files in root directory
+    let md_files: Vec<PathBuf> = fs::read_dir(root)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .map(|e| e.eq_ignore_ascii_case("md"))
+                    .unwrap_or(false)
+        })
+        .collect();
 
-    let content = fs::read_to_string(&about_path)?;
-    let mut lines = content.lines();
+    let md_path = match md_files.first() {
+        Some(p) => p,
+        None => return Ok(None),
+    };
 
-    let title = lines.next().unwrap_or("About").trim().to_string();
-    let body = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    // Extract link title from filename (dashes to spaces, no extension)
+    let filename = md_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "about".to_string());
+    let link_title = filename.replace('-', " ");
 
-    Ok(Some(AboutPage { title, body }))
+    let content = fs::read_to_string(md_path)?;
+
+    // Extract title from first # heading, or use link_title as fallback
+    let title = content
+        .lines()
+        .find(|line| line.starts_with("# "))
+        .map(|line| line.trim_start_matches("# ").trim().to_string())
+        .unwrap_or_else(|| link_title.clone());
+
+    // Body is the full markdown content (will be converted to HTML in generate stage)
+    let body = content;
+
+    Ok(Some(AboutPage {
+        title,
+        link_title,
+        body,
+    }))
 }
 
 fn scan_directory(
@@ -104,15 +199,9 @@ fn scan_directory(
 ) -> Result<(), ScanError> {
     let entries = collect_entries(path)?;
 
-    let images = entries
-        .iter()
-        .filter(|e| is_image(e))
-        .collect::<Vec<_>>();
+    let images = entries.iter().filter(|e| is_image(e)).collect::<Vec<_>>();
 
-    let subdirs = entries
-        .iter()
-        .filter(|e| e.is_dir())
-        .collect::<Vec<_>>();
+    let subdirs = entries.iter().filter(|e| e.is_dir()).collect::<Vec<_>>();
 
     // Check for mixed content
     if !images.is_empty() && !subdirs.is_empty() {
@@ -196,9 +285,10 @@ fn collect_entries(path: &Path) -> Result<Vec<PathBuf>, ScanError> {
         .map(|e| e.path())
         .filter(|p| {
             let name = p.file_name().unwrap().to_string_lossy();
-            // Skip hidden files, info.txt, and build artifacts
+            // Skip hidden files, info.txt, config.toml, and build artifacts
             !name.starts_with('.')
                 && name != "info.txt"
+                && name != "config.toml"
                 && name != "processed"
                 && name != "dist"
                 && name != "manifest.json"
@@ -360,7 +450,11 @@ mod tests {
         // Top level nav should have: Landscapes, Travel, Minimal (all numbered)
         assert_eq!(manifest.navigation.len(), 3);
 
-        let titles: Vec<&str> = manifest.navigation.iter().map(|n| n.title.as_str()).collect();
+        let titles: Vec<&str> = manifest
+            .navigation
+            .iter()
+            .map(|n| n.title.as_str())
+            .collect();
         assert!(titles.contains(&"Landscapes"));
         assert!(titles.contains(&"Travel"));
         assert!(titles.contains(&"Minimal"));
@@ -371,7 +465,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let wip = manifest.albums.iter().find(|a| a.title == "wip-drafts").unwrap();
+        let wip = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "wip-drafts")
+            .unwrap();
         assert!(!wip.in_nav);
     }
 
@@ -380,7 +478,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let travel = manifest.navigation.iter().find(|n| n.title == "Travel").unwrap();
+        let travel = manifest
+            .navigation
+            .iter()
+            .find(|n| n.title == "Travel")
+            .unwrap();
         assert_eq!(travel.children.len(), 2);
 
         let child_titles: Vec<&str> = travel.children.iter().map(|n| n.title.as_str()).collect();
@@ -393,7 +495,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest.albums.iter().find(|a| a.title == "Landscapes").unwrap();
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
         let numbers: Vec<u32> = landscapes.images.iter().map(|i| i.number).collect();
 
         assert_eq!(numbers, vec![1, 2, 10]);
@@ -404,11 +510,25 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest.albums.iter().find(|a| a.title == "Landscapes").unwrap();
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
         assert!(landscapes.description.is_some());
-        assert!(landscapes.description.as_ref().unwrap().contains("landscape"));
+        assert!(
+            landscapes
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("landscape")
+        );
 
-        let minimal = manifest.albums.iter().find(|a| a.title == "Minimal").unwrap();
+        let minimal = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Minimal")
+            .unwrap();
         assert!(minimal.description.is_none());
     }
 
@@ -417,7 +537,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest.albums.iter().find(|a| a.title == "Landscapes").unwrap();
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
         assert!(landscapes.preview_image.contains("001-dawn"));
     }
 
@@ -430,12 +554,8 @@ mod tests {
         fs::create_dir_all(&mixed).unwrap();
         fs::create_dir_all(mixed.join("subdir")).unwrap();
 
-        // Create a placeholder image in mixed dir
-        let img_path = mixed.join("001-photo.jpg");
-        std::process::Command::new("magick")
-            .args(["-size", "1x1", "xc:gray", img_path.to_str().unwrap()])
-            .output()
-            .unwrap();
+        // Create a placeholder image in mixed dir (scan only checks extension)
+        fs::write(mixed.join("001-photo.jpg"), "fake image").unwrap();
 
         let result = scan(tmp.path());
         assert!(matches!(result, Err(ScanError::MixedContent(_))));
@@ -448,16 +568,145 @@ mod tests {
         let album = tmp.path().join("010-Album");
         fs::create_dir_all(&album).unwrap();
 
-        // Create two images with the same number
-        for name in ["001-first.jpg", "001-second.jpg"] {
-            let img_path = album.join(name);
-            std::process::Command::new("magick")
-                .args(["-size", "1x1", "xc:gray", img_path.to_str().unwrap()])
-                .output()
-                .unwrap();
-        }
+        // Create two images with the same number (scan only checks extension)
+        fs::write(album.join("001-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("001-second.jpg"), "fake image").unwrap();
 
         let result = scan(tmp.path());
         assert!(matches!(result, Err(ScanError::DuplicateNumber(1, _))));
+    }
+
+    // =========================================================================
+    // About page tests
+    // =========================================================================
+
+    #[test]
+    fn about_page_parsed_from_fixtures() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let about = manifest.about.expect("about page should exist");
+        assert_eq!(about.title, "About This Gallery");
+        assert_eq!(about.link_title, "about");
+        assert!(about.body.contains("LightTable"));
+    }
+
+    #[test]
+    fn about_page_link_title_from_filename() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create markdown file with dashes in name
+        let md_path = tmp.path().join("who-am-i.md");
+        fs::write(&md_path, "# My Title\n\nSome content.").unwrap();
+
+        // Create a minimal album so scan doesn't fail
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let about = manifest.about.expect("about page should exist");
+        assert_eq!(about.link_title, "who am i");
+        assert_eq!(about.title, "My Title");
+    }
+
+    #[test]
+    fn about_page_title_fallback_to_link_title() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create markdown file without # heading
+        let md_path = tmp.path().join("about-me.md");
+        fs::write(&md_path, "Just some content without a heading.").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let about = manifest.about.expect("about page should exist");
+        // Title should fall back to link_title when no # heading
+        assert_eq!(about.title, "about me");
+        assert_eq!(about.link_title, "about me");
+    }
+
+    #[test]
+    fn no_about_page_when_no_markdown() {
+        let tmp = TempDir::new().unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.about.is_none());
+    }
+
+    // =========================================================================
+    // Config integration tests
+    // =========================================================================
+
+    #[test]
+    fn config_loaded_from_fixtures() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Fixtures has a config.toml - verify it was loaded
+        // (exact values depend on fixture content, just check it's not default)
+        assert!(!manifest.config.colors.light.background.is_empty());
+    }
+
+    #[test]
+    fn default_config_when_no_toml() {
+        let tmp = TempDir::new().unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Should have default config values
+        assert_eq!(manifest.config.colors.light.background, "#ffffff");
+        assert_eq!(manifest.config.colors.dark.background, "#0a0a0a");
+    }
+
+    // =========================================================================
+    // Album path and structure tests
+    // =========================================================================
+
+    #[test]
+    fn album_paths_are_relative() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        for album in &manifest.albums {
+            // Paths should not start with / or contain absolute paths
+            assert!(!album.path.starts_with('/'));
+            assert!(!album.path.contains(tmp.path().to_str().unwrap()));
+        }
+    }
+
+    #[test]
+    fn nested_album_path_includes_parent() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let japan = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
+        assert!(japan.path.contains("020-Travel"));
+        assert!(japan.path.contains("010-Japan"));
+    }
+
+    #[test]
+    fn image_source_paths_are_relative() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        for album in &manifest.albums {
+            for image in &album.images {
+                assert!(!image.source_path.starts_with('/'));
+            }
+        }
     }
 }

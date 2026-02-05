@@ -1,0 +1,92 @@
+//! Parameter types for image operations.
+//!
+//! These structs describe what to do, not how to do it.
+//! The backend interprets these and executes the actual commands.
+
+use std::path::PathBuf;
+
+/// Quality setting for lossy image encoding (1-100).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Quality(pub u32);
+
+impl Quality {
+    pub fn new(value: u32) -> Self {
+        Self(value.clamp(1, 100))
+    }
+
+    pub fn value(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for Quality {
+    fn default() -> Self {
+        Self(90)
+    }
+}
+
+/// Sharpening parameters (radius, sigma).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sharpening {
+    pub radius: f32,
+    pub sigma: f32,
+}
+
+impl Sharpening {
+    /// Light sharpening suitable for thumbnails.
+    pub fn light() -> Self {
+        Self {
+            radius: 0.0,
+            sigma: 0.5,
+        }
+    }
+}
+
+/// Parameters for a simple resize operation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResizeParams {
+    pub source: PathBuf,
+    pub output: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    pub quality: Quality,
+}
+
+/// Parameters for a thumbnail operation (resize + center crop).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThumbnailParams {
+    pub source: PathBuf,
+    pub output: PathBuf,
+    /// Fill dimensions (may exceed final size).
+    pub fill_width: u32,
+    pub fill_height: u32,
+    /// Final crop dimensions.
+    pub crop_width: u32,
+    pub crop_height: u32,
+    pub quality: Quality,
+    pub sharpening: Option<Sharpening>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quality_clamps_to_valid_range() {
+        assert_eq!(Quality::new(0).value(), 1);
+        assert_eq!(Quality::new(50).value(), 50);
+        assert_eq!(Quality::new(150).value(), 100);
+    }
+
+    #[test]
+    fn quality_default_is_90() {
+        assert_eq!(Quality::default().value(), 90);
+    }
+
+    #[test]
+    fn sharpening_light_values() {
+        let s = Sharpening::light();
+        assert_eq!(s.radius, 0.0);
+        assert_eq!(s.sigma, 0.5);
+    }
+}
