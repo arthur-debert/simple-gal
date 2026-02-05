@@ -1,3 +1,4 @@
+use crate::config::SiteConfig;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -53,6 +54,7 @@ pub struct InputManifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<InputAlbum>,
     pub about: Option<AboutPage>,
+    pub config: SiteConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -87,6 +89,7 @@ pub struct OutputManifest {
     pub albums: Vec<OutputAlbum>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub about: Option<AboutPage>,
+    pub config: SiteConfig,
 }
 
 #[derive(Debug, Serialize)]
@@ -215,6 +218,7 @@ pub fn process(
         navigation: input.navigation,
         albums: output_albums,
         about: input.about,
+        config: input.config,
     })
 }
 

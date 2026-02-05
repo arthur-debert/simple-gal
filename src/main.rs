@@ -1,3 +1,4 @@
+mod config;
 mod generate;
 mod process;
 mod scan;

@@ -1,3 +1,4 @@
+use crate::config::{self, SiteConfig};
 use pulldown_cmark::{html, Parser};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -20,6 +21,7 @@ pub struct Manifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<Album>,
     pub about: Option<AboutPage>,
+    pub config: SiteConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,7 +72,7 @@ pub struct GeneratedVariant {
     pub height: u32,
 }
 
-const CSS: &str = include_str!("../static/style.css");
+const CSS_STATIC: &str = include_str!("../static/style.css");
 const JS: &str = include_str!("../static/nav.js");
 
 pub fn generate(
@@ -81,19 +83,23 @@ pub fn generate(
     let manifest_content = fs::read_to_string(manifest_path)?;
     let manifest: Manifest = serde_json::from_str(&manifest_content)?;
 
+    // Generate CSS with colors from config
+    let color_css = config::generate_color_css(&manifest.config.colors);
+    let css = format!("{}\n\n{}", color_css, CSS_STATIC);
+
     fs::create_dir_all(output_dir)?;
 
     // Copy processed images to output
     copy_dir_recursive(processed_dir, output_dir)?;
 
     // Generate index page
-    let index_html = generate_index(&manifest);
+    let index_html = generate_index(&manifest, &css);
     fs::write(output_dir.join("index.html"), index_html)?;
     println!("Generated index.html");
 
     // Generate about page if present
     if let Some(about) = &manifest.about {
-        let about_html = generate_about_page(about, &manifest.navigation);
+        let about_html = generate_about_page(about, &manifest.navigation, &css);
         fs::write(output_dir.join("about.html"), about_html)?;
         println!("Generated about.html");
     }
@@ -104,7 +110,7 @@ pub fn generate(
         let album_dir = output_dir.join(&album.path);
         fs::create_dir_all(&album_dir)?;
 
-        let album_html = generate_album_page(album, &manifest.navigation, about_link_title);
+        let album_html = generate_album_page(album, &manifest.navigation, about_link_title, &css);
         fs::write(album_dir.join("index.html"), album_html)?;
         println!("Generated {}/index.html", album.path);
 
@@ -117,7 +123,7 @@ pub fn generate(
             };
             let next = album.images.get(idx + 1);
 
-            let image_html = generate_image_page(album, image, prev, next, &manifest.navigation, about_link_title);
+            let image_html = generate_image_page(album, image, prev, next, &manifest.navigation, about_link_title, &css);
             let image_filename = format!("{}.html", idx + 1);
             fs::write(album_dir.join(&image_filename), image_html)?;
         }
@@ -145,7 +151,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn generate_index(manifest: &Manifest) -> String {
+fn generate_index(manifest: &Manifest, css: &str) -> String {
     let about_link_title = manifest.about.as_ref().map(|a| a.link_title.as_str());
     let nav_html = generate_nav(&manifest.navigation, "", about_link_title);
 
@@ -192,13 +198,13 @@ fn generate_index(manifest: &Manifest) -> String {
     </main>
 </body>
 </html>"#,
-        css = CSS,
+        css = css,
         nav = nav_html,
         albums = albums_html,
     )
 }
 
-fn generate_album_page(album: &Album, navigation: &[NavItem], about_link_title: Option<&str>) -> String {
+fn generate_album_page(album: &Album, navigation: &[NavItem], about_link_title: Option<&str>, css: &str) -> String {
     let nav_html = generate_nav(navigation, &album.path, about_link_title);
 
     // Strip album path prefix since album page is inside the album directory
@@ -262,7 +268,7 @@ fn generate_album_page(album: &Album, navigation: &[NavItem], about_link_title: 
 </body>
 </html>"#,
         title = html_escape(&album.title),
-        css = CSS,
+        css = css,
         nav = nav_html,
         description = description_html,
         thumbnails = thumbnails_html,
@@ -276,6 +282,7 @@ fn generate_image_page(
     next: Option<&Image>,
     navigation: &[NavItem],
     about_link_title: Option<&str>,
+    css: &str,
 ) -> String {
     let nav_html = generate_nav(navigation, &album.path, about_link_title);
 
@@ -362,7 +369,7 @@ fn generate_image_page(
 </html>"#,
         album_title = html_escape(&album.title),
         idx = image_idx,
-        css = CSS,
+        css = css,
         nav = nav_html,
         aspect_ratio = aspect_ratio,
         srcset_avif = srcset_avif,
@@ -456,7 +463,7 @@ fn generate_nav_list(items: &[NavItem], current_path: &str) -> String {
     format!(r#"<ul>{}</ul>"#, items_html)
 }
 
-fn generate_about_page(about: &AboutPage, navigation: &[NavItem]) -> String {
+fn generate_about_page(about: &AboutPage, navigation: &[NavItem], css: &str) -> String {
     let nav_html = generate_nav(navigation, "about", Some(&about.link_title));
 
     // Convert markdown to HTML using pulldown-cmark
@@ -490,7 +497,7 @@ fn generate_about_page(about: &AboutPage, navigation: &[NavItem]) -> String {
 </body>
 </html>"#,
         title = html_escape(&about.title),
-        css = CSS,
+        css = css,
         nav = nav_html,
         body = body_html,
     )

@@ -1,3 +1,4 @@
+use crate::config::{self, SiteConfig};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -8,6 +9,8 @@ use thiserror::Error;
 pub enum ScanError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Config error: {0}")]
+    Config(#[from] config::ConfigError),
     #[error("Directory contains both images and subdirectories: {0}")]
     MixedContent(PathBuf),
     #[error("Duplicate image number {0} in {1}")]
@@ -23,6 +26,7 @@ pub struct Manifest {
     pub albums: Vec<Album>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub about: Option<AboutPage>,
+    pub config: SiteConfig,
 }
 
 /// About page content
@@ -76,10 +80,14 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     // Check for about page
     let about = parse_about_page(root)?;
 
+    // Load site config (uses defaults if config.toml doesn't exist)
+    let config = config::load_config(root)?;
+
     Ok(Manifest {
         navigation: nav_items,
         albums,
         about,
+        config,
     })
 }
 
@@ -231,9 +239,10 @@ fn collect_entries(path: &Path) -> Result<Vec<PathBuf>, ScanError> {
         .map(|e| e.path())
         .filter(|p| {
             let name = p.file_name().unwrap().to_string_lossy();
-            // Skip hidden files, info.txt, and build artifacts
+            // Skip hidden files, info.txt, config.toml, and build artifacts
             !name.starts_with('.')
                 && name != "info.txt"
+                && name != "config.toml"
                 && name != "processed"
                 && name != "dist"
                 && name != "manifest.json"

@@ -1,0 +1,23 @@
+# LightTable Configuration
+# Place this file in your content root directory (same as your images)
+
+# Color scheme configuration
+# All colors are optional - defaults will be used for any missing values
+
+[colors.light]
+# Light mode colors (when prefers-color-scheme: light or no preference)
+background = "#ffffff"
+text = "#111111"
+text_muted = "#666666"    # Used for nav menu, breadcrumbs, captions
+border = "#e0e0e0"
+link = "#333333"
+link_hover = "#000000"
+
+[colors.dark]
+# Dark mode colors (when prefers-color-scheme: dark)
+background = "#0a0a0a"
+text = "#eeeeee"
+text_muted = "#999999"    # Used for nav menu, breadcrumbs, captions
+border = "#333333"
+link = "#cccccc"
+link_hover = "#ffffff"
