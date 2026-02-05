@@ -29,3 +29,8 @@ specs/**/*.ast.*
 specs/**/*.treeviz
 specs/**/*.treeviz.*
 .padz
+
+# LightTable build outputs
+dist/
+processed/
+manifest.json
