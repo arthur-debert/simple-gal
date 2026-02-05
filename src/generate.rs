@@ -248,11 +248,17 @@ fn site_header(breadcrumb: Markup, nav: Markup) -> Markup {
     }
 }
 
-/// Renders the navigation menu
+/// Renders the navigation menu (hamburger style, slides from right)
 pub fn render_nav(items: &[NavItem], current_path: &str, about_link_title: Option<&str>) -> Markup {
     html! {
-        details.nav-menu {
-            summary { "Menu" }
+        input.nav-toggle type="checkbox" id="nav-toggle";
+        label.nav-hamburger for="nav-toggle" {
+            span.hamburger-line {}
+            span.hamburger-line {}
+            span.hamburger-line {}
+        }
+        div.nav-panel {
+            label.nav-close for="nav-toggle" { "×" }
             ul {
                 @for item in items {
                     (render_nav_item(item, current_path))
