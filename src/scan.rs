@@ -1,3 +1,55 @@
+//! Filesystem scanning and manifest generation.
+//!
+//! Stage 1 of the LightTable build pipeline. Scans a directory tree to discover
+//! albums and images, producing a structured manifest that subsequent stages consume.
+//!
+//! ## Directory Structure
+//!
+//! LightTable expects a specific directory layout:
+//!
+//! ```text
+//! images/                          # Content root
+//! ├── config.toml                  # Site configuration (optional)
+//! ├── about.md                     # About page markdown (optional)
+//! ├── 010-Landscapes/              # Album (numbered = appears in nav)
+//! │   ├── info.txt                 # Album description (optional)
+//! │   ├── 001-dawn.jpg             # Preview image (lowest number)
+//! │   ├── 002-sunset.jpg
+//! │   └── 010-mountains.jpg
+//! ├── 020-Travel/                  # Container directory (has subdirs)
+//! │   ├── 010-Japan/               # Nested album
+//! │   │   ├── 001-tokyo.jpg
+//! │   │   └── 002-kyoto.jpg
+//! │   └── 020-Italy/
+//! │       └── 001-rome.jpg
+//! ├── 030-Minimal/                 # Another album
+//! │   └── 001-simple.jpg
+//! └── wip-drafts/                  # Unnumbered = hidden from nav
+//!     └── 001-draft.jpg
+//! ```
+//!
+//! ## Naming Conventions
+//!
+//! - **Numbered directories** (`NNN-name`): Appear in navigation, sorted by number
+//! - **Unnumbered directories**: Albums exist but are hidden from navigation
+//! - **Numbered images** (`NNN-name.ext`): Sorted by number within album
+//! - **Image 001**: Automatically becomes the album preview/thumbnail
+//!
+//! ## Output
+//!
+//! Produces a [`Manifest`] containing:
+//! - Navigation tree (numbered directories only)
+//! - All albums with their images
+//! - Optional about page content
+//! - Site configuration
+//!
+//! ## Validation
+//!
+//! The scanner enforces these rules:
+//! - No mixed content (directories cannot contain both images and subdirectories)
+//! - No duplicate image numbers within an album
+//! - Every album must have at least one image
+
 use crate::config::{self, SiteConfig};
 use serde::Serialize;
 use std::collections::BTreeMap;

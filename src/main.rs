@@ -1,3 +1,39 @@
+//! # LightTable
+//!
+//! A minimal static site generator for fine art photography portfolios.
+//!
+//! ## Build Pipeline
+//!
+//! LightTable processes images through a three-stage pipeline:
+//!
+//! ```text
+//! 1. Scan      →  manifest.json    (filesystem → structured data)
+//! 2. Process   →  processed/       (responsive sizes + thumbnails)
+//! 3. Generate  →  dist/            (final HTML site)
+//! ```
+//!
+//! Each stage is independent and produces a manifest file that the next stage consumes.
+//! This allows incremental builds and easy debugging.
+//!
+//! ## Usage
+//!
+//! ```bash
+//! # Full build (recommended)
+//! lighttable build ./images --output ./dist
+//!
+//! # Or run stages individually
+//! lighttable scan ./images
+//! lighttable process manifest.json --output processed
+//! lighttable generate processed/manifest.json --output dist
+//! ```
+//!
+//! ## Modules
+//!
+//! - [`config`] - Site configuration loaded from `config.toml`
+//! - [`scan`] - Stage 1: Filesystem scanning and manifest generation
+//! - [`process`] - Stage 2: Image processing (responsive sizes, thumbnails)
+//! - [`generate`] - Stage 3: HTML site generation
+
 mod config;
 mod generate;
 mod process;

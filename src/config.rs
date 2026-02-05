@@ -1,3 +1,54 @@
+//! Site configuration module.
+//!
+//! Handles loading and parsing the `config.toml` file from the content root directory.
+//! Configuration is optional - sensible defaults are used when no config file exists.
+//!
+//! ## Config File Location
+//!
+//! Place `config.toml` in the same directory as your images (the content root):
+//!
+//! ```text
+//! images/
+//! ├── config.toml          # Site configuration
+//! ├── about.md             # Optional about page
+//! ├── 010-Landscapes/
+//! │   └── ...
+//! └── 020-Portraits/
+//!     └── ...
+//! ```
+//!
+//! ## Configuration Options
+//!
+//! ```toml
+//! # All options are optional - defaults shown below
+//!
+//! [colors.light]
+//! background = "#ffffff"
+//! text = "#111111"
+//! text_muted = "#666666"    # Nav menu, breadcrumbs, captions
+//! border = "#e0e0e0"
+//! link = "#333333"
+//! link_hover = "#000000"
+//!
+//! [colors.dark]
+//! background = "#0a0a0a"
+//! text = "#eeeeee"
+//! text_muted = "#999999"
+//! border = "#333333"
+//! link = "#cccccc"
+//! link_hover = "#ffffff"
+//! ```
+//!
+//! ## Partial Configuration
+//!
+//! You can override just the values you want to change:
+//!
+//! ```toml
+//! # Only override the light mode background
+//! [colors.light]
+//! background = "#fafafa"
+//! ```
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;

@@ -1,3 +1,50 @@
+//! Image processing and responsive image generation.
+//!
+//! Stage 2 of the LightTable build pipeline. Takes the manifest from the scan stage
+//! and processes all images to generate responsive sizes and thumbnails.
+//!
+//! ## Dependencies
+//!
+//! Requires ImageMagick to be installed:
+//! - **ImageMagick 7** (preferred): Uses the `magick` command
+//! - **ImageMagick 6** (fallback): Uses the `convert` command
+//!
+//! ## Output Formats
+//!
+//! For each source image, generates:
+//! - **Responsive images**: Multiple sizes in AVIF and WebP formats
+//! - **Thumbnails**: Fixed aspect ratio crops for gallery grids
+//!
+//! ## Default Configuration
+//!
+//! ```text
+//! Responsive sizes: 800px, 1400px, 2080px (on the longer edge)
+//! Quality: 90%
+//! Thumbnail aspect: 4:5 (portrait)
+//! Thumbnail size: 400px (on the short edge)
+//! ```
+//!
+//! ## Output Structure
+//!
+//! ```text
+//! processed/
+//! ├── manifest.json              # Updated manifest with generated paths
+//! ├── 010-Landscapes/
+//! │   ├── 001-dawn-800.avif      # Responsive sizes
+//! │   ├── 001-dawn-800.webp
+//! │   ├── 001-dawn-1400.avif
+//! │   ├── 001-dawn-1400.webp
+//! │   ├── 001-dawn-2080.avif
+//! │   ├── 001-dawn-2080.webp
+//! │   └── 001-dawn-thumb.webp    # 4:5 center-cropped thumbnail
+//! └── ...
+//! ```
+//!
+//! ## Parallel Processing
+//!
+//! Images are processed in parallel using [rayon](https://docs.rs/rayon) for
+//! optimal performance on multi-core systems.
+
 use crate::config::SiteConfig;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
