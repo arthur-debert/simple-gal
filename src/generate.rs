@@ -171,9 +171,14 @@ fn generate_index(manifest: &Manifest) -> String {
     <style>{css}</style>
 </head>
 <body>
-    <nav class="site-nav">
-        {nav}
-    </nav>
+    <header class="site-header">
+        <nav class="breadcrumb">
+            <a href="/">Gallery</a>
+        </nav>
+        <nav class="site-nav">
+            {nav}
+        </nav>
+    </header>
     <main class="index-page">
         <div class="album-grid">
             {albums}
@@ -231,9 +236,14 @@ fn generate_album_page(album: &Album, navigation: &[NavItem], has_about: bool) -
     <style>{css}</style>
 </head>
 <body>
-    <nav class="site-nav">
-        {nav}
-    </nav>
+    <header class="site-header">
+        <nav class="breadcrumb">
+            <a href="/">Gallery</a> &rsaquo; {title}
+        </nav>
+        <nav class="site-nav">
+            {nav}
+        </nav>
+    </header>
     <main class="album-page">
         <header class="album-header">
             <h1>{title}</h1>
@@ -323,12 +333,14 @@ fn generate_image_page(
     <style>{css}</style>
 </head>
 <body class="image-view">
-    <nav class="site-nav">
-        {nav}
-    </nav>
-    <nav class="breadcrumb">
-        <a href="/">Home</a> &rsaquo; <a href="index.html">{album_title}</a>
-    </nav>
+    <header class="site-header">
+        <nav class="breadcrumb">
+            <a href="/">Gallery</a> &rsaquo; <a href="index.html">{album_title}</a>
+        </nav>
+        <nav class="site-nav">
+            {nav}
+        </nav>
+    </header>
     <main class="image-page">
         <figure class="image-frame" style="--aspect-ratio: {aspect_ratio};">
             <picture>
@@ -460,9 +472,14 @@ fn generate_about_page(about: &AboutPage, navigation: &[NavItem]) -> String {
     <style>{css}</style>
 </head>
 <body>
-    <nav class="site-nav">
-        {nav}
-    </nav>
+    <header class="site-header">
+        <nav class="breadcrumb">
+            <a href="/">Gallery</a> &rsaquo; {title}
+        </nav>
+        <nav class="site-nav">
+            {nav}
+        </nav>
+    </header>
     <main class="about-page">
         <article class="about-content">
             <h1>{title}</h1>

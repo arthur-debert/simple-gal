@@ -17,7 +17,7 @@
     --color-link-hover: #000000;
 
     --frame-width: clamp(1rem, 3vw, 2.5rem);
-    --nav-width: 200px;
+    --header-height: 3rem;
     --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --font-size-base: 16px;
     --font-size-small: 14px;
@@ -67,18 +67,39 @@ img {
     height: auto;
 }
 
-/* ===== Navigation ===== */
-.site-nav {
+/* ===== Top Header Bar ===== */
+.site-header {
     position: fixed;
     top: 0;
     left: 0;
-    width: var(--nav-width);
-    height: 100vh;
-    padding: 1rem 1.5rem;
-    border-right: 1px solid var(--color-border);
-    overflow-y: auto;
+    right: 0;
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2rem;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
     font-size: var(--font-size-small);
     z-index: 100;
+}
+
+/* ===== Breadcrumb ===== */
+.breadcrumb {
+    color: var(--color-text-muted);
+}
+
+.breadcrumb a {
+    color: var(--color-text-muted);
+}
+
+.breadcrumb a:hover {
+    color: var(--color-text);
+}
+
+/* ===== Navigation ===== */
+.site-nav {
+    position: relative;
 }
 
 .nav-menu {
@@ -97,19 +118,24 @@ img {
     display: none;
 }
 
-.nav-menu summary::before {
-    content: "▸ ";
-    display: inline-block;
-    transition: transform var(--transition-speed);
+.nav-menu summary::after {
+    content: " ▾";
 }
 
-.nav-menu[open] summary::before {
-    transform: rotate(90deg);
+.nav-menu[open] summary::after {
+    content: " ▴";
 }
 
 .nav-menu > ul {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    min-width: 180px;
     margin-top: 0.5rem;
-    padding-left: 0.5rem;
+    padding: 0.5rem 0;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .site-nav ul {
@@ -117,7 +143,7 @@ img {
 }
 
 .site-nav li {
-    margin-bottom: 0.5rem;
+    padding: 0.25rem 1rem;
 }
 
 .site-nav li.current > a,
@@ -138,9 +164,9 @@ img {
 
 /* ===== Main Content Area ===== */
 main {
-    margin-left: var(--nav-width);
+    margin-top: var(--header-height);
     padding: 2rem;
-    min-height: 100vh;
+    min-height: calc(100vh - var(--header-height));
 }
 
 /* ===== Index Page ===== */
@@ -248,24 +274,7 @@ body.image-view main {
     align-items: center;
     justify-content: center;
     padding: var(--frame-width);
-    height: 100vh;
-}
-
-.breadcrumb {
-    position: fixed;
-    top: 1rem;
-    left: calc(var(--nav-width) + 2rem);
-    font-size: var(--font-size-small);
-    color: var(--color-text-muted);
-    z-index: 50;
-}
-
-.breadcrumb a {
-    color: var(--color-text-muted);
-}
-
-.breadcrumb a:hover {
-    color: var(--color-text);
+    height: calc(100vh - var(--header-height));
 }
 
 .image-page {
@@ -312,42 +321,20 @@ body.image-view main {
 /* ===== Mobile Styles ===== */
 @media (max-width: 768px) {
     :root {
-        --nav-width: 0px;
         --frame-width: 0.5rem;
     }
 
-    .site-nav {
-        position: fixed;
-        top: auto;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        width: 100%;
-        height: auto;
-        max-height: 50vh;
-        border-right: none;
-        border-top: 1px solid var(--color-border);
-        background: var(--color-bg);
-        padding: 0.75rem 1rem;
-    }
-
-    .nav-menu summary {
-        padding: 0.25rem 0;
+    .site-header {
+        padding: 0 1rem;
     }
 
     .nav-menu > ul {
-        max-height: 40vh;
+        max-height: 60vh;
         overflow-y: auto;
     }
 
     main {
-        margin-left: 0;
         padding: 1rem;
-        padding-bottom: 4rem;
-    }
-
-    .breadcrumb {
-        left: 1rem;
     }
 
     body.image-view main {
