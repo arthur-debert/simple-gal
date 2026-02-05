@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Install system dependencies for LightTable
 # Detects OS and installs appropriately
+#
+# Required commands after install:
+# - convert (ImageMagick)
+# - identify (ImageMagick)
 
 install_macos() {
     echo "==> Installing dependencies via Homebrew"
@@ -27,27 +31,35 @@ install_arch() {
 verify_install() {
     echo "==> Verifying installation"
 
-    # Check for ImageMagick (either magick or convert)
-    if command -v magick &> /dev/null; then
-        IM_CMD="magick"
-    elif command -v convert &> /dev/null; then
-        IM_CMD="convert"
-    else
-        echo "Error: ImageMagick not found"
+    # Check for convert command
+    if ! command -v convert &> /dev/null; then
+        echo "Error: 'convert' command not found"
+        echo "ImageMagick must be installed with the 'convert' and 'identify' commands"
         exit 1
     fi
-    echo "Found ImageMagick: $IM_CMD"
+    echo "Found: convert"
+
+    # Check for identify command
+    if ! command -v identify &> /dev/null; then
+        echo "Error: 'identify' command not found"
+        echo "ImageMagick must be installed with the 'convert' and 'identify' commands"
+        exit 1
+    fi
+    echo "Found: identify"
 
     # Check for AVIF support
-    if ! $IM_CMD -list format | grep -q AVIF; then
-        echo "Warning: ImageMagick lacks AVIF support, will use WebP only"
+    if ! convert -list format | grep -q AVIF; then
+        echo "Warning: ImageMagick lacks AVIF support"
+        exit 1
     fi
+    echo "Found: AVIF support"
 
     # Check for WebP support
-    if ! $IM_CMD -list format | grep -q WEBP; then
+    if ! convert -list format | grep -q WEBP; then
         echo "Error: ImageMagick lacks WebP support"
         exit 1
     fi
+    echo "Found: WebP support"
 
     echo "==> All dependencies installed and verified"
 }

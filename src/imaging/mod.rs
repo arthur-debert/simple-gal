@@ -1,0 +1,18 @@
+//! Image processing abstraction layer.
+//!
+//! This module provides a clean separation between:
+//! - **Calculations**: Pure functions for dimension math (unit testable)
+//! - **Parameters**: Data structures describing image operations
+//! - **Backend**: Trait + implementation for actual image processing
+//! - **Operations**: High-level functions combining calculations + backend
+
+pub mod backend;
+mod calculations;
+pub mod operations;
+mod params;
+
+pub use backend::{BackendError, Dimensions, ImageBackend, ImageMagickBackend};
+pub use operations::{
+    create_responsive_images, create_thumbnail, get_dimensions, ResponsiveConfig, ThumbnailConfig,
+};
+pub use params::{Quality, Sharpening};

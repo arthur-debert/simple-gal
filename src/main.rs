@@ -36,6 +36,7 @@
 
 mod config;
 mod generate;
+mod imaging;
 mod process;
 mod scan;
 

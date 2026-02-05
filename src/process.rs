@@ -5,9 +5,7 @@
 //!
 //! ## Dependencies
 //!
-//! Requires ImageMagick to be installed:
-//! - **ImageMagick 7** (preferred): Uses the `magick` command
-//! - **ImageMagick 6** (fallback): Uses the `convert` command
+//! Requires ImageMagick to be installed. Uses the `convert` and `identify` commands.
 //!
 //! ## Output Formats
 //!
@@ -46,10 +44,12 @@
 //! optimal performance on multi-core systems.
 
 use crate::config::SiteConfig;
-use rayon::prelude::*;
+use crate::imaging::{
+    create_responsive_images, create_thumbnail, get_dimensions, BackendError, ImageBackend,
+    ImageMagickBackend, Quality, ResponsiveConfig, Sharpening, ThumbnailConfig,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -58,8 +58,8 @@ pub enum ProcessError {
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("ImageMagick failed: {0}")]
-    ImageMagick(String),
+    #[error("Image processing failed: {0}")]
+    Imaging(#[from] BackendError),
     #[error("Source image not found: {0}")]
     SourceNotFound(PathBuf),
 }
@@ -177,10 +177,34 @@ pub fn process(
     output_dir: &Path,
     config: &ProcessConfig,
 ) -> Result<OutputManifest, ProcessError> {
+    let backend = ImageMagickBackend::new();
+    process_with_backend(&backend, manifest_path, source_root, output_dir, config)
+}
+
+/// Process images using a specific backend (allows testing with mock).
+pub fn process_with_backend(
+    backend: &impl ImageBackend,
+    manifest_path: &Path,
+    source_root: &Path,
+    output_dir: &Path,
+    config: &ProcessConfig,
+) -> Result<OutputManifest, ProcessError> {
     let manifest_content = std::fs::read_to_string(manifest_path)?;
     let input: InputManifest = serde_json::from_str(&manifest_content)?;
 
     std::fs::create_dir_all(output_dir)?;
+
+    let responsive_config = ResponsiveConfig {
+        sizes: config.sizes.clone(),
+        quality: Quality::new(config.quality),
+    };
+
+    let thumbnail_config = ThumbnailConfig {
+        aspect: config.thumbnail_aspect,
+        short_edge: config.thumbnail_size,
+        quality: Quality::new(config.quality),
+        sharpening: Some(Sharpening::light()),
+    };
 
     let mut output_albums = Vec::new();
 
@@ -189,39 +213,65 @@ pub fn process(
         let album_output_dir = output_dir.join(&album.path);
         std::fs::create_dir_all(&album_output_dir)?;
 
-        // Process images in parallel
-        let results: Result<Vec<_>, _> = album
-            .images
-            .par_iter()
-            .map(|image| {
-                let source_path = source_root.join(&image.source_path);
-                if !source_path.exists() {
-                    return Err(ProcessError::SourceNotFound(source_path));
-                }
+        // Process images (sequentially when using backend reference)
+        let mut processed_images = Vec::new();
 
-                println!("  {} ", image.filename);
+        for image in &album.images {
+            let source_path = source_root.join(&image.source_path);
+            if !source_path.exists() {
+                return Err(ProcessError::SourceNotFound(source_path));
+            }
 
-                // Get original dimensions
-                let dimensions = get_dimensions(&source_path)?;
+            println!("  {} ", image.filename);
 
-                // Generate responsive sizes
-                let generated = generate_responsive_images(
-                    &source_path,
-                    &album_output_dir,
-                    &image.filename,
-                    dimensions,
-                    config,
-                )?;
+            // Get original dimensions
+            let dimensions = get_dimensions(backend, &source_path)?;
 
-                // Generate thumbnail
-                let thumbnail_path =
-                    generate_thumbnail(&source_path, &album_output_dir, &image.filename, config)?;
+            // Get filename stem
+            let stem = Path::new(&image.filename)
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap();
 
-                Ok((image, dimensions, generated, thumbnail_path))
-            })
-            .collect();
+            // Generate responsive sizes
+            let variants = create_responsive_images(
+                backend,
+                &source_path,
+                &album_output_dir,
+                stem,
+                dimensions,
+                &responsive_config,
+            )?;
 
-        let processed_images = results?;
+            // Generate thumbnail
+            let thumbnail_path = create_thumbnail(
+                backend,
+                &source_path,
+                &album_output_dir,
+                stem,
+                dimensions,
+                &thumbnail_config,
+            )?;
+
+            // Convert variants to BTreeMap
+            let generated: std::collections::BTreeMap<String, GeneratedVariant> = variants
+                .into_iter()
+                .map(|v| {
+                    (
+                        v.target_size.to_string(),
+                        GeneratedVariant {
+                            avif: v.avif_path,
+                            webp: v.webp_path,
+                            width: v.width,
+                            height: v.height,
+                        },
+                    )
+                })
+                .collect();
+
+            processed_images.push((image, dimensions, generated, thumbnail_path));
+        }
 
         // Build output images (preserving order)
         let mut output_images: Vec<OutputImage> = processed_images
@@ -265,238 +315,6 @@ pub fn process(
         about: input.about,
         config: input.config,
     })
-}
-
-fn get_dimensions(path: &Path) -> Result<(u32, u32), ProcessError> {
-    let cmd = get_imagemagick_command();
-    let args = if cmd == "magick" {
-        vec!["identify", "-format", "%w %h", path.to_str().unwrap()]
-    } else {
-        vec!["-format", "%w %h", path.to_str().unwrap()]
-    };
-    // Use identify command for dimensions
-    let output = Command::new(if cmd == "magick" {
-        "magick"
-    } else {
-        "identify"
-    })
-    .args(&args)
-    .output()?;
-
-    if !output.status.success() {
-        return Err(ProcessError::ImageMagick(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
-    }
-
-    let dims = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = dims.split_whitespace().collect();
-    if parts.len() != 2 {
-        return Err(ProcessError::ImageMagick(format!(
-            "Unexpected identify output: {}",
-            dims
-        )));
-    }
-
-    let width: u32 = parts[0]
-        .parse()
-        .map_err(|_| ProcessError::ImageMagick(format!("Invalid width: {}", parts[0])))?;
-    let height: u32 = parts[1]
-        .parse()
-        .map_err(|_| ProcessError::ImageMagick(format!("Invalid height: {}", parts[1])))?;
-
-    Ok((width, height))
-}
-
-fn generate_responsive_images(
-    source: &Path,
-    output_dir: &Path,
-    filename: &str,
-    dimensions: (u32, u32),
-    config: &ProcessConfig,
-) -> Result<std::collections::BTreeMap<String, GeneratedVariant>, ProcessError> {
-    let mut generated = std::collections::BTreeMap::new();
-    let stem = Path::new(filename).file_stem().unwrap().to_str().unwrap();
-
-    let (orig_w, orig_h) = dimensions;
-    let longer_edge = orig_w.max(orig_h);
-
-    for &target_size in &config.sizes {
-        // Skip sizes larger than original
-        if target_size > longer_edge {
-            continue;
-        }
-
-        // Calculate output dimensions (preserve aspect ratio)
-        let (out_w, out_h) = if orig_w >= orig_h {
-            let ratio = target_size as f64 / orig_w as f64;
-            (target_size, (orig_h as f64 * ratio).round() as u32)
-        } else {
-            let ratio = target_size as f64 / orig_h as f64;
-            ((orig_w as f64 * ratio).round() as u32, target_size)
-        };
-
-        let avif_name = format!("{}-{}.avif", stem, target_size);
-        let webp_name = format!("{}-{}.webp", stem, target_size);
-        let avif_path = output_dir.join(&avif_name);
-        let webp_path = output_dir.join(&webp_name);
-
-        // Generate AVIF
-        run_magick(&[
-            source.to_str().unwrap(),
-            "-resize",
-            &format!("{}x{}", out_w, out_h),
-            "-quality",
-            &config.quality.to_string(),
-            "-define",
-            "heic:speed=6", // Faster encoding
-            avif_path.to_str().unwrap(),
-        ])?;
-
-        // Generate WebP
-        run_magick(&[
-            source.to_str().unwrap(),
-            "-resize",
-            &format!("{}x{}", out_w, out_h),
-            "-quality",
-            &config.quality.to_string(),
-            webp_path.to_str().unwrap(),
-        ])?;
-
-        let relative_dir = output_dir
-            .file_name()
-            .map(|s| s.to_str().unwrap())
-            .unwrap_or("");
-
-        generated.insert(
-            target_size.to_string(),
-            GeneratedVariant {
-                avif: format!("{}/{}", relative_dir, avif_name),
-                webp: format!("{}/{}", relative_dir, webp_name),
-                width: out_w,
-                height: out_h,
-            },
-        );
-    }
-
-    // If original is smaller than smallest target, use original size
-    if generated.is_empty() {
-        let avif_name = format!("{}-{}.avif", stem, longer_edge);
-        let webp_name = format!("{}-{}.webp", stem, longer_edge);
-        let avif_path = output_dir.join(&avif_name);
-        let webp_path = output_dir.join(&webp_name);
-
-        run_magick(&[
-            source.to_str().unwrap(),
-            "-quality",
-            &config.quality.to_string(),
-            avif_path.to_str().unwrap(),
-        ])?;
-
-        run_magick(&[
-            source.to_str().unwrap(),
-            "-quality",
-            &config.quality.to_string(),
-            webp_path.to_str().unwrap(),
-        ])?;
-
-        let relative_dir = output_dir
-            .file_name()
-            .map(|s| s.to_str().unwrap())
-            .unwrap_or("");
-
-        generated.insert(
-            longer_edge.to_string(),
-            GeneratedVariant {
-                avif: format!("{}/{}", relative_dir, avif_name),
-                webp: format!("{}/{}", relative_dir, webp_name),
-                width: orig_w,
-                height: orig_h,
-            },
-        );
-    }
-
-    Ok(generated)
-}
-
-fn generate_thumbnail(
-    source: &Path,
-    output_dir: &Path,
-    filename: &str,
-    config: &ProcessConfig,
-) -> Result<String, ProcessError> {
-    let stem = Path::new(filename).file_stem().unwrap().to_str().unwrap();
-    let (aspect_w, aspect_h) = config.thumbnail_aspect;
-
-    // Calculate thumbnail dimensions based on aspect ratio
-    // If aspect is 4:5 (portrait), width is short edge
-    let (thumb_w, thumb_h) = if aspect_w <= aspect_h {
-        let w = config.thumbnail_size;
-        let h = (w as f64 * aspect_h as f64 / aspect_w as f64).round() as u32;
-        (w, h)
-    } else {
-        let h = config.thumbnail_size;
-        let w = (h as f64 * aspect_w as f64 / aspect_h as f64).round() as u32;
-        (w, h)
-    };
-
-    let thumb_name = format!("{}-thumb.webp", stem);
-    let thumb_path = output_dir.join(&thumb_name);
-
-    // Use ImageMagick to resize and crop to fill the thumbnail
-    // -resize WxH^ resizes to fill (may exceed dimensions)
-    // -gravity center -extent WxH crops to exact size
-    run_magick(&[
-        source.to_str().unwrap(),
-        "-resize",
-        &format!("{}x{}^", thumb_w, thumb_h),
-        "-gravity",
-        "center",
-        "-extent",
-        &format!("{}x{}", thumb_w, thumb_h),
-        "-quality",
-        &config.quality.to_string(),
-        "-sharpen",
-        "0x0.5", // Light sharpening for thumbnails
-        thumb_path.to_str().unwrap(),
-    ])?;
-
-    let relative_dir = output_dir
-        .file_name()
-        .map(|s| s.to_str().unwrap())
-        .unwrap_or("");
-
-    Ok(format!("{}/{}", relative_dir, thumb_name))
-}
-
-fn get_imagemagick_command() -> &'static str {
-    use std::sync::OnceLock;
-    static CMD: OnceLock<&str> = OnceLock::new();
-    CMD.get_or_init(|| {
-        // Prefer magick (ImageMagick 7) but fall back to convert (ImageMagick 6)
-        if Command::new("magick")
-            .arg("-version")
-            .output()
-            .is_ok_and(|o| o.status.success())
-        {
-            "magick"
-        } else {
-            "convert"
-        }
-    })
-}
-
-fn run_magick(args: &[&str]) -> Result<(), ProcessError> {
-    let cmd = get_imagemagick_command();
-    let output = Command::new(cmd).args(args).output()?;
-
-    if !output.status.success() {
-        return Err(ProcessError::ImageMagick(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -647,8 +465,11 @@ mod tests {
     }
 
     // =========================================================================
-    // ImageMagick integration tests (require magick command)
+    // Process with mock backend tests (no ImageMagick required)
     // =========================================================================
+
+    use crate::imaging::backend::tests::MockBackend;
+    use crate::imaging::Dimensions;
 
     fn create_test_manifest(tmp: &Path) -> PathBuf {
         let manifest = r##"{
@@ -692,10 +513,153 @@ mod tests {
         manifest_path
     }
 
+    fn create_dummy_source(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Just create an empty file - the mock backend doesn't need real content
+        fs::write(path, "").unwrap();
+    }
+
+    #[test]
+    fn process_with_mock_generates_correct_outputs() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        // Create dummy source file
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        // Create manifest
+        let manifest_path = create_test_manifest(tmp.path());
+
+        // Create mock backend with dimensions
+        let backend = MockBackend::with_dimensions(vec![Dimensions {
+            width: 200,
+            height: 250,
+        }]);
+
+        // Process
+        let config = ProcessConfig {
+            sizes: vec![100, 150],
+            thumbnail_size: 80,
+            ..Default::default()
+        };
+
+        let result =
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config)
+                .unwrap();
+
+        // Verify outputs
+        assert_eq!(result.albums.len(), 1);
+        assert_eq!(result.albums[0].images.len(), 1);
+
+        let image = &result.albums[0].images[0];
+        assert_eq!(image.dimensions, (200, 250));
+        assert!(!image.generated.is_empty());
+        assert!(!image.thumbnail.is_empty());
+    }
+
+    #[test]
+    fn process_with_mock_records_correct_operations() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        let manifest_path = create_test_manifest(tmp.path());
+
+        // 2000x1500 landscape - should generate both sizes
+        let backend = MockBackend::with_dimensions(vec![Dimensions {
+            width: 2000,
+            height: 1500,
+        }]);
+
+        let config = ProcessConfig {
+            sizes: vec![800, 1400],
+            quality: 85,
+            thumbnail_size: 100,
+            ..Default::default()
+        };
+
+        process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config).unwrap();
+
+        use crate::imaging::backend::tests::RecordedOp;
+        let ops = backend.get_operations();
+
+        // Should have: 1 identify + 4 resizes (2 sizes × 2 formats) + 1 thumbnail = 6 ops
+        assert_eq!(ops.len(), 6);
+
+        // First is identify
+        assert!(matches!(&ops[0], RecordedOp::Identify(_)));
+
+        // Then resizes with correct quality
+        for op in &ops[1..5] {
+            assert!(matches!(op, RecordedOp::Resize { quality: 85, .. }));
+        }
+
+        // Last is thumbnail
+        assert!(matches!(&ops[5], RecordedOp::Thumbnail { .. }));
+    }
+
+    #[test]
+    fn process_with_mock_skips_larger_sizes() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        let manifest_path = create_test_manifest(tmp.path());
+
+        // 500x400 - smaller than all requested sizes
+        let backend = MockBackend::with_dimensions(vec![Dimensions {
+            width: 500,
+            height: 400,
+        }]);
+
+        let config = ProcessConfig {
+            sizes: vec![800, 1400, 2080],
+            ..Default::default()
+        };
+
+        let result =
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config)
+                .unwrap();
+
+        // Should only have original size
+        let image = &result.albums[0].images[0];
+        assert_eq!(image.generated.len(), 1);
+        assert!(image.generated.contains_key("500"));
+    }
+
+    #[test]
+    fn process_source_not_found_error() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        // Don't create the source file
+        let manifest_path = create_test_manifest(tmp.path());
+        let backend = MockBackend::new();
+        let config = ProcessConfig::default();
+
+        let result =
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config);
+
+        assert!(matches!(result, Err(ProcessError::SourceNotFound(_))));
+    }
+
+    // =========================================================================
+    // ImageMagick integration tests (require ImageMagick)
+    // =========================================================================
+
     fn create_test_image(path: &Path) {
         // Create a 200x250 test image (4:5 aspect)
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        Command::new("magick")
+        std::process::Command::new("convert")
             .args([
                 "-size",
                 "200x250",
@@ -769,7 +733,8 @@ mod tests {
 
         // Check thumbnail dimensions
         let thumb_path = output_dir.join("test-album/001-test-thumb.webp");
-        let dims = get_dimensions(&thumb_path).unwrap();
+        let backend = ImageMagickBackend::new();
+        let dims = crate::imaging::get_dimensions(&backend, &thumb_path).unwrap();
 
         // Should be 80x100 (4:5 with short edge 80)
         assert_eq!(dims, (80, 100));

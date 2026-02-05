@@ -546,7 +546,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires ImageMagick
     fn mixed_content_is_error() {
         let tmp = TempDir::new().unwrap();
 
@@ -555,33 +554,23 @@ mod tests {
         fs::create_dir_all(&mixed).unwrap();
         fs::create_dir_all(mixed.join("subdir")).unwrap();
 
-        // Create a placeholder image in mixed dir
-        let img_path = mixed.join("001-photo.jpg");
-        std::process::Command::new("magick")
-            .args(["-size", "1x1", "xc:gray", img_path.to_str().unwrap()])
-            .output()
-            .unwrap();
+        // Create a placeholder image in mixed dir (scan only checks extension)
+        fs::write(mixed.join("001-photo.jpg"), "fake image").unwrap();
 
         let result = scan(tmp.path());
         assert!(matches!(result, Err(ScanError::MixedContent(_))));
     }
 
     #[test]
-    #[ignore] // Requires ImageMagick
     fn duplicate_number_is_error() {
         let tmp = TempDir::new().unwrap();
 
         let album = tmp.path().join("010-Album");
         fs::create_dir_all(&album).unwrap();
 
-        // Create two images with the same number
-        for name in ["001-first.jpg", "001-second.jpg"] {
-            let img_path = album.join(name);
-            std::process::Command::new("magick")
-                .args(["-size", "1x1", "xc:gray", img_path.to_str().unwrap()])
-                .output()
-                .unwrap();
-        }
+        // Create two images with the same number (scan only checks extension)
+        fs::write(album.join("001-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("001-second.jpg"), "fake image").unwrap();
 
         let result = scan(tmp.path());
         assert!(matches!(result, Err(ScanError::DuplicateNumber(1, _))));
