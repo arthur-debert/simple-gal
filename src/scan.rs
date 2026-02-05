@@ -28,7 +28,11 @@ pub struct Manifest {
 /// About page content
 #[derive(Debug, Serialize)]
 pub struct AboutPage {
+    /// Title derived from markdown content (first # heading)
     pub title: String,
+    /// Link title derived from filename (dashes to spaces)
+    pub link_title: String,
+    /// Raw markdown content (will be converted to HTML in generate stage)
     pub body: String,
 }
 
@@ -79,21 +83,52 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     })
 }
 
-/// Parse about.txt file if it exists
-/// Format: First line is title, rest is body
+/// Parse markdown file for about page if one exists in root directory
+/// Link title comes from filename (dashes to spaces)
+/// Page title comes from first # heading in markdown
+/// Body is raw markdown content
 fn parse_about_page(root: &Path) -> Result<Option<AboutPage>, ScanError> {
-    let about_path = root.join("about.txt");
-    if !about_path.exists() {
-        return Ok(None);
-    }
+    // Find .md files in root directory
+    let md_files: Vec<PathBuf> = fs::read_dir(root)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .map(|e| e.to_ascii_lowercase() == "md")
+                    .unwrap_or(false)
+        })
+        .collect();
 
-    let content = fs::read_to_string(&about_path)?;
-    let mut lines = content.lines();
+    let md_path = match md_files.first() {
+        Some(p) => p,
+        None => return Ok(None),
+    };
 
-    let title = lines.next().unwrap_or("About").trim().to_string();
-    let body = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    // Extract link title from filename (dashes to spaces, no extension)
+    let filename = md_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "about".to_string());
+    let link_title = filename.replace('-', " ");
 
-    Ok(Some(AboutPage { title, body }))
+    let content = fs::read_to_string(md_path)?;
+
+    // Extract title from first # heading, or use link_title as fallback
+    let title = content
+        .lines()
+        .find(|line| line.starts_with("# "))
+        .map(|line| line.trim_start_matches("# ").trim().to_string())
+        .unwrap_or_else(|| link_title.clone());
+
+    // Body is the full markdown content (will be converted to HTML in generate stage)
+    let body = content;
+
+    Ok(Some(AboutPage {
+        title,
+        link_title,
+        body,
+    }))
 }
 
 fn scan_directory(

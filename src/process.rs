@@ -39,7 +39,11 @@ impl Default for ProcessConfig {
 /// About page content
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AboutPage {
+    /// Title from markdown content (first # heading)
     pub title: String,
+    /// Link title from filename (dashes to spaces)
+    pub link_title: String,
+    /// Raw markdown body content
     pub body: String,
 }
 

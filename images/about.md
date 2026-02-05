@@ -1,4 +1,4 @@
-About
+# About
 
 This is a photography portfolio showcasing work from various locations and projects.
 
