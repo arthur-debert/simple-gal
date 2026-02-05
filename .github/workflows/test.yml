@@ -1,21 +1,15 @@
-name: Build and Deploy
+name: Test
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  # Run tests first - must pass before build/deploy
   test:
     runs-on: ubuntu-latest
     steps:
@@ -36,11 +30,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick webp libavif-bin
+          # Verify ImageMagick is working
           magick -version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Cache Cargo dependencies
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -66,58 +62,37 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lighttable-binary
+          name: lighttable-linux
           path: target/release/lighttable
-          retention-days: 1
+          retention-days: 7
 
-  build:
+  # Lint job runs in parallel with tests
+  lint:
     runs-on: ubuntu-latest
-    needs: test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Cache apt packages for image processing
-      - name: Cache apt packages
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
         uses: actions/cache@v4
-        id: apt-cache
         with:
           path: |
-            /var/cache/apt/archives
-            /var/lib/apt/lists
-          key: ${{ runner.os }}-apt-imagemagick-v1
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y imagemagick webp libavif-bin
+      - name: Check formatting
+        run: cargo fmt --check
 
-      - name: Download binary artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: lighttable-binary
-          path: ./bin
-
-      - name: Make binary executable
-        run: chmod +x ./bin/lighttable
-
-      - name: Build site
-        run: |
-          ./bin/lighttable build images dist
-          cp CNAME dist/
-
-      - name: Upload pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Run clippy
+        run: cargo clippy -- -D warnings

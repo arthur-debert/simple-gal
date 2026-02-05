@@ -63,18 +63,10 @@ pub enum ConfigError {
 }
 
 /// Site configuration loaded from config.toml
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SiteConfig {
     pub colors: ColorConfig,
-}
-
-impl Default for SiteConfig {
-    fn default() -> Self {
-        Self {
-            colors: ColorConfig::default(),
-        }
-    }
 }
 
 /// Color configuration for light and dark modes
@@ -194,6 +186,7 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn default_config_has_colors() {
@@ -225,5 +218,123 @@ background = "#fafafa"
         let css = generate_color_css(&colors);
         assert!(css.contains("--color-bg: #f0f0f0"));
         assert!(css.contains("--color-bg: #1a1a1a"));
+    }
+
+    // =========================================================================
+    // load_config tests
+    // =========================================================================
+
+    #[test]
+    fn load_config_returns_default_when_no_file() {
+        let tmp = TempDir::new().unwrap();
+        let config = load_config(tmp.path()).unwrap();
+
+        assert_eq!(config.colors.light.background, "#ffffff");
+        assert_eq!(config.colors.dark.background, "#0a0a0a");
+    }
+
+    #[test]
+    fn load_config_reads_file() {
+        let tmp = TempDir::new().unwrap();
+        let config_path = tmp.path().join("config.toml");
+
+        fs::write(
+            &config_path,
+            r##"
+[colors.light]
+background = "#123456"
+text = "#abcdef"
+"##,
+        )
+        .unwrap();
+
+        let config = load_config(tmp.path()).unwrap();
+        assert_eq!(config.colors.light.background, "#123456");
+        assert_eq!(config.colors.light.text, "#abcdef");
+        // Unspecified values should be defaults
+        assert_eq!(config.colors.dark.background, "#0a0a0a");
+    }
+
+    #[test]
+    fn load_config_full_config() {
+        let tmp = TempDir::new().unwrap();
+        let config_path = tmp.path().join("config.toml");
+
+        fs::write(
+            &config_path,
+            r##"
+[colors.light]
+background = "#fff"
+text = "#000"
+text_muted = "#666"
+border = "#ccc"
+link = "#00f"
+link_hover = "#f00"
+
+[colors.dark]
+background = "#111"
+text = "#eee"
+text_muted = "#888"
+border = "#444"
+link = "#88f"
+link_hover = "#f88"
+"##,
+        )
+        .unwrap();
+
+        let config = load_config(tmp.path()).unwrap();
+
+        // Light mode
+        assert_eq!(config.colors.light.background, "#fff");
+        assert_eq!(config.colors.light.text, "#000");
+        assert_eq!(config.colors.light.link, "#00f");
+
+        // Dark mode
+        assert_eq!(config.colors.dark.background, "#111");
+        assert_eq!(config.colors.dark.text, "#eee");
+        assert_eq!(config.colors.dark.link, "#88f");
+    }
+
+    #[test]
+    fn load_config_invalid_toml_is_error() {
+        let tmp = TempDir::new().unwrap();
+        let config_path = tmp.path().join("config.toml");
+
+        fs::write(&config_path, "this is not valid toml [[[").unwrap();
+
+        let result = load_config(tmp.path());
+        assert!(matches!(result, Err(ConfigError::Toml(_))));
+    }
+
+    // =========================================================================
+    // CSS generation tests
+    // =========================================================================
+
+    #[test]
+    fn generate_css_includes_all_variables() {
+        let colors = ColorConfig::default();
+        let css = generate_color_css(&colors);
+
+        // Check all CSS variables are present
+        assert!(css.contains("--color-bg:"));
+        assert!(css.contains("--color-text:"));
+        assert!(css.contains("--color-text-muted:"));
+        assert!(css.contains("--color-border:"));
+        assert!(css.contains("--color-link:"));
+        assert!(css.contains("--color-link-hover:"));
+    }
+
+    #[test]
+    fn generate_css_includes_dark_mode_media_query() {
+        let colors = ColorConfig::default();
+        let css = generate_color_css(&colors);
+
+        assert!(css.contains("@media (prefers-color-scheme: dark)"));
+    }
+
+    #[test]
+    fn color_scheme_default_is_light() {
+        let scheme = ColorScheme::default();
+        assert_eq!(scheme.background, "#ffffff");
     }
 }

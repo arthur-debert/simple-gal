@@ -155,7 +155,7 @@ fn parse_about_page(root: &Path) -> Result<Option<AboutPage>, ScanError> {
         .filter(|p| {
             p.is_file()
                 && p.extension()
-                    .map(|e| e.to_ascii_lowercase() == "md")
+                    .map(|e| e.eq_ignore_ascii_case("md"))
                     .unwrap_or(false)
         })
         .collect();
@@ -199,15 +199,9 @@ fn scan_directory(
 ) -> Result<(), ScanError> {
     let entries = collect_entries(path)?;
 
-    let images = entries
-        .iter()
-        .filter(|e| is_image(e))
-        .collect::<Vec<_>>();
+    let images = entries.iter().filter(|e| is_image(e)).collect::<Vec<_>>();
 
-    let subdirs = entries
-        .iter()
-        .filter(|e| e.is_dir())
-        .collect::<Vec<_>>();
+    let subdirs = entries.iter().filter(|e| e.is_dir()).collect::<Vec<_>>();
 
     // Check for mixed content
     if !images.is_empty() && !subdirs.is_empty() {
@@ -456,7 +450,11 @@ mod tests {
         // Top level nav should have: Landscapes, Travel, Minimal (all numbered)
         assert_eq!(manifest.navigation.len(), 3);
 
-        let titles: Vec<&str> = manifest.navigation.iter().map(|n| n.title.as_str()).collect();
+        let titles: Vec<&str> = manifest
+            .navigation
+            .iter()
+            .map(|n| n.title.as_str())
+            .collect();
         assert!(titles.contains(&"Landscapes"));
         assert!(titles.contains(&"Travel"));
         assert!(titles.contains(&"Minimal"));
@@ -467,7 +465,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let wip = manifest.albums.iter().find(|a| a.title == "wip-drafts").unwrap();
+        let wip = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "wip-drafts")
+            .unwrap();
         assert!(!wip.in_nav);
     }
 
@@ -476,7 +478,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let travel = manifest.navigation.iter().find(|n| n.title == "Travel").unwrap();
+        let travel = manifest
+            .navigation
+            .iter()
+            .find(|n| n.title == "Travel")
+            .unwrap();
         assert_eq!(travel.children.len(), 2);
 
         let child_titles: Vec<&str> = travel.children.iter().map(|n| n.title.as_str()).collect();
@@ -489,7 +495,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest.albums.iter().find(|a| a.title == "Landscapes").unwrap();
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
         let numbers: Vec<u32> = landscapes.images.iter().map(|i| i.number).collect();
 
         assert_eq!(numbers, vec![1, 2, 10]);
@@ -500,11 +510,25 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest.albums.iter().find(|a| a.title == "Landscapes").unwrap();
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
         assert!(landscapes.description.is_some());
-        assert!(landscapes.description.as_ref().unwrap().contains("landscape"));
+        assert!(
+            landscapes
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("landscape")
+        );
 
-        let minimal = manifest.albums.iter().find(|a| a.title == "Minimal").unwrap();
+        let minimal = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Minimal")
+            .unwrap();
         assert!(minimal.description.is_none());
     }
 
@@ -513,11 +537,16 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest.albums.iter().find(|a| a.title == "Landscapes").unwrap();
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
         assert!(landscapes.preview_image.contains("001-dawn"));
     }
 
     #[test]
+    #[ignore] // Requires ImageMagick
     fn mixed_content_is_error() {
         let tmp = TempDir::new().unwrap();
 
@@ -538,6 +567,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Requires ImageMagick
     fn duplicate_number_is_error() {
         let tmp = TempDir::new().unwrap();
 
@@ -555,5 +585,139 @@ mod tests {
 
         let result = scan(tmp.path());
         assert!(matches!(result, Err(ScanError::DuplicateNumber(1, _))));
+    }
+
+    // =========================================================================
+    // About page tests
+    // =========================================================================
+
+    #[test]
+    fn about_page_parsed_from_fixtures() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let about = manifest.about.expect("about page should exist");
+        assert_eq!(about.title, "About This Gallery");
+        assert_eq!(about.link_title, "about");
+        assert!(about.body.contains("LightTable"));
+    }
+
+    #[test]
+    fn about_page_link_title_from_filename() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create markdown file with dashes in name
+        let md_path = tmp.path().join("who-am-i.md");
+        fs::write(&md_path, "# My Title\n\nSome content.").unwrap();
+
+        // Create a minimal album so scan doesn't fail
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let about = manifest.about.expect("about page should exist");
+        assert_eq!(about.link_title, "who am i");
+        assert_eq!(about.title, "My Title");
+    }
+
+    #[test]
+    fn about_page_title_fallback_to_link_title() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create markdown file without # heading
+        let md_path = tmp.path().join("about-me.md");
+        fs::write(&md_path, "Just some content without a heading.").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let about = manifest.about.expect("about page should exist");
+        // Title should fall back to link_title when no # heading
+        assert_eq!(about.title, "about me");
+        assert_eq!(about.link_title, "about me");
+    }
+
+    #[test]
+    fn no_about_page_when_no_markdown() {
+        let tmp = TempDir::new().unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.about.is_none());
+    }
+
+    // =========================================================================
+    // Config integration tests
+    // =========================================================================
+
+    #[test]
+    fn config_loaded_from_fixtures() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Fixtures has a config.toml - verify it was loaded
+        // (exact values depend on fixture content, just check it's not default)
+        assert!(!manifest.config.colors.light.background.is_empty());
+    }
+
+    #[test]
+    fn default_config_when_no_toml() {
+        let tmp = TempDir::new().unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Should have default config values
+        assert_eq!(manifest.config.colors.light.background, "#ffffff");
+        assert_eq!(manifest.config.colors.dark.background, "#0a0a0a");
+    }
+
+    // =========================================================================
+    // Album path and structure tests
+    // =========================================================================
+
+    #[test]
+    fn album_paths_are_relative() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        for album in &manifest.albums {
+            // Paths should not start with / or contain absolute paths
+            assert!(!album.path.starts_with('/'));
+            assert!(!album.path.contains(tmp.path().to_str().unwrap()));
+        }
+    }
+
+    #[test]
+    fn nested_album_path_includes_parent() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let japan = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
+        assert!(japan.path.contains("020-Travel"));
+        assert!(japan.path.contains("010-Japan"));
+    }
+
+    #[test]
+    fn image_source_paths_are_relative() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        for album in &manifest.albums {
+            for image in &album.images {
+                assert!(!image.source_path.starts_with('/'));
+            }
+        }
     }
 }

@@ -214,12 +214,8 @@ pub fn process(
                 )?;
 
                 // Generate thumbnail
-                let thumbnail_path = generate_thumbnail(
-                    &source_path,
-                    &album_output_dir,
-                    &image.filename,
-                    config,
-                )?;
+                let thumbnail_path =
+                    generate_thumbnail(&source_path, &album_output_dir, &image.filename, config)?;
 
                 Ok((image, dimensions, generated, thumbnail_path))
             })
@@ -230,13 +226,15 @@ pub fn process(
         // Build output images (preserving order)
         let mut output_images: Vec<OutputImage> = processed_images
             .into_iter()
-            .map(|(image, dimensions, generated, thumbnail_path)| OutputImage {
-                number: image.number,
-                source_path: image.source_path.clone(),
-                dimensions,
-                generated,
-                thumbnail: thumbnail_path,
-            })
+            .map(
+                |(image, dimensions, generated, thumbnail_path)| OutputImage {
+                    number: image.number,
+                    source_path: image.source_path.clone(),
+                    dimensions,
+                    generated,
+                    thumbnail: thumbnail_path,
+                },
+            )
             .collect();
 
         // Sort by number to ensure consistent ordering
@@ -277,9 +275,13 @@ fn get_dimensions(path: &Path) -> Result<(u32, u32), ProcessError> {
         vec!["-format", "%w %h", path.to_str().unwrap()]
     };
     // Use identify command for dimensions
-    let output = Command::new(if cmd == "magick" { "magick" } else { "identify" })
-        .args(&args)
-        .output()?;
+    let output = Command::new(if cmd == "magick" {
+        "magick"
+    } else {
+        "identify"
+    })
+    .args(&args)
+    .output()?;
 
     if !output.status.success() {
         return Err(ProcessError::ImageMagick(
@@ -296,12 +298,12 @@ fn get_dimensions(path: &Path) -> Result<(u32, u32), ProcessError> {
         )));
     }
 
-    let width: u32 = parts[0].parse().map_err(|_| {
-        ProcessError::ImageMagick(format!("Invalid width: {}", parts[0]))
-    })?;
-    let height: u32 = parts[1].parse().map_err(|_| {
-        ProcessError::ImageMagick(format!("Invalid height: {}", parts[1]))
-    })?;
+    let width: u32 = parts[0]
+        .parse()
+        .map_err(|_| ProcessError::ImageMagick(format!("Invalid width: {}", parts[0])))?;
+    let height: u32 = parts[1]
+        .parse()
+        .map_err(|_| ProcessError::ImageMagick(format!("Invalid height: {}", parts[1])))?;
 
     Ok((width, height))
 }
@@ -472,7 +474,11 @@ fn get_imagemagick_command() -> &'static str {
     static CMD: OnceLock<&str> = OnceLock::new();
     CMD.get_or_init(|| {
         // Prefer magick (ImageMagick 7) but fall back to convert (ImageMagick 6)
-        if Command::new("magick").arg("-version").output().is_ok_and(|o| o.status.success()) {
+        if Command::new("magick")
+            .arg("-version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
             "magick"
         } else {
             "convert"
@@ -499,8 +505,153 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    // =========================================================================
+    // ProcessConfig tests (no ImageMagick required)
+    // =========================================================================
+
+    #[test]
+    fn process_config_default_values() {
+        let config = ProcessConfig::default();
+
+        assert_eq!(config.sizes, vec![800, 1400, 2080]);
+        assert_eq!(config.quality, 90);
+        assert_eq!(config.thumbnail_aspect, (4, 5));
+        assert_eq!(config.thumbnail_size, 400);
+    }
+
+    #[test]
+    fn process_config_custom_values() {
+        let config = ProcessConfig {
+            sizes: vec![100, 200],
+            quality: 85,
+            thumbnail_aspect: (1, 1),
+            thumbnail_size: 150,
+        };
+
+        assert_eq!(config.sizes, vec![100, 200]);
+        assert_eq!(config.quality, 85);
+        assert_eq!(config.thumbnail_aspect, (1, 1));
+        assert_eq!(config.thumbnail_size, 150);
+    }
+
+    // =========================================================================
+    // Manifest parsing tests (no ImageMagick required)
+    // =========================================================================
+
+    #[test]
+    fn parse_input_manifest() {
+        let manifest_json = r##"{
+            "navigation": [
+                {"title": "Album", "path": "010-album", "children": []}
+            ],
+            "albums": [{
+                "path": "010-album",
+                "title": "Album",
+                "description": "A test album",
+                "preview_image": "010-album/001-test.jpg",
+                "images": [{
+                    "number": 1,
+                    "source_path": "010-album/001-test.jpg",
+                    "filename": "001-test.jpg"
+                }],
+                "in_nav": true
+            }],
+            "about": {
+                "title": "About",
+                "link_title": "about",
+                "body": "# About\n\nContent"
+            },
+            "config": {
+                "colors": {
+                    "light": {
+                        "background": "#fff",
+                        "text": "#000",
+                        "text_muted": "#666",
+                        "border": "#ccc",
+                        "link": "#00f",
+                        "link_hover": "#f00"
+                    },
+                    "dark": {
+                        "background": "#000",
+                        "text": "#fff",
+                        "text_muted": "#999",
+                        "border": "#333",
+                        "link": "#88f",
+                        "link_hover": "#f88"
+                    }
+                }
+            }
+        }"##;
+
+        let manifest: InputManifest = serde_json::from_str(manifest_json).unwrap();
+
+        assert_eq!(manifest.navigation.len(), 1);
+        assert_eq!(manifest.navigation[0].title, "Album");
+        assert_eq!(manifest.albums.len(), 1);
+        assert_eq!(manifest.albums[0].title, "Album");
+        assert_eq!(
+            manifest.albums[0].description,
+            Some("A test album".to_string())
+        );
+        assert_eq!(manifest.albums[0].images.len(), 1);
+        assert!(manifest.about.is_some());
+        assert_eq!(manifest.about.as_ref().unwrap().title, "About");
+    }
+
+    #[test]
+    fn parse_manifest_without_about() {
+        let manifest_json = r##"{
+            "navigation": [],
+            "albums": [],
+            "config": {
+                "colors": {
+                    "light": {
+                        "background": "#fff",
+                        "text": "#000",
+                        "text_muted": "#666",
+                        "border": "#ccc",
+                        "link": "#00f",
+                        "link_hover": "#f00"
+                    },
+                    "dark": {
+                        "background": "#000",
+                        "text": "#fff",
+                        "text_muted": "#999",
+                        "border": "#333",
+                        "link": "#88f",
+                        "link_hover": "#f88"
+                    }
+                }
+            }
+        }"##;
+
+        let manifest: InputManifest = serde_json::from_str(manifest_json).unwrap();
+        assert!(manifest.about.is_none());
+    }
+
+    #[test]
+    fn parse_nav_item_with_children() {
+        let json = r#"{
+            "title": "Travel",
+            "path": "020-travel",
+            "children": [
+                {"title": "Japan", "path": "020-travel/010-japan", "children": []},
+                {"title": "Italy", "path": "020-travel/020-italy", "children": []}
+            ]
+        }"#;
+
+        let item: NavItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.title, "Travel");
+        assert_eq!(item.children.len(), 2);
+        assert_eq!(item.children[0].title, "Japan");
+    }
+
+    // =========================================================================
+    // ImageMagick integration tests (require magick command)
+    // =========================================================================
+
     fn create_test_manifest(tmp: &Path) -> PathBuf {
-        let manifest = r#"{
+        let manifest = r##"{
             "navigation": [],
             "albums": [{
                 "path": "test-album",
@@ -513,8 +664,28 @@ mod tests {
                     "filename": "001-test.jpg"
                 }],
                 "in_nav": true
-            }]
-        }"#;
+            }],
+            "config": {
+                "colors": {
+                    "light": {
+                        "background": "#fff",
+                        "text": "#000",
+                        "text_muted": "#666",
+                        "border": "#ccc",
+                        "link": "#00f",
+                        "link_hover": "#f00"
+                    },
+                    "dark": {
+                        "background": "#000",
+                        "text": "#fff",
+                        "text_muted": "#999",
+                        "border": "#333",
+                        "link": "#88f",
+                        "link_hover": "#f88"
+                    }
+                }
+            }
+        }"##;
 
         let manifest_path = tmp.join("manifest.json");
         fs::write(&manifest_path, manifest).unwrap();
@@ -540,6 +711,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Requires ImageMagick
     fn process_generates_outputs() {
         let tmp = TempDir::new().unwrap();
         let source_dir = tmp.path().join("source");
@@ -575,6 +747,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Requires ImageMagick
     fn thumbnail_has_correct_aspect() {
         let tmp = TempDir::new().unwrap();
         let source_dir = tmp.path().join("source");

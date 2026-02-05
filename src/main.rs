@@ -145,7 +145,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("==> Stage 2: Processing images");
             let processed_dir = temp_dir.join("processed");
             let config = process::ProcessConfig::default();
-            let processed_manifest = process::process(&scan_manifest_path, &root, &processed_dir, &config)?;
+            let processed_manifest =
+                process::process(&scan_manifest_path, &root, &processed_dir, &config)?;
             let processed_manifest_path = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&processed_manifest)?;
             std::fs::write(&processed_manifest_path, &json)?;

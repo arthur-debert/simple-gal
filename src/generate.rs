@@ -47,8 +47,8 @@
 //! Templates are type-safe Rust code with automatic XSS escaping.
 
 use crate::config::{self, SiteConfig};
-use maud::{html, Markup, PreEscaped, DOCTYPE};
-use pulldown_cmark::{html as md_html, Parser};
+use maud::{DOCTYPE, Markup, PreEscaped, html};
+use pulldown_cmark::{Parser, html as md_html};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -587,5 +587,241 @@ mod tests {
     fn html_contains_body_class(html: &str, class: &str) -> bool {
         // Look for body tag with class attribute containing the class
         html.contains(&format!(r#"class="{}""#, class))
+    }
+
+    // =========================================================================
+    // Page renderer tests
+    // =========================================================================
+
+    fn create_test_album() -> Album {
+        Album {
+            path: "010-test".to_string(),
+            title: "Test Album".to_string(),
+            description: Some("A test album description".to_string()),
+            thumbnail: "010-test/001-image-thumb.webp".to_string(),
+            images: vec![
+                Image {
+                    number: 1,
+                    source_path: "010-test/001-image.jpg".to_string(),
+                    dimensions: (1600, 1200),
+                    generated: {
+                        let mut map = BTreeMap::new();
+                        map.insert(
+                            "800".to_string(),
+                            GeneratedVariant {
+                                avif: "010-test/001-image-800.avif".to_string(),
+                                webp: "010-test/001-image-800.webp".to_string(),
+                                width: 800,
+                                height: 600,
+                            },
+                        );
+                        map.insert(
+                            "1400".to_string(),
+                            GeneratedVariant {
+                                avif: "010-test/001-image-1400.avif".to_string(),
+                                webp: "010-test/001-image-1400.webp".to_string(),
+                                width: 1400,
+                                height: 1050,
+                            },
+                        );
+                        map
+                    },
+                    thumbnail: "010-test/001-image-thumb.webp".to_string(),
+                },
+                Image {
+                    number: 2,
+                    source_path: "010-test/002-image.jpg".to_string(),
+                    dimensions: (1200, 1600),
+                    generated: {
+                        let mut map = BTreeMap::new();
+                        map.insert(
+                            "800".to_string(),
+                            GeneratedVariant {
+                                avif: "010-test/002-image-800.avif".to_string(),
+                                webp: "010-test/002-image-800.webp".to_string(),
+                                width: 600,
+                                height: 800,
+                            },
+                        );
+                        map
+                    },
+                    thumbnail: "010-test/002-image-thumb.webp".to_string(),
+                },
+            ],
+            in_nav: true,
+        }
+    }
+
+    #[test]
+    fn render_album_page_includes_title() {
+        let album = create_test_album();
+        let nav = vec![];
+        let html = render_album_page(&album, &nav, None, "").into_string();
+
+        assert!(html.contains("Test Album"));
+        assert!(html.contains("<h1>"));
+    }
+
+    #[test]
+    fn render_album_page_includes_description() {
+        let album = create_test_album();
+        let nav = vec![];
+        let html = render_album_page(&album, &nav, None, "").into_string();
+
+        assert!(html.contains("A test album description"));
+        assert!(html.contains("album-description"));
+    }
+
+    #[test]
+    fn render_album_page_thumbnail_links() {
+        let album = create_test_album();
+        let nav = vec![];
+        let html = render_album_page(&album, &nav, None, "").into_string();
+
+        // Should have links to image pages (1.html, 2.html)
+        assert!(html.contains("1.html"));
+        assert!(html.contains("2.html"));
+        // Thumbnails should have paths relative to album dir
+        assert!(html.contains("001-image-thumb.webp"));
+    }
+
+    #[test]
+    fn render_album_page_breadcrumb() {
+        let album = create_test_album();
+        let nav = vec![];
+        let html = render_album_page(&album, &nav, None, "").into_string();
+
+        // Breadcrumb should link to gallery root
+        assert!(html.contains(r#"href="/""#));
+        assert!(html.contains("Gallery"));
+    }
+
+    #[test]
+    fn render_image_page_includes_picture_element() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let nav = vec![];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, None, "")
+            .into_string();
+
+        assert!(html.contains("<picture>"));
+        assert!(html.contains("image/avif"));
+        assert!(html.contains("image/webp"));
+    }
+
+    #[test]
+    fn render_image_page_srcset() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let nav = vec![];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, None, "")
+            .into_string();
+
+        // Should have srcset with sizes
+        assert!(html.contains("srcset="));
+        assert!(html.contains("800w"));
+        assert!(html.contains("1400w"));
+    }
+
+    #[test]
+    fn render_image_page_navigation_zones() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let nav = vec![];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, None, "")
+            .into_string();
+
+        assert!(html.contains("nav-zones"));
+        assert!(html.contains("data-prev="));
+        assert!(html.contains("data-next="));
+    }
+
+    #[test]
+    fn render_image_page_prev_next_urls() {
+        let album = create_test_album();
+        let nav = vec![];
+
+        // First image - no prev, has next
+        let html1 = render_image_page(
+            &album,
+            &album.images[0],
+            None,
+            Some(&album.images[1]),
+            &nav,
+            None,
+            "",
+        )
+        .into_string();
+        assert!(html1.contains(r#"data-prev="index.html""#));
+        assert!(html1.contains(r#"data-next="2.html""#));
+
+        // Second image - has prev, no next
+        let html2 = render_image_page(
+            &album,
+            &album.images[1],
+            Some(&album.images[0]),
+            None,
+            &nav,
+            None,
+            "",
+        )
+        .into_string();
+        assert!(html2.contains(r#"data-prev="1.html""#));
+        assert!(html2.contains(r#"data-next="index.html""#));
+    }
+
+    #[test]
+    fn render_image_page_aspect_ratio() {
+        let album = create_test_album();
+        let image = &album.images[0]; // 1600x1200 = 1.333...
+        let nav = vec![];
+        let html = render_image_page(&album, image, None, None, &nav, None, "").into_string();
+
+        // Should have aspect ratio CSS variable
+        assert!(html.contains("--aspect-ratio:"));
+    }
+
+    #[test]
+    fn render_about_page_converts_markdown() {
+        let about = AboutPage {
+            title: "About Me".to_string(),
+            link_title: "about".to_string(),
+            body: "# About Me\n\nThis is **bold** and *italic*.".to_string(),
+        };
+        let nav = vec![];
+        let html = render_about_page(&about, &nav, "").into_string();
+
+        // Markdown should be converted to HTML
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<em>italic</em>"));
+    }
+
+    #[test]
+    fn render_about_page_includes_title() {
+        let about = AboutPage {
+            title: "About Me".to_string(),
+            link_title: "about me".to_string(),
+            body: "Content here".to_string(),
+        };
+        let nav = vec![];
+        let html = render_about_page(&about, &nav, "").into_string();
+
+        assert!(html.contains("<title>About Me</title>"));
+        assert!(html.contains("about-page"));
+    }
+
+    #[test]
+    fn html_escape_in_maud() {
+        // Maud should automatically escape HTML in content
+        let items = vec![NavItem {
+            title: "<script>alert('xss')</script>".to_string(),
+            path: "test".to_string(),
+            children: vec![],
+        }];
+        let html = render_nav(&items, "", None).into_string();
+
+        // Should be escaped, not raw script tag
+        assert!(!html.contains("<script>alert"));
+        assert!(html.contains("&lt;script&gt;"));
     }
 }
