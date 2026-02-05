@@ -44,7 +44,9 @@ jobs:
         run: cargo build --release
 
       - name: Build site
-        run: ./target/release/lighttable build images --output dist
+        run: |
+          ./target/release/lighttable build images dist
+          cp CNAME dist/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
