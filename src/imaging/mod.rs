@@ -11,7 +11,10 @@ mod calculations;
 pub mod operations;
 mod params;
 
-pub use backend::{BackendError, Dimensions, ImageBackend, ImageMagickBackend};
+pub use backend::{BackendError, ImageBackend, ImageMagickBackend};
+// Re-exported for tests (process.rs, operations.rs tests use this)
+#[cfg(test)]
+pub use backend::Dimensions;
 pub use operations::{
     ResponsiveConfig, ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
