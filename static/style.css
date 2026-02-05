@@ -1,5 +1,8 @@
 /* LightTable - Minimal Photo Gallery Styles */
 
+/* ===== Fonts ===== */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600&display=swap');
+
 /* ===== View Transitions ===== */
 @view-transition {
     navigation: auto;
@@ -50,10 +53,18 @@
     --frame-width-x: clamp(1rem, 3vw, 2.5rem);
     --frame-width-y: clamp(2rem, 6vw, 5rem);
     --header-height: 3rem;
+
+    /* Typography */
     --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --font-size-base: 14px;
     --font-size-small: 12px;
     --font-size-heading: 1.5rem;
+
+    /* Header typography (separate for breadcrumb and menu) */
+    --font-family-breadcrumb: "Noto Serif", Georgia, serif;
+    --font-weight-breadcrumb: 600;
+    --font-family-menu: "Noto Serif", Georgia, serif;
+    --font-weight-menu: 600;
 
     --thumbnail-gap: 1rem;
     --transition-speed: 0.2s;
@@ -107,6 +118,8 @@ img {
 
 /* ===== Breadcrumb ===== */
 .breadcrumb {
+    font-family: var(--font-family-breadcrumb);
+    font-weight: var(--font-weight-breadcrumb);
     color: var(--color-text-muted);
 }
 
@@ -121,6 +134,8 @@ img {
 /* ===== Navigation ===== */
 .site-nav {
     position: relative;
+    font-family: var(--font-family-menu);
+    font-weight: var(--font-weight-menu);
 }
 
 .nav-menu {
@@ -131,7 +146,6 @@ img {
     cursor: pointer;
     padding: 0.5rem 0;
     color: var(--color-text-muted);
-    font-weight: 500;
     list-style: none;
 }
 
