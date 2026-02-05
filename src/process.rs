@@ -204,8 +204,15 @@ pub fn process(
 }
 
 fn get_dimensions(path: &Path) -> Result<(u32, u32), ProcessError> {
-    let output = Command::new("magick")
-        .args(["identify", "-format", "%w %h", path.to_str().unwrap()])
+    let cmd = get_imagemagick_command();
+    let args = if cmd == "magick" {
+        vec!["identify", "-format", "%w %h", path.to_str().unwrap()]
+    } else {
+        vec!["-format", "%w %h", path.to_str().unwrap()]
+    };
+    // Use identify command for dimensions
+    let output = Command::new(if cmd == "magick" { "magick" } else { "identify" })
+        .args(&args)
         .output()?;
 
     if !output.status.success() {
@@ -394,8 +401,22 @@ fn generate_thumbnail(
     Ok(format!("{}/{}", relative_dir, thumb_name))
 }
 
+fn get_imagemagick_command() -> &'static str {
+    use std::sync::OnceLock;
+    static CMD: OnceLock<&str> = OnceLock::new();
+    CMD.get_or_init(|| {
+        // Prefer magick (ImageMagick 7) but fall back to convert (ImageMagick 6)
+        if Command::new("magick").arg("-version").output().is_ok_and(|o| o.status.success()) {
+            "magick"
+        } else {
+            "convert"
+        }
+    })
+}
+
 fn run_magick(args: &[&str]) -> Result<(), ProcessError> {
-    let output = Command::new("magick").args(args).output()?;
+    let cmd = get_imagemagick_command();
+    let output = Command::new(cmd).args(args).output()?;
 
     if !output.status.success() {
         return Err(ProcessError::ImageMagick(

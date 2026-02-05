@@ -27,19 +27,24 @@ install_arch() {
 verify_install() {
     echo "==> Verifying installation"
 
-    if ! command -v magick &> /dev/null; then
-        echo "Error: ImageMagick (magick) not found"
+    # Check for ImageMagick (either magick or convert)
+    if command -v magick &> /dev/null; then
+        IM_CMD="magick"
+    elif command -v convert &> /dev/null; then
+        IM_CMD="convert"
+    else
+        echo "Error: ImageMagick not found"
         exit 1
     fi
+    echo "Found ImageMagick: $IM_CMD"
 
     # Check for AVIF support
-    if ! magick -list format | grep -q AVIF; then
-        echo "Error: ImageMagick lacks AVIF support"
-        exit 1
+    if ! $IM_CMD -list format | grep -q AVIF; then
+        echo "Warning: ImageMagick lacks AVIF support, will use WebP only"
     fi
 
     # Check for WebP support
-    if ! magick -list format | grep -q WEBP; then
+    if ! $IM_CMD -list format | grep -q WEBP; then
         echo "Error: ImageMagick lacks WebP support"
         exit 1
     fi
