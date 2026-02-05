@@ -36,11 +36,19 @@ impl Default for ProcessConfig {
     }
 }
 
+/// About page content
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AboutPage {
+    pub title: String,
+    pub body: String,
+}
+
 /// Input manifest (from scan stage)
 #[derive(Debug, Deserialize)]
 pub struct InputManifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<InputAlbum>,
+    pub about: Option<AboutPage>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -73,6 +81,8 @@ pub struct InputImage {
 pub struct OutputManifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<OutputAlbum>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<AboutPage>,
 }
 
 #[derive(Debug, Serialize)]
@@ -200,6 +210,7 @@ pub fn process(
     Ok(OutputManifest {
         navigation: input.navigation,
         albums: output_albums,
+        about: input.about,
     })
 }
 
