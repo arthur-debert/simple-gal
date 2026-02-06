@@ -120,9 +120,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Read site config from the manifest to get image processing settings
             let manifest_content = std::fs::read_to_string(&manifest)?;
             let input_manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
-            let site_config: config::SiteConfig = serde_json::from_value(
-                input_manifest.get("config").cloned().unwrap_or_default(),
-            )?;
+            let site_config: config::SiteConfig =
+                serde_json::from_value(input_manifest.get("config").cloned().unwrap_or_default())?;
             let config = process::ProcessConfig::from_site_config(&site_config);
             let result = process::process(&manifest, &source_root, &output, &config)?;
             let output_manifest = output.join("manifest.json");

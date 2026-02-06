@@ -57,6 +57,7 @@ jobs:
           retention-days: 7
 
   # Lint job runs in parallel with tests
+  # Uses the same script as the local pre-commit hook
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -81,8 +82,5 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-lint-
 
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+      - name: Run checks (fmt, clippy, tests)
+        run: ./scripts/pre-commit

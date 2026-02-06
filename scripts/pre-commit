@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Shared checks for pre-commit hook and CI.
+# Install as git hook: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+
+echo "==> Checking formatting"
+cargo fmt --check
+
+echo "==> Running clippy"
+cargo clippy -- -D warnings
+
+echo "==> Running tests"
+cargo test --all-features
