@@ -263,10 +263,17 @@ pub fn render_nav(items: &[NavItem], current_path: &str, about_link_title: Optio
                 @for item in items {
                     (render_nav_item(item, current_path))
                 }
+                // Separator and page links
+                li.nav-separator role="separator" {}
                 @if let Some(link_title) = about_link_title {
                     @let is_current = current_path == "about";
                     li class=[is_current.then_some("current")] {
                         a href="/about.html" { (link_title) }
+                    }
+                }
+                li {
+                    a href="https://github.com/arthur-debert/websets" target="_blank" rel="noopener" {
+                        "GitHub"
                     }
                 }
             }
