@@ -500,12 +500,14 @@ fn render_image_page(
 
     let content = html! {
         (site_header(breadcrumb, nav))
-        main.image-page {
-            figure.image-frame style=(aspect_style) {
-                picture {
-                    source type="image/avif" srcset=(srcset_avif) sizes="(max-width: 800px) 100vw, 80vw";
-                    source type="image/webp" srcset=(srcset_webp) sizes="(max-width: 800px) 100vw, 80vw";
-                    img src=(default_src) alt=(alt_text);
+        main {
+            div.image-page {
+                figure.image-frame style=(aspect_style) {
+                    picture {
+                        source type="image/avif" srcset=(srcset_avif) sizes="(max-width: 800px) 100vw, 80vw";
+                        source type="image/webp" srcset=(srcset_webp) sizes="(max-width: 800px) 100vw, 80vw";
+                        img src=(default_src) alt=(alt_text);
+                    }
                 }
             }
         }
