@@ -247,6 +247,13 @@ img {
     margin-top: 0.25rem;
 }
 
+.nav-separator {
+    height: 1px;
+    background: var(--color-border);
+    margin: 0.75rem 1.5rem;
+    padding: 0;
+}
+
 /* ===== Main Content Area ===== */
 main {
     margin-top: var(--header-height);
