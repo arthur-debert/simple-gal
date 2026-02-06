@@ -22,6 +22,17 @@
 //! ```toml
 //! # All options are optional - defaults shown below
 //!
+//! [thumbnails]
+//! aspect_ratio = [4, 5]     # width:height ratio
+//!
+//! [images]
+//! max_size = 2080           # Maximum image size (longest edge in pixels)
+//! sizes = [800, 1400, 2080] # Responsive sizes to generate
+//! quality = 90              # AVIF/WebP quality (0-100)
+//!
+//! [theme]
+//! frame_width = "clamp(1rem, 3vw, 2.5rem)"  # CSS value for frame padding
+//!
 //! [colors.light]
 //! background = "#ffffff"
 //! text = "#111111"
@@ -67,6 +78,63 @@ pub enum ConfigError {
 #[serde(default)]
 pub struct SiteConfig {
     pub colors: ColorConfig,
+    pub thumbnails: ThumbnailsConfig,
+    pub images: ImagesConfig,
+    pub theme: ThemeConfig,
+}
+
+/// Thumbnail generation settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThumbnailsConfig {
+    /// Aspect ratio as [width, height], e.g. [4, 5] for portrait
+    pub aspect_ratio: [u32; 2],
+}
+
+impl Default for ThumbnailsConfig {
+    fn default() -> Self {
+        Self {
+            aspect_ratio: [4, 5],
+        }
+    }
+}
+
+/// Responsive image generation settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImagesConfig {
+    /// Maximum image size (pixels on longest edge)
+    pub max_size: u32,
+    /// Responsive sizes to generate
+    pub sizes: Vec<u32>,
+    /// AVIF/WebP quality (0-100)
+    pub quality: u32,
+}
+
+impl Default for ImagesConfig {
+    fn default() -> Self {
+        Self {
+            max_size: 2080,
+            sizes: vec![800, 1400, 2080],
+            quality: 90,
+        }
+    }
+}
+
+/// Theme/layout settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    /// Frame width around images (CSS value)
+    pub frame_width: String,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            frame_width: "clamp(1rem, 3vw, 2.5rem)".to_string(),
+        }
+    }
 }
 
 /// Color configuration for light and dark modes
@@ -196,6 +264,16 @@ mod tests {
     }
 
     #[test]
+    fn default_config_has_image_settings() {
+        let config = SiteConfig::default();
+        assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
+        assert_eq!(config.images.max_size, 2080);
+        assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
+        assert_eq!(config.images.quality, 90);
+        assert_eq!(config.theme.frame_width, "clamp(1rem, 3vw, 2.5rem)");
+    }
+
+    #[test]
     fn parse_partial_config() {
         let toml = r##"
 [colors.light]
@@ -207,6 +285,27 @@ background = "#fafafa"
         // Default values preserved
         assert_eq!(config.colors.light.text, "#111111");
         assert_eq!(config.colors.dark.background, "#0a0a0a");
+        // Image settings should be defaults
+        assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
+    }
+
+    #[test]
+    fn parse_image_settings() {
+        let toml = r##"
+[thumbnails]
+aspect_ratio = [1, 1]
+
+[images]
+sizes = [400, 800]
+quality = 85
+"##;
+        let config: SiteConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.thumbnails.aspect_ratio, [1, 1]);
+        assert_eq!(config.images.sizes, vec![400, 800]);
+        assert_eq!(config.images.quality, 85);
+        // Unspecified defaults preserved
+        assert_eq!(config.images.max_size, 2080);
+        assert_eq!(config.colors.light.background, "#ffffff");
     }
 
     #[test]

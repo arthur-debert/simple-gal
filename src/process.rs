@@ -73,14 +73,22 @@ pub struct ProcessConfig {
     pub thumbnail_size: u32,          // size on the short edge
 }
 
-impl Default for ProcessConfig {
-    fn default() -> Self {
+impl ProcessConfig {
+    /// Build a ProcessConfig from SiteConfig values.
+    pub fn from_site_config(config: &SiteConfig) -> Self {
+        let ar = config.thumbnails.aspect_ratio;
         Self {
-            sizes: vec![800, 1400, 2080],
-            quality: 90,
-            thumbnail_aspect: (4, 5),
+            sizes: config.images.sizes.clone(),
+            quality: config.images.quality,
+            thumbnail_aspect: (ar[0], ar[1]),
             thumbnail_size: 400,
         }
+    }
+}
+
+impl Default for ProcessConfig {
+    fn default() -> Self {
+        Self::from_site_config(&SiteConfig::default())
     }
 }
 

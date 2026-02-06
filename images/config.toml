@@ -1,8 +1,25 @@
 # LightTable Configuration
 # Place this file in your content root directory (same as your images)
+# All options are optional - defaults will be used for any missing values
+
+[thumbnails]
+# Aspect ratio for thumbnails (width:height)
+# Common choices: [1, 1] for square, [4, 5] for portrait
+aspect_ratio = [4, 5]
+
+[images]
+# Maximum image size (pixels on longest edge)
+max_size = 2080
+# Responsive sizes to generate
+sizes = [800, 1400, 2080]
+# AVIF/WebP quality (0-100)
+quality = 90
+
+[theme]
+# Frame width around images (CSS value)
+frame_width = "clamp(1rem, 3vw, 2.5rem)"
 
 # Color scheme configuration
-# All colors are optional - defaults will be used for any missing values
 
 [colors.light]
 # Light mode colors (when prefers-color-scheme: light or no preference)

@@ -86,7 +86,7 @@ lighttable build ./images --output ./dist
 
 ## Configuration
 
-`lighttable.toml` in repository root:
+`config.toml` in your content root (e.g. `images/config.toml`). All options are optional — defaults are used for any missing values.
 
 ```toml
 [thumbnails]
@@ -99,6 +99,22 @@ quality = 90
 
 [theme]
 frame_width = "clamp(1rem, 3vw, 2.5rem)"
+
+[colors.light]
+background = "#ffffff"
+text = "#111111"
+text_muted = "#666666"
+border = "#e0e0e0"
+link = "#333333"
+link_hover = "#000000"
+
+[colors.dark]
+background = "#0a0a0a"
+text = "#eeeeee"
+text_muted = "#999999"
+border = "#333333"
+link = "#cccccc"
+link_hover = "#ffffff"
 ```
 
 ## UI Behavior

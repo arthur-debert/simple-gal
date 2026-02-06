@@ -117,7 +117,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output,
         } => {
             let source_root = source.unwrap_or_else(|| PathBuf::from("."));
-            let config = process::ProcessConfig::default();
+            // Read site config from the manifest to get image processing settings
+            let manifest_content = std::fs::read_to_string(&manifest)?;
+            let input_manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
+            let site_config: config::SiteConfig = serde_json::from_value(
+                input_manifest.get("config").cloned().unwrap_or_default(),
+            )?;
+            let config = process::ProcessConfig::from_site_config(&site_config);
             let result = process::process(&manifest, &source_root, &output, &config)?;
             let output_manifest = output.join("manifest.json");
             let json = serde_json::to_string_pretty(&result)?;
@@ -145,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("==> Stage 2: Processing images");
             let processed_dir = temp_dir.join("processed");
-            let config = process::ProcessConfig::default();
+            let config = process::ProcessConfig::from_site_config(&manifest.config);
             let processed_manifest =
                 process::process(&scan_manifest_path, &root, &processed_dir, &config)?;
             let processed_manifest_path = processed_dir.join("manifest.json");
