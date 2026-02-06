@@ -22,6 +22,8 @@
 //! ```toml
 //! # All options are optional - defaults shown below
 //!
+//! content_root = "images"   # Path to content directory
+//!
 //! [thumbnails]
 //! aspect_ratio = [4, 5]     # width:height ratio
 //!
@@ -80,13 +82,32 @@ pub enum ConfigError {
 }
 
 /// Site configuration loaded from config.toml
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SiteConfig {
+    /// Path to the content root directory (where images, config, and pages live)
+    #[serde(default = "default_content_root")]
+    pub content_root: String,
     pub colors: ColorConfig,
     pub thumbnails: ThumbnailsConfig,
     pub images: ImagesConfig,
     pub theme: ThemeConfig,
+}
+
+fn default_content_root() -> String {
+    "images".to_string()
+}
+
+impl Default for SiteConfig {
+    fn default() -> Self {
+        Self {
+            content_root: default_content_root(),
+            colors: ColorConfig::default(),
+            thumbnails: ThumbnailsConfig::default(),
+            images: ImagesConfig::default(),
+            theme: ThemeConfig::default(),
+        }
+    }
 }
 
 /// Thumbnail generation settings
@@ -308,6 +329,12 @@ mod tests {
         let config = SiteConfig::default();
         assert_eq!(config.colors.light.background, "#ffffff");
         assert_eq!(config.colors.dark.background, "#0a0a0a");
+    }
+
+    #[test]
+    fn default_config_has_content_root() {
+        let config = SiteConfig::default();
+        assert_eq!(config.content_root, "images");
     }
 
     #[test]

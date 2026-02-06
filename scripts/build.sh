@@ -3,14 +3,12 @@ set -euo pipefail
 
 # LightTable build script
 # Used both locally and in CI
-
-ROOT_DIR="${1:-images}"
-OUTPUT_DIR="${2:-dist}"
+# Content root and output dir default from config.toml / CLI defaults
 
 echo "==> Building lighttable CLI"
 cargo build --release
 
 echo "==> Running full build pipeline"
-./target/release/lighttable build "$ROOT_DIR" --output "$OUTPUT_DIR"
+./target/release/lighttable build "$@"
 
 echo "==> Done"

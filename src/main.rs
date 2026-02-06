@@ -18,8 +18,8 @@
 //! ## Usage
 //!
 //! ```bash
-//! # Full build (recommended)
-//! lighttable build ./images --output ./dist
+//! # Full build (uses content_root from config.toml, output defaults to dist/)
+//! lighttable build
 //!
 //! # Or run stages individually
 //! lighttable scan ./images
@@ -93,10 +93,11 @@ enum Command {
     },
     /// Run full build pipeline
     Build {
-        /// Root directory containing albums (required)
-        root: PathBuf,
+        /// Root directory containing albums
+        root: Option<PathBuf>,
 
-        /// Output directory (required)
+        /// Output directory
+        #[arg(default_value = "dist")]
         output: PathBuf,
     },
 }
@@ -138,6 +139,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             generate::generate(&manifest, &processed, &output)?;
         }
         Command::Build { root, output } => {
+            // Resolve content root: CLI arg > config.toml content_root > "images"
+            let root = root.unwrap_or_else(|| {
+                let default = PathBuf::from("images");
+                config::load_config(&default)
+                    .map(|c| PathBuf::from(c.content_root))
+                    .unwrap_or(default)
+            });
+
             // Use a temp directory for all intermediate files - never touch source
             let temp_dir = std::env::temp_dir().join(format!("lighttable-{}", std::process::id()));
             std::fs::create_dir_all(&temp_dir)?;

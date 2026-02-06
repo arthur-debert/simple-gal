@@ -103,7 +103,7 @@ jobs:
 
       - name: Build site
         run: |
-          ./bin/lighttable build images dist
+          ./bin/lighttable build
           cp CNAME dist/
 
       - name: Upload pages artifact

@@ -18,7 +18,7 @@ fi
 
 if [ "$1" = "up" ]; then
     # Build CLI and static site
-    cargo build && target/debug/lighttable build images/ dist
+    cargo build && target/debug/lighttable build
 
     # Start server only if not already running
     if ! lsof -i :8000 -sTCP:LISTEN >/dev/null 2>&1; then

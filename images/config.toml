@@ -2,6 +2,9 @@
 # Place this file in your content root directory (same as your images)
 # All options are optional - defaults will be used for any missing values
 
+# The path to where images, config and pages are
+content_root = "images"
+
 [thumbnails]
 # Aspect ratio for thumbnails (width:height)
 # Common choices: [1, 1] for square, [4, 5] for portrait
