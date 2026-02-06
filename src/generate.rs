@@ -137,9 +137,10 @@ pub fn generate(
     let manifest_content = fs::read_to_string(manifest_path)?;
     let manifest: Manifest = serde_json::from_str(&manifest_content)?;
 
-    // Generate CSS with colors from config
+    // Generate CSS with config values prepended to static stylesheet
     let color_css = config::generate_color_css(&manifest.config.colors);
-    let css = format!("{}\n\n{}", color_css, CSS_STATIC);
+    let theme_css = config::generate_theme_css(&manifest.config.theme);
+    let css = format!("{}\n\n{}\n\n{}", color_css, theme_css, CSS_STATIC);
 
     fs::create_dir_all(output_dir)?;
 

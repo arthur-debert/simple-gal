@@ -30,8 +30,15 @@
 //! sizes = [800, 1400, 2080] # Responsive sizes to generate
 //! quality = 90              # AVIF/WebP quality (0-100)
 //!
-//! [theme]
-//! frame_width = "clamp(1rem, 3vw, 2.5rem)"  # CSS value for frame padding
+//! [theme.frame_x]
+//! size = "3vw"              # Preferred horizontal frame size
+//! min = "1rem"              # Minimum horizontal frame size
+//! max = "2.5rem"            # Maximum horizontal frame size
+//!
+//! [theme.frame_y]
+//! size = "6vw"              # Preferred vertical frame size
+//! min = "2rem"              # Minimum vertical frame size
+//! max = "5rem"              # Maximum vertical frame size
 //!
 //! [colors.light]
 //! background = "#ffffff"
@@ -121,18 +128,50 @@ impl Default for ImagesConfig {
     }
 }
 
+/// A responsive CSS size expressed as `clamp(min, size, max)`.
+///
+/// - `size`: the preferred/fluid value, typically viewport-relative (e.g. `"3vw"`)
+/// - `min`: the minimum bound (e.g. `"1rem"`)
+/// - `max`: the maximum bound (e.g. `"2.5rem"`)
+///
+/// Generates `clamp(min, size, max)` in the output CSS.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClampSize {
+    pub size: String,
+    pub min: String,
+    pub max: String,
+}
+
+impl ClampSize {
+    /// Render as a CSS `clamp()` expression.
+    pub fn to_css(&self) -> String {
+        format!("clamp({}, {}, {})", self.min, self.size, self.max)
+    }
+}
+
 /// Theme/layout settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
-    /// Frame width around images (CSS value)
-    pub frame_width: String,
+    /// Horizontal frame padding around images (left/right)
+    pub frame_x: ClampSize,
+    /// Vertical frame padding around images (top/bottom)
+    pub frame_y: ClampSize,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            frame_width: "clamp(1rem, 3vw, 2.5rem)".to_string(),
+            frame_x: ClampSize {
+                size: "3vw".to_string(),
+                min: "1rem".to_string(),
+                max: "2.5rem".to_string(),
+            },
+            frame_y: ClampSize {
+                size: "6vw".to_string(),
+                min: "2rem".to_string(),
+                max: "5rem".to_string(),
+            },
         }
     }
 }
@@ -251,6 +290,18 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
     )
 }
 
+/// Generate CSS custom properties from theme config
+pub fn generate_theme_css(theme: &ThemeConfig) -> String {
+    format!(
+        r#":root {{
+    --frame-width-x: {frame_x};
+    --frame-width-y: {frame_y};
+}}"#,
+        frame_x = theme.frame_x.to_css(),
+        frame_y = theme.frame_y.to_css(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,7 +321,8 @@ mod tests {
         assert_eq!(config.images.max_size, 2080);
         assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
         assert_eq!(config.images.quality, 90);
-        assert_eq!(config.theme.frame_width, "clamp(1rem, 3vw, 2.5rem)");
+        assert_eq!(config.theme.frame_x.to_css(), "clamp(1rem, 3vw, 2.5rem)");
+        assert_eq!(config.theme.frame_y.to_css(), "clamp(2rem, 6vw, 5rem)");
     }
 
     #[test]
@@ -435,5 +487,23 @@ link_hover = "#f88"
     fn color_scheme_default_is_light() {
         let scheme = ColorScheme::default();
         assert_eq!(scheme.background, "#ffffff");
+    }
+
+    #[test]
+    fn clamp_size_to_css() {
+        let size = ClampSize {
+            size: "3vw".to_string(),
+            min: "1rem".to_string(),
+            max: "2.5rem".to_string(),
+        };
+        assert_eq!(size.to_css(), "clamp(1rem, 3vw, 2.5rem)");
+    }
+
+    #[test]
+    fn generate_theme_css_includes_frame_variables() {
+        let theme = ThemeConfig::default();
+        let css = generate_theme_css(&theme);
+        assert!(css.contains("--frame-width-x: clamp(1rem, 3vw, 2.5rem)"));
+        assert!(css.contains("--frame-width-y: clamp(2rem, 6vw, 5rem)"));
     }
 }

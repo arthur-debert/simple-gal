@@ -15,9 +15,17 @@ sizes = [800, 1400, 2080]
 # AVIF/WebP quality (0-100)
 quality = 90
 
-[theme]
-# Frame width around images (CSS value)
-frame_width = "clamp(1rem, 3vw, 2.5rem)"
+[theme.frame_x]
+# Horizontal frame padding (left/right) around images
+size = "3vw"
+min = "1rem"
+max = "2.5rem"
+
+[theme.frame_y]
+# Vertical frame padding (top/bottom) around images
+size = "6vw"
+min = "2rem"
+max = "5rem"
 
 # Color scheme configuration
 

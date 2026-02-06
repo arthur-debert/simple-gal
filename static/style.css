@@ -49,9 +49,8 @@
 
 /* ===== CSS Custom Properties ===== */
 /* Note: Color variables (--color-*) are generated from config.toml */
+/* Note: --frame-width-x and --frame-width-y are generated from config.toml */
 :root {
-    --frame-width-x: clamp(1rem, 3vw, 2.5rem);
-    --frame-width-y: clamp(2rem, 6vw, 5rem);
     --header-height: 3rem;
 
     /* Typography */
@@ -412,11 +411,6 @@ body.image-view main {
 
 /* ===== Mobile Styles ===== */
 @media (max-width: 768px) {
-    :root {
-        --frame-width-x: 0.5rem;
-        --frame-width-y: 1rem;
-    }
-
     .site-header {
         padding: 0 1rem;
     }
