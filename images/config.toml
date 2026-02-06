@@ -18,15 +18,14 @@ quality = 90
 
 [theme.frame_x]
 # Horizontal frame padding (left/right) around images
-size = "0.5vw"
+size = "3px"
 min = "3px"
 max = "8px"
 
 [theme.frame_y]
-# Vertical frame padding (top/bottom) around images
-size = "6vw"
-min = "2rem"
-max = "5rem"
+size = "2vw"
+min = "0.5rem"
+max = "2rem"
 
 # Color scheme configuration
 
