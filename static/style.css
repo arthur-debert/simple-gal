@@ -80,7 +80,7 @@ body {
     font-family: var(--font-family);
     background-color: var(--color-bg);
     color: var(--color-text);
-    min-height: 100vh;
+    min-height: 100dvh;
 }
 
 a {
@@ -258,7 +258,7 @@ img {
 main {
     margin-top: var(--header-height);
     padding: 2rem;
-    min-height: calc(100vh - var(--header-height));
+    min-height: calc(100dvh - var(--header-height));
 }
 
 /* ===== Index Page ===== */
@@ -366,7 +366,7 @@ body.image-view main {
     align-items: center;
     justify-content: center;
     padding: var(--frame-width-y) var(--frame-width-x);
-    height: calc(100vh - var(--header-height));
+    height: calc(100dvh - var(--header-height));
 }
 
 .image-page {
@@ -388,12 +388,12 @@ body.image-view main {
 .image-frame picture {
     display: flex;
     max-width: 100%;
-    max-height: calc(100vh - var(--header-height) - 2 * var(--frame-width-y));
+    max-height: calc(100dvh - var(--header-height) - 2 * var(--frame-width-y));
 }
 
 .image-frame img {
     max-width: 100%;
-    max-height: calc(100vh - var(--header-height) - 2 * var(--frame-width-y));
+    max-height: calc(100dvh - var(--header-height) - 2 * var(--frame-width-y));
     width: auto;
     height: auto;
     object-fit: contain;
