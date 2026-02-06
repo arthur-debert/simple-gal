@@ -7,7 +7,7 @@ A minimal static site generator for fine art photography portfolios. Generates f
 Simple Gal uses your filesystem as the data source:
 
 ```
-images/                          # Root directory
+content/                         # Root directory
 ├── 010-Landscapes/              # Album (numbered = shown in nav)
 │   ├── info.txt                 # Optional description
 │   ├── 001-sunset.jpg           # Images ordered by number prefix
@@ -39,7 +39,7 @@ images/                          # Root directory
 
 ```
 1. Scan        →  manifest.json    (filesystem → structured data)
-2. Process     →  images/          (responsive sizes + thumbnails)
+2. Process     →  processed/       (responsive sizes + thumbnails)
 3. Generate    →  dist/            (final HTML site)
 ```
 
@@ -77,8 +77,8 @@ GitHub Actions workflow:
 # Build the CLI
 cargo build --release
 
-# Run from images root
-simple-gal build ./images --output ./dist
+# Run from content root
+simple-gal build ./content --output ./dist
 
 # Or use the build script (same as CI)
 ./scripts/build.sh
@@ -86,7 +86,7 @@ simple-gal build ./images --output ./dist
 
 ## Configuration
 
-`config.toml` in your content root (e.g. `images/config.toml`). All options are optional — defaults are used for any missing values.
+`config.toml` in your content root (e.g. `content/config.toml`). All options are optional — defaults are used for any missing values.
 
 ```toml
 [thumbnails]

@@ -22,7 +22,7 @@
 //! simple-gal build
 //!
 //! # Or run stages individually
-//! simple-gal scan ./images
+//! simple-gal scan ./content
 //! simple-gal process manifest.json --output processed
 //! simple-gal generate processed/manifest.json --output dist
 //! ```
@@ -139,9 +139,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             generate::generate(&manifest, &processed, &output)?;
         }
         Command::Build { root, output } => {
-            // Resolve content root: CLI arg > config.toml content_root > "images"
+            // Resolve content root: CLI arg > config.toml content_root > "content"
             let root = root.unwrap_or_else(|| {
-                let default = PathBuf::from("images");
+                let default = PathBuf::from("content");
                 config::load_config(&default)
                     .map(|c| PathBuf::from(c.content_root))
                     .unwrap_or(default)

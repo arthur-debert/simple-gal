@@ -8,7 +8,7 @@
 //! Simple Gal expects a specific directory layout:
 //!
 //! ```text
-//! images/                          # Content root
+//! content/                         # Content root
 //! ├── config.toml                  # Site configuration (optional)
 //! ├── 040-about.md                 # Page (numbered = appears in nav)
 //! ├── 050-github.md                # External link page (URL-only content)
@@ -481,7 +481,7 @@ mod tests {
 
     fn setup_fixtures() -> TempDir {
         let tmp = TempDir::new().unwrap();
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/images");
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/content");
 
         // Copy fixture directory recursively
         copy_dir_recursive(&fixtures, tmp.path()).unwrap();

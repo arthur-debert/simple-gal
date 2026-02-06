@@ -1,9 +1,9 @@
 # Simple Gal Configuration
-# Place this file in your content root directory (same as your images)
+# Place this file in your content root directory
 # All options are optional - defaults will be used for any missing values
 
-# The path to where images, config and pages are
-content_root = "images"
+# The path to where albums, config and pages are
+content_root = "content"
 
 [thumbnails]
 # Aspect ratio for thumbnails (width:height)

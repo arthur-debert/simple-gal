@@ -5,7 +5,7 @@ This directory contains minimal test data for the filesystem scanner.
 ## Structure
 
 ```
-images/
+content/
 ├── 010-Landscapes/           # Numbered album (in nav)
 │   ├── info.txt
 │   ├── 001-dawn.jpg

@@ -5,10 +5,10 @@
 //!
 //! ## Config File Location
 //!
-//! Place `config.toml` in the same directory as your images (the content root):
+//! Place `config.toml` in the content root directory:
 //!
 //! ```text
-//! images/
+//! content/
 //! ├── config.toml          # Site configuration
 //! ├── about.md             # Optional about page
 //! ├── 010-Landscapes/
@@ -22,7 +22,7 @@
 //! ```toml
 //! # All options are optional - defaults shown below
 //!
-//! content_root = "images"   # Path to content directory
+//! content_root = "content"  # Path to content directory
 //!
 //! [thumbnails]
 //! aspect_ratio = [4, 5]     # width:height ratio
@@ -85,7 +85,7 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SiteConfig {
-    /// Path to the content root directory (where images, config, and pages live)
+    /// Path to the content root directory (where albums, config, and pages live)
     #[serde(default = "default_content_root")]
     pub content_root: String,
     pub colors: ColorConfig,
@@ -95,7 +95,7 @@ pub struct SiteConfig {
 }
 
 fn default_content_root() -> String {
-    "images".to_string()
+    "content".to_string()
 }
 
 impl Default for SiteConfig {
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn default_config_has_content_root() {
         let config = SiteConfig::default();
-        assert_eq!(config.content_root, "images");
+        assert_eq!(config.content_root, "content");
     }
 
     #[test]
