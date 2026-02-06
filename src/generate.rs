@@ -1,6 +1,6 @@
 //! HTML site generation.
 //!
-//! Stage 3 of the LightTable build pipeline. Takes the processed manifest and
+//! Stage 3 of the Simple Gal build pipeline. Takes the processed manifest and
 //! generates the final static HTML site.
 //!
 //! ## Generated Pages

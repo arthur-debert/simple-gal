@@ -1,4 +1,4 @@
-// LightTable - Image Navigation
+// Simple Gal - Image Navigation
 (function() {
     const zones = document.querySelector('.nav-zones');
     if (!zones) return;

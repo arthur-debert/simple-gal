@@ -66,8 +66,8 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lighttable-binary
-          path: target/release/lighttable
+          name: simple-gal-binary
+          path: target/release/simple-gal
           retention-days: 1
 
   build:
@@ -95,15 +95,15 @@ jobs:
       - name: Download binary artifact
         uses: actions/download-artifact@v4
         with:
-          name: lighttable-binary
+          name: simple-gal-binary
           path: ./bin
 
       - name: Make binary executable
-        run: chmod +x ./bin/lighttable
+        run: chmod +x ./bin/simple-gal
 
       - name: Build site
         run: |
-          ./bin/lighttable build
+          ./bin/simple-gal build
           cp CNAME dist/
 
       - name: Upload pages artifact

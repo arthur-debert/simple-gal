@@ -13,7 +13,7 @@
 ///
 /// # Examples
 /// ```
-/// # use lighttable::imaging::calculate_thumbnail_dimensions;
+/// # use simple_gal::imaging::calculate_thumbnail_dimensions;
 /// // 4:5 portrait with short edge 400px → 400x500
 /// assert_eq!(calculate_thumbnail_dimensions((4, 5), 400), (400, 500));
 ///

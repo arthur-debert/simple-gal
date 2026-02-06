@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install system dependencies for LightTable
+# Install system dependencies for Simple Gal
 # Detects OS and installs appropriately
 #
 # Required commands after install:

@@ -52,8 +52,8 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lighttable-linux
-          path: target/release/lighttable
+          name: simple-gal-linux
+          path: target/release/simple-gal
           retention-days: 7
 
   # Lint job runs in parallel with tests

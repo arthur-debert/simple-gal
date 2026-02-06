@@ -30,7 +30,7 @@ specs/**/*.treeviz
 specs/**/*.treeviz.*
 .padz
 
-# LightTable build outputs
+# Simple Gal build outputs
 dist/
 processed/
 manifest.json

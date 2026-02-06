@@ -1,11 +1,11 @@
 //! Filesystem scanning and manifest generation.
 //!
-//! Stage 1 of the LightTable build pipeline. Scans a directory tree to discover
+//! Stage 1 of the Simple Gal build pipeline. Scans a directory tree to discover
 //! albums and images, producing a structured manifest that subsequent stages consume.
 //!
 //! ## Directory Structure
 //!
-//! LightTable expects a specific directory layout:
+//! Simple Gal expects a specific directory layout:
 //!
 //! ```text
 //! images/                          # Content root
@@ -712,7 +712,7 @@ mod tests {
         let about = manifest.pages.iter().find(|p| p.slug == "about").unwrap();
         assert_eq!(about.title, "About This Gallery");
         assert_eq!(about.link_title, "about");
-        assert!(about.body.contains("LightTable"));
+        assert!(about.body.contains("Simple Gal"));
         assert!(about.in_nav);
         assert!(!about.is_link);
     }

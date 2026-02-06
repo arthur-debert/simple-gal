@@ -1,10 +1,10 @@
-# LightTable
+# Simple Gal
 
 A minimal static site generator for fine art photography portfolios. Generates fast-loading, responsive photo albums from a filesystem-based data source.
 
 ## How It Works
 
-LightTable uses your filesystem as the data source:
+Simple Gal uses your filesystem as the data source:
 
 ```
 images/                          # Root directory
@@ -78,7 +78,7 @@ GitHub Actions workflow:
 cargo build --release
 
 # Run from images root
-lighttable build ./images --output ./dist
+simple-gal build ./images --output ./dist
 
 # Or use the build script (same as CI)
 ./scripts/build.sh

@@ -1,6 +1,6 @@
 //! Image processing and responsive image generation.
 //!
-//! Stage 2 of the LightTable build pipeline. Takes the manifest from the scan stage
+//! Stage 2 of the Simple Gal build pipeline. Takes the manifest from the scan stage
 //! and processes all images to generate responsive sizes and thumbnails.
 //!
 //! ## Dependencies

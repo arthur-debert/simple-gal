@@ -225,22 +225,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
 
 [[package]]
-name = "lighttable"
-version = "0.1.0"
-dependencies = [
- "clap",
- "maud",
- "pulldown-cmark",
- "rayon",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "toml",
- "walkdir",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -444,6 +428,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "simple-gal"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "maud",
+ "pulldown-cmark",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "walkdir",
 ]
 
 [[package]]

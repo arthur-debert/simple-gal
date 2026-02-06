@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# LightTable build script
+# Simple Gal build script
 # Used both locally and in CI
 # Content root and output dir default from config.toml / CLI defaults
 
-echo "==> Building lighttable CLI"
+echo "==> Building simple-gal CLI"
 cargo build --release
 
 echo "==> Running full build pipeline"
-./target/release/lighttable build "$@"
+./target/release/simple-gal build "$@"
 
 echo "==> Done"

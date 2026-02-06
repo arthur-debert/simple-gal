@@ -1,1 +1,1 @@
-https://github.com/arthur-debert/websets
+https://github.com/arthur-debert/simple-gal

@@ -1,6 +1,6 @@
 # System Dependencies
 
-LightTable requires these system-level tools for image processing.
+Simple Gal requires these system-level tools for image processing.
 
 ## Required
 

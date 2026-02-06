@@ -1,10 +1,10 @@
-//! # LightTable
+//! # Simple Gal
 //!
 //! A minimal static site generator for fine art photography portfolios.
 //!
 //! ## Build Pipeline
 //!
-//! LightTable processes images through a three-stage pipeline:
+//! Simple Gal processes images through a three-stage pipeline:
 //!
 //! ```text
 //! 1. Scan      →  manifest.json    (filesystem → structured data)
@@ -19,12 +19,12 @@
 //!
 //! ```bash
 //! # Full build (uses content_root from config.toml, output defaults to dist/)
-//! lighttable build
+//! simple-gal build
 //!
 //! # Or run stages individually
-//! lighttable scan ./images
-//! lighttable process manifest.json --output processed
-//! lighttable generate processed/manifest.json --output dist
+//! simple-gal scan ./images
+//! simple-gal process manifest.json --output processed
+//! simple-gal generate processed/manifest.json --output dist
 //! ```
 //!
 //! ## Modules
@@ -44,7 +44,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "lighttable")]
+#[command(name = "simple-gal")]
 #[command(about = "Static site generator for photo portfolios")]
 struct Cli {
     #[command(subcommand)]
@@ -148,7 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
             // Use a temp directory for all intermediate files - never touch source
-            let temp_dir = std::env::temp_dir().join(format!("lighttable-{}", std::process::id()));
+            let temp_dir = std::env::temp_dir().join(format!("simple-gal-{}", std::process::id()));
             std::fs::create_dir_all(&temp_dir)?;
 
             println!("==> Stage 1: Scanning filesystem");
