@@ -10,7 +10,8 @@
 //! ```text
 //! images/                          # Content root
 //! ├── config.toml                  # Site configuration (optional)
-//! ├── about.md                     # About page markdown (optional)
+//! ├── 040-about.md                 # Page (numbered = appears in nav)
+//! ├── 050-github.md                # External link page (URL-only content)
 //! ├── 010-Landscapes/              # Album (numbered = appears in nav)
 //! │   ├── info.txt                 # Album description (optional)
 //! │   ├── 001-dawn.jpg             # Preview image (lowest number)
@@ -40,7 +41,7 @@
 //! Produces a [`Manifest`] containing:
 //! - Navigation tree (numbered directories only)
 //! - All albums with their images
-//! - Optional about page content
+//! - Pages from markdown files (content pages and external links)
 //! - Site configuration
 //!
 //! ## Validation
@@ -76,20 +77,34 @@ pub enum ScanError {
 pub struct Manifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<Album>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub about: Option<AboutPage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<Page>,
     pub config: SiteConfig,
 }
 
-/// About page content
-#[derive(Debug, Serialize)]
-pub struct AboutPage {
-    /// Title derived from markdown content (first # heading)
+/// A page generated from a markdown file in the content root.
+///
+/// Pages follow the same numbering convention as albums:
+/// - Numbered files (`NNN-name.md`) appear in navigation, sorted by number
+/// - Unnumbered files are generated but hidden from navigation
+///
+/// If the file content is just a URL, the page becomes an external link in nav.
+#[derive(Debug, Clone, Serialize)]
+pub struct Page {
+    /// Title from first `# heading` in markdown, or link_title as fallback
     pub title: String,
-    /// Link title derived from filename (dashes to spaces)
+    /// Display label in nav (filename with number stripped and dashes → spaces)
     pub link_title: String,
-    /// Raw markdown content (will be converted to HTML in generate stage)
+    /// URL slug (filename stem with number prefix stripped)
+    pub slug: String,
+    /// Raw markdown content (or URL for link pages)
     pub body: String,
+    /// Whether this page appears in navigation (has number prefix)
+    pub in_nav: bool,
+    /// Sort key from number prefix (for ordering)
+    pub sort_key: u32,
+    /// If true, body is a URL and this page is an external link
+    pub is_link: bool,
 }
 
 /// Navigation tree item (only numbered directories)
@@ -129,8 +144,7 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
 
     scan_directory(root, root, &mut albums, &mut nav_items)?;
 
-    // Check for about page
-    let about = parse_about_page(root)?;
+    let pages = parse_pages(root)?;
 
     // Load site config (uses defaults if config.toml doesn't exist)
     let config = config::load_config(root)?;
@@ -138,18 +152,18 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     Ok(Manifest {
         navigation: nav_items,
         albums,
-        about,
+        pages,
         config,
     })
 }
 
-/// Parse markdown file for about page if one exists in root directory
-/// Link title comes from filename (dashes to spaces)
-/// Page title comes from first # heading in markdown
-/// Body is raw markdown content
-fn parse_about_page(root: &Path) -> Result<Option<AboutPage>, ScanError> {
-    // Find .md files in root directory
-    let md_files: Vec<PathBuf> = fs::read_dir(root)?
+/// Parse all markdown files in the root directory into pages.
+///
+/// Each `.md` file becomes a page. Numbered files (`NNN-name.md`) appear in
+/// navigation sorted by number; unnumbered files are generated but hidden.
+/// If a file's only content is a URL, it becomes an external link in the nav.
+fn parse_pages(root: &Path) -> Result<Vec<Page>, ScanError> {
+    let mut md_files: Vec<PathBuf> = fs::read_dir(root)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
@@ -160,35 +174,54 @@ fn parse_about_page(root: &Path) -> Result<Option<AboutPage>, ScanError> {
         })
         .collect();
 
-    let md_path = match md_files.first() {
-        Some(p) => p,
-        None => return Ok(None),
-    };
+    md_files.sort();
 
-    // Extract link title from filename (dashes to spaces, no extension)
-    let filename = md_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "about".to_string());
-    let link_title = filename.replace('-', " ");
+    let mut pages = Vec::new();
+    for md_path in &md_files {
+        let stem = md_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
 
-    let content = fs::read_to_string(md_path)?;
+        let (in_nav, sort_key, name) = if let Some((num, name)) = parse_numbered_name(&stem) {
+            (true, num, name)
+        } else {
+            (false, u32::MAX, stem.clone())
+        };
 
-    // Extract title from first # heading, or use link_title as fallback
-    let title = content
-        .lines()
-        .find(|line| line.starts_with("# "))
-        .map(|line| line.trim_start_matches("# ").trim().to_string())
-        .unwrap_or_else(|| link_title.clone());
+        let link_title = name.replace('-', " ");
+        let slug = name;
 
-    // Body is the full markdown content (will be converted to HTML in generate stage)
-    let body = content;
+        let content = fs::read_to_string(md_path)?;
+        let trimmed = content.trim();
 
-    Ok(Some(AboutPage {
-        title,
-        link_title,
-        body,
-    }))
+        // A page whose only content is a URL becomes an external link
+        let is_link = !trimmed.contains('\n')
+            && (trimmed.starts_with("http://") || trimmed.starts_with("https://"));
+
+        let title = if is_link {
+            link_title.clone()
+        } else {
+            content
+                .lines()
+                .find(|line| line.starts_with("# "))
+                .map(|line| line.trim_start_matches("# ").trim().to_string())
+                .unwrap_or_else(|| link_title.clone())
+        };
+
+        pages.push(Page {
+            title,
+            link_title,
+            slug,
+            body: content,
+            in_nav,
+            sort_key,
+            is_link,
+        });
+    }
+
+    pages.sort_by_key(|p| p.sort_key);
+    Ok(pages)
 }
 
 fn scan_directory(
@@ -577,46 +610,50 @@ mod tests {
     }
 
     // =========================================================================
-    // About page tests
+    // Page tests
     // =========================================================================
 
     #[test]
-    fn about_page_parsed_from_fixtures() {
+    fn pages_parsed_from_fixtures() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let about = manifest.about.expect("about page should exist");
+        // Fixtures have 040-about.md (numbered, in nav) and 050-github.md (link)
+        assert!(manifest.pages.len() >= 2);
+
+        let about = manifest.pages.iter().find(|p| p.slug == "about").unwrap();
         assert_eq!(about.title, "About This Gallery");
         assert_eq!(about.link_title, "about");
         assert!(about.body.contains("LightTable"));
+        assert!(about.in_nav);
+        assert!(!about.is_link);
     }
 
     #[test]
-    fn about_page_link_title_from_filename() {
+    fn page_link_title_from_filename() {
         let tmp = TempDir::new().unwrap();
 
-        // Create markdown file with dashes in name
-        let md_path = tmp.path().join("who-am-i.md");
+        let md_path = tmp.path().join("010-who-am-i.md");
         fs::write(&md_path, "# My Title\n\nSome content.").unwrap();
 
-        // Create a minimal album so scan doesn't fail
         let album = tmp.path().join("010-Test");
         fs::create_dir_all(&album).unwrap();
         fs::write(album.join("001-test.jpg"), "fake image").unwrap();
 
         let manifest = scan(tmp.path()).unwrap();
 
-        let about = manifest.about.expect("about page should exist");
-        assert_eq!(about.link_title, "who am i");
-        assert_eq!(about.title, "My Title");
+        let page = manifest.pages.first().unwrap();
+        assert_eq!(page.link_title, "who am i");
+        assert_eq!(page.title, "My Title");
+        assert_eq!(page.slug, "who-am-i");
+        assert!(page.in_nav);
     }
 
     #[test]
-    fn about_page_title_fallback_to_link_title() {
+    fn page_title_fallback_to_link_title() {
         let tmp = TempDir::new().unwrap();
 
-        // Create markdown file without # heading
-        let md_path = tmp.path().join("about-me.md");
+        let md_path = tmp.path().join("010-about-me.md");
         fs::write(&md_path, "Just some content without a heading.").unwrap();
 
         let album = tmp.path().join("010-Test");
@@ -625,14 +662,13 @@ mod tests {
 
         let manifest = scan(tmp.path()).unwrap();
 
-        let about = manifest.about.expect("about page should exist");
-        // Title should fall back to link_title when no # heading
-        assert_eq!(about.title, "about me");
-        assert_eq!(about.link_title, "about me");
+        let page = manifest.pages.first().unwrap();
+        assert_eq!(page.title, "about me");
+        assert_eq!(page.link_title, "about me");
     }
 
     #[test]
-    fn no_about_page_when_no_markdown() {
+    fn no_pages_when_no_markdown() {
         let tmp = TempDir::new().unwrap();
 
         let album = tmp.path().join("010-Test");
@@ -640,7 +676,96 @@ mod tests {
         fs::write(album.join("001-test.jpg"), "fake image").unwrap();
 
         let manifest = scan(tmp.path()).unwrap();
-        assert!(manifest.about.is_none());
+        assert!(manifest.pages.is_empty());
+    }
+
+    #[test]
+    fn unnumbered_page_hidden_from_nav() {
+        let tmp = TempDir::new().unwrap();
+
+        fs::write(tmp.path().join("notes.md"), "# Notes\n\nSome notes.").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let page = manifest.pages.first().unwrap();
+        assert!(!page.in_nav);
+        assert_eq!(page.slug, "notes");
+    }
+
+    #[test]
+    fn link_page_detected() {
+        let tmp = TempDir::new().unwrap();
+
+        fs::write(
+            tmp.path().join("050-github.md"),
+            "https://github.com/example\n",
+        )
+        .unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let page = manifest.pages.first().unwrap();
+        assert!(page.is_link);
+        assert!(page.in_nav);
+        assert_eq!(page.link_title, "github");
+        assert_eq!(page.slug, "github");
+    }
+
+    #[test]
+    fn multiline_content_not_detected_as_link() {
+        let tmp = TempDir::new().unwrap();
+
+        fs::write(
+            tmp.path().join("010-page.md"),
+            "https://example.com\nsome other content",
+        )
+        .unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let page = manifest.pages.first().unwrap();
+        assert!(!page.is_link);
+    }
+
+    #[test]
+    fn multiple_pages_sorted_by_number() {
+        let tmp = TempDir::new().unwrap();
+
+        fs::write(tmp.path().join("020-second.md"), "# Second").unwrap();
+        fs::write(tmp.path().join("010-first.md"), "# First").unwrap();
+        fs::write(tmp.path().join("030-third.md"), "# Third").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let titles: Vec<&str> = manifest.pages.iter().map(|p| p.title.as_str()).collect();
+        assert_eq!(titles, vec!["First", "Second", "Third"]);
+    }
+
+    #[test]
+    fn link_page_in_fixtures() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let github = manifest.pages.iter().find(|p| p.slug == "github").unwrap();
+        assert!(github.is_link);
+        assert!(github.in_nav);
+        assert!(github.body.trim().starts_with("https://"));
     }
 
     // =========================================================================

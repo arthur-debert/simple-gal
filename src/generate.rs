@@ -8,7 +8,7 @@
 //! - **Index page** (`/index.html`): Album grid showing thumbnails of all albums
 //! - **Album pages** (`/{album}/index.html`): Thumbnail grid for an album
 //! - **Image pages** (`/{album}/{n}.html`): Full-screen image viewer with navigation
-//! - **About page** (`/about.html`): Optional markdown content converted to HTML
+//! - **Content pages** (`/{slug}.html`): Markdown pages (e.g. about, contact)
 //!
 //! ## Features
 //!
@@ -23,7 +23,7 @@
 //! ```text
 //! dist/
 //! ├── index.html                 # Home/gallery page
-//! ├── about.html                 # About page (if about.md exists)
+//! ├── about.html                 # Content page (from 040-about.md)
 //! ├── 010-Landscapes/
 //! │   ├── index.html             # Album page
 //! │   ├── 1.html                 # Image viewer pages
@@ -69,18 +69,21 @@ pub enum GenerateError {
 pub struct Manifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<Album>,
-    pub about: Option<AboutPage>,
+    #[serde(default)]
+    pub pages: Vec<Page>,
     pub config: SiteConfig,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AboutPage {
-    /// Title from markdown content (first # heading)
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct Page {
     pub title: String,
-    /// Link title from filename (dashes to spaces)
     pub link_title: String,
-    /// Raw markdown body content
+    pub slug: String,
     pub body: String,
+    pub in_nav: bool,
+    pub sort_key: u32,
+    pub is_link: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -146,20 +149,20 @@ pub fn generate(
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
     println!("Generated index.html");
 
-    // Generate about page if present
-    if let Some(about) = &manifest.about {
-        let about_html = render_about_page(about, &manifest.navigation, &css);
-        fs::write(output_dir.join("about.html"), about_html.into_string())?;
-        println!("Generated about.html");
+    // Generate pages (content pages only, not link pages)
+    for page in manifest.pages.iter().filter(|p| !p.is_link) {
+        let page_html = render_page(page, &manifest.navigation, &manifest.pages, &css);
+        let filename = format!("{}.html", page.slug);
+        fs::write(output_dir.join(&filename), page_html.into_string())?;
+        println!("Generated {}", filename);
     }
 
     // Generate album pages
-    let about_link_title = manifest.about.as_ref().map(|a| a.link_title.as_str());
     for album in &manifest.albums {
         let album_dir = output_dir.join(&album.path);
         fs::create_dir_all(&album_dir)?;
 
-        let album_html = render_album_page(album, &manifest.navigation, about_link_title, &css);
+        let album_html = render_album_page(album, &manifest.navigation, &manifest.pages, &css);
         fs::write(album_dir.join("index.html"), album_html.into_string())?;
         println!("Generated {}/index.html", album.path);
 
@@ -178,7 +181,7 @@ pub fn generate(
                 prev,
                 next,
                 &manifest.navigation,
-                about_link_title,
+                &manifest.pages,
                 &css,
             );
             let image_filename = format!("{}.html", idx + 1);
@@ -248,8 +251,13 @@ fn site_header(breadcrumb: Markup, nav: Markup) -> Markup {
     }
 }
 
-/// Renders the navigation menu (hamburger style, slides from right)
-pub fn render_nav(items: &[NavItem], current_path: &str, about_link_title: Option<&str>) -> Markup {
+/// Renders the navigation menu (hamburger style, slides from right).
+///
+/// Albums are listed first, then a separator, then pages (numbered pages only).
+/// Link pages render as direct external links; content pages link to `/{slug}.html`.
+pub fn render_nav(items: &[NavItem], current_path: &str, pages: &[Page]) -> Markup {
+    let nav_pages: Vec<&Page> = pages.iter().filter(|p| p.in_nav).collect();
+
     html! {
         input.nav-toggle type="checkbox" id="nav-toggle";
         label.nav-hamburger for="nav-toggle" {
@@ -263,17 +271,21 @@ pub fn render_nav(items: &[NavItem], current_path: &str, about_link_title: Optio
                 @for item in items {
                     (render_nav_item(item, current_path))
                 }
-                // Separator and page links
-                li.nav-separator role="separator" {}
-                @if let Some(link_title) = about_link_title {
-                    @let is_current = current_path == "about";
-                    li class=[is_current.then_some("current")] {
-                        a href="/about.html" { (link_title) }
-                    }
-                }
-                li {
-                    a href="https://github.com/arthur-debert/websets" target="_blank" rel="noopener" {
-                        "GitHub"
+                @if !nav_pages.is_empty() {
+                    li.nav-separator role="separator" {}
+                    @for page in &nav_pages {
+                        @if page.is_link {
+                            li {
+                                a href=(page.body.trim()) target="_blank" rel="noopener" {
+                                    (page.link_title)
+                                }
+                            }
+                        } @else {
+                            @let is_current = current_path == page.slug;
+                            li class=[is_current.then_some("current")] {
+                                a href={ "/" (page.slug) ".html" } { (page.link_title) }
+                            }
+                        }
                     }
                 }
             }
@@ -308,8 +320,7 @@ fn render_nav_item(item: &NavItem, current_path: &str) -> Markup {
 
 /// Renders the index/home page with album grid
 fn render_index(manifest: &Manifest, css: &str) -> Markup {
-    let about_link_title = manifest.about.as_ref().map(|a| a.link_title.as_str());
-    let nav = render_nav(&manifest.navigation, "", about_link_title);
+    let nav = render_nav(&manifest.navigation, "", &manifest.pages);
 
     let breadcrumb = html! {
         a href="/" { "Gallery" }
@@ -333,13 +344,8 @@ fn render_index(manifest: &Manifest, css: &str) -> Markup {
 }
 
 /// Renders an album page with thumbnail grid
-fn render_album_page(
-    album: &Album,
-    navigation: &[NavItem],
-    about_link_title: Option<&str>,
-    css: &str,
-) -> Markup {
-    let nav = render_nav(navigation, &album.path, about_link_title);
+fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css: &str) -> Markup {
+    let nav = render_nav(navigation, &album.path, pages);
 
     let breadcrumb = html! {
         a href="/" { "Gallery" }
@@ -384,10 +390,10 @@ fn render_image_page(
     prev: Option<&Image>,
     next: Option<&Image>,
     navigation: &[NavItem],
-    about_link_title: Option<&str>,
+    pages: &[Page],
     css: &str,
 ) -> Markup {
-    let nav = render_nav(navigation, &album.path, about_link_title);
+    let nav = render_nav(navigation, &album.path, pages);
 
     // Strip album path prefix since image pages are inside the album directory
     let strip_prefix = |path: &str| -> String {
@@ -471,31 +477,31 @@ fn render_image_page(
     base_document(&page_title, css, Some("image-view"), content)
 }
 
-/// Renders the about page from markdown content
-fn render_about_page(about: &AboutPage, navigation: &[NavItem], css: &str) -> Markup {
-    let nav = render_nav(navigation, "about", Some(&about.link_title));
+/// Renders a content page from markdown
+fn render_page(page: &Page, navigation: &[NavItem], pages: &[Page], css: &str) -> Markup {
+    let nav = render_nav(navigation, &page.slug, pages);
 
     // Convert markdown to HTML
-    let parser = Parser::new(&about.body);
+    let parser = Parser::new(&page.body);
     let mut body_html = String::new();
     md_html::push_html(&mut body_html, parser);
 
     let breadcrumb = html! {
         a href="/" { "Gallery" }
         " › "
-        (about.title)
+        (page.title)
     };
 
     let content = html! {
         (site_header(breadcrumb, nav))
-        main.about-page {
-            article.about-content {
+        main.page {
+            article.page-content {
                 (PreEscaped(body_html))
             }
         }
     };
 
-    base_document(&about.title, css, None, content)
+    base_document(&page.title, css, None, content)
 }
 
 // ============================================================================
@@ -506,6 +512,22 @@ fn render_about_page(about: &AboutPage, navigation: &[NavItem], css: &str) -> Ma
 mod tests {
     use super::*;
 
+    fn make_page(slug: &str, link_title: &str, in_nav: bool, is_link: bool) -> Page {
+        Page {
+            title: link_title.to_string(),
+            link_title: link_title.to_string(),
+            slug: slug.to_string(),
+            body: if is_link {
+                "https://example.com".to_string()
+            } else {
+                format!("# {}\n\nContent.", link_title)
+            },
+            in_nav,
+            sort_key: if in_nav { 40 } else { u32::MAX },
+            is_link,
+        }
+    }
+
     #[test]
     fn nav_renders_items() {
         let items = vec![NavItem {
@@ -513,25 +535,35 @@ mod tests {
             path: "010-one".to_string(),
             children: vec![],
         }];
-        let html = render_nav(&items, "", None).into_string();
+        let html = render_nav(&items, "", &[]).into_string();
         assert!(html.contains("Album One"));
         assert!(html.contains("/010-one/"));
     }
 
     #[test]
-    fn nav_includes_about_when_present() {
-        let items = vec![];
-        let html = render_nav(&items, "", Some("About")).into_string();
+    fn nav_includes_pages() {
+        let pages = vec![make_page("about", "About", true, false)];
+        let html = render_nav(&[], "", &pages).into_string();
         assert!(html.contains("About"));
         assert!(html.contains("/about.html"));
     }
 
     #[test]
-    fn nav_uses_custom_about_link_title() {
-        let items = vec![];
-        let html = render_nav(&items, "", Some("who am i")).into_string();
-        assert!(html.contains("who am i"));
-        assert!(html.contains("/about.html"));
+    fn nav_hides_unnumbered_pages() {
+        let pages = vec![make_page("notes", "Notes", false, false)];
+        let html = render_nav(&[], "", &pages).into_string();
+        assert!(!html.contains("Notes"));
+        // No separator either when no nav pages
+        assert!(!html.contains("nav-separator"));
+    }
+
+    #[test]
+    fn nav_renders_link_page_as_external() {
+        let pages = vec![make_page("github", "GitHub", true, true)];
+        let html = render_nav(&[], "", &pages).into_string();
+        assert!(html.contains("GitHub"));
+        assert!(html.contains("https://example.com"));
+        assert!(html.contains("target=\"_blank\""));
     }
 
     #[test]
@@ -548,8 +580,15 @@ mod tests {
                 children: vec![],
             },
         ];
-        let html = render_nav(&items, "020-second", None).into_string();
+        let html = render_nav(&items, "020-second", &[]).into_string();
         // The second item should have the current class
+        assert!(html.contains(r#"class="current"#));
+    }
+
+    #[test]
+    fn nav_marks_current_page() {
+        let pages = vec![make_page("about", "About", true, false)];
+        let html = render_nav(&[], "about", &pages).into_string();
         assert!(html.contains(r#"class="current"#));
     }
 
@@ -564,10 +603,22 @@ mod tests {
                 children: vec![],
             }],
         }];
-        let html = render_nav(&items, "", None).into_string();
+        let html = render_nav(&items, "", &[]).into_string();
         assert!(html.contains("Parent"));
         assert!(html.contains("Child"));
         assert!(html.contains("nav-group")); // Parent should have nav-group class
+    }
+
+    #[test]
+    fn nav_separator_only_when_pages() {
+        // No pages = no separator
+        let html_no_pages = render_nav(&[], "", &[]).into_string();
+        assert!(!html_no_pages.contains("nav-separator"));
+
+        // With nav pages = separator
+        let pages = vec![make_page("about", "About", true, false)];
+        let html_with_pages = render_nav(&[], "", &pages).into_string();
+        assert!(html_with_pages.contains("nav-separator"));
     }
 
     #[test]
@@ -669,7 +720,7 @@ mod tests {
     fn render_album_page_includes_title() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, None, "").into_string();
+        let html = render_album_page(&album, &nav, &[], "").into_string();
 
         assert!(html.contains("Test Album"));
         assert!(html.contains("<h1>"));
@@ -679,7 +730,7 @@ mod tests {
     fn render_album_page_includes_description() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, None, "").into_string();
+        let html = render_album_page(&album, &nav, &[], "").into_string();
 
         assert!(html.contains("A test album description"));
         assert!(html.contains("album-description"));
@@ -689,7 +740,7 @@ mod tests {
     fn render_album_page_thumbnail_links() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, None, "").into_string();
+        let html = render_album_page(&album, &nav, &[], "").into_string();
 
         // Should have links to image pages (1.html, 2.html)
         assert!(html.contains("1.html"));
@@ -702,7 +753,7 @@ mod tests {
     fn render_album_page_breadcrumb() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, None, "").into_string();
+        let html = render_album_page(&album, &nav, &[], "").into_string();
 
         // Breadcrumb should link to gallery root
         assert!(html.contains(r#"href="/""#));
@@ -714,7 +765,7 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, None, "")
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
             .into_string();
 
         assert!(html.contains("<picture>"));
@@ -727,7 +778,7 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, None, "")
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
             .into_string();
 
         // Should have srcset with sizes
@@ -741,7 +792,7 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, None, "")
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
             .into_string();
 
         assert!(html.contains("nav-zones"));
@@ -761,7 +812,7 @@ mod tests {
             None,
             Some(&album.images[1]),
             &nav,
-            None,
+            &[],
             "",
         )
         .into_string();
@@ -775,7 +826,7 @@ mod tests {
             Some(&album.images[0]),
             None,
             &nav,
-            None,
+            &[],
             "",
         )
         .into_string();
@@ -788,21 +839,24 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0]; // 1600x1200 = 1.333...
         let nav = vec![];
-        let html = render_image_page(&album, image, None, None, &nav, None, "").into_string();
+        let html = render_image_page(&album, image, None, None, &nav, &[], "").into_string();
 
         // Should have aspect ratio CSS variable
         assert!(html.contains("--aspect-ratio:"));
     }
 
     #[test]
-    fn render_about_page_converts_markdown() {
-        let about = AboutPage {
+    fn render_page_converts_markdown() {
+        let page = Page {
             title: "About Me".to_string(),
             link_title: "about".to_string(),
+            slug: "about".to_string(),
             body: "# About Me\n\nThis is **bold** and *italic*.".to_string(),
+            in_nav: true,
+            sort_key: 40,
+            is_link: false,
         };
-        let nav = vec![];
-        let html = render_about_page(&about, &nav, "").into_string();
+        let html = render_page(&page, &[], &[], "").into_string();
 
         // Markdown should be converted to HTML
         assert!(html.contains("<strong>bold</strong>"));
@@ -810,17 +864,20 @@ mod tests {
     }
 
     #[test]
-    fn render_about_page_includes_title() {
-        let about = AboutPage {
+    fn render_page_includes_title() {
+        let page = Page {
             title: "About Me".to_string(),
             link_title: "about me".to_string(),
+            slug: "about".to_string(),
             body: "Content here".to_string(),
+            in_nav: true,
+            sort_key: 40,
+            is_link: false,
         };
-        let nav = vec![];
-        let html = render_about_page(&about, &nav, "").into_string();
+        let html = render_page(&page, &[], &[], "").into_string();
 
         assert!(html.contains("<title>About Me</title>"));
-        assert!(html.contains("about-page"));
+        assert!(html.contains("class=\"page\""));
     }
 
     #[test]
@@ -831,7 +888,7 @@ mod tests {
             path: "test".to_string(),
             children: vec![],
         }];
-        let html = render_nav(&items, "", None).into_string();
+        let html = render_nav(&items, "", &[]).into_string();
 
         // Should be escaped, not raw script tag
         assert!(!html.contains("<script>alert"));

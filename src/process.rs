@@ -92,15 +92,16 @@ impl Default for ProcessConfig {
     }
 }
 
-/// About page content
+/// A page from a markdown file in the content root.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AboutPage {
-    /// Title from markdown content (first # heading)
+pub struct Page {
     pub title: String,
-    /// Link title from filename (dashes to spaces)
     pub link_title: String,
-    /// Raw markdown body content
+    pub slug: String,
     pub body: String,
+    pub in_nav: bool,
+    pub sort_key: u32,
+    pub is_link: bool,
 }
 
 /// Input manifest (from scan stage)
@@ -108,7 +109,8 @@ pub struct AboutPage {
 pub struct InputManifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<InputAlbum>,
-    pub about: Option<AboutPage>,
+    #[serde(default)]
+    pub pages: Vec<Page>,
     pub config: SiteConfig,
 }
 
@@ -142,8 +144,8 @@ pub struct InputImage {
 pub struct OutputManifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<OutputAlbum>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub about: Option<AboutPage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<Page>,
     pub config: SiteConfig,
 }
 
@@ -320,7 +322,7 @@ pub fn process_with_backend(
     Ok(OutputManifest {
         navigation: input.navigation,
         albums: output_albums,
-        about: input.about,
+        pages: input.pages,
         config: input.config,
     })
 }
@@ -382,11 +384,15 @@ mod tests {
                 }],
                 "in_nav": true
             }],
-            "about": {
+            "pages": [{
                 "title": "About",
                 "link_title": "about",
-                "body": "# About\n\nContent"
-            },
+                "slug": "about",
+                "body": "# About\n\nContent",
+                "in_nav": true,
+                "sort_key": 40,
+                "is_link": false
+            }],
             "config": {
                 "colors": {
                     "light": {
@@ -420,12 +426,12 @@ mod tests {
             Some("A test album".to_string())
         );
         assert_eq!(manifest.albums[0].images.len(), 1);
-        assert!(manifest.about.is_some());
-        assert_eq!(manifest.about.as_ref().unwrap().title, "About");
+        assert_eq!(manifest.pages.len(), 1);
+        assert_eq!(manifest.pages[0].title, "About");
     }
 
     #[test]
-    fn parse_manifest_without_about() {
+    fn parse_manifest_without_pages() {
         let manifest_json = r##"{
             "navigation": [],
             "albums": [],
@@ -452,7 +458,7 @@ mod tests {
         }"##;
 
         let manifest: InputManifest = serde_json::from_str(manifest_json).unwrap();
-        assert!(manifest.about.is_none());
+        assert!(manifest.pages.is_empty());
     }
 
     #[test]
