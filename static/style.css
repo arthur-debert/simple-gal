@@ -1,8 +1,5 @@
 /* LightTable - Minimal Photo Gallery Styles */
 
-/* ===== Fonts ===== */
-@import url('https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@500&display=swap');
-
 /* ===== View Transitions ===== */
 @view-transition {
     navigation: auto;
