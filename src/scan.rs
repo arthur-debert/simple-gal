@@ -129,11 +129,22 @@ pub struct Album {
 }
 
 /// Image metadata
+///
+/// Image filenames follow `(<seq>-)?<title>.<ext>` format:
+/// - `001-Museum.jpeg` → number=1, title=Some("Museum")
+/// - `001.jpeg` → number=1, title=None
+/// - `001-.jpeg` → number=1, title=None
+/// - `Museum.jpg` → unnumbered, title=Some("Museum")
+///
+/// The sequence number controls sort order; the title (if present) is
+/// displayed in the breadcrumb on the image detail page.
 #[derive(Debug, Serialize)]
 pub struct Image {
     pub number: u32,
     pub source_path: String,
     pub filename: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
@@ -386,11 +397,14 @@ fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, S
         .iter()
         .map(|(&num, img_path)| {
             let filename = img_path.file_name().unwrap().to_string_lossy().to_string();
+            let stem = Path::new(&filename).file_stem().unwrap().to_string_lossy();
+            let title = parse_image_title(&stem);
             let source = img_path.strip_prefix(root).unwrap();
             Image {
                 number: num,
                 source_path: source.to_string_lossy().to_string(),
                 filename,
+                title,
             }
         })
         .collect();
@@ -433,6 +447,30 @@ fn parse_numbered_name(name: &str) -> Option<(u32, String)> {
 fn parse_number_prefix(name: &str) -> Option<u32> {
     let prefix: String = name.chars().take_while(|c| c.is_ascii_digit()).collect();
     prefix.parse().ok()
+}
+
+/// Extract an optional title from an image filename stem.
+///
+/// Filenames follow `(<seq>-)?<title>` format where both parts are optional:
+/// - `001-Museum` → Some("Museum")
+/// - `001-My-Museum` → Some("My Museum")  (dashes become spaces)
+/// - `001` → None  (number only, no title)
+/// - `001-` → None  (empty after dash)
+/// - `Museum` → Some("Museum")  (no number prefix)
+fn parse_image_title(stem: &str) -> Option<String> {
+    if let Some((_, name)) = parse_numbered_name(stem) {
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.replace('-', " "))
+        }
+    } else if parse_number_prefix(stem).is_some() {
+        // Pure number, no title
+        None
+    } else {
+        // No number prefix — entire stem is the title
+        Some(stem.replace('-', " "))
+    }
 }
 
 #[cfg(test)]
@@ -536,6 +574,56 @@ mod tests {
         let numbers: Vec<u32> = landscapes.images.iter().map(|i| i.number).collect();
 
         assert_eq!(numbers, vec![1, 2, 10]);
+    }
+
+    // =========================================================================
+    // Image title tests
+    // =========================================================================
+
+    #[test]
+    fn image_title_from_numbered_filename() {
+        assert_eq!(parse_image_title("001-Museum"), Some("Museum".to_string()));
+    }
+
+    #[test]
+    fn image_title_dashes_become_spaces() {
+        assert_eq!(
+            parse_image_title("001-My-Museum"),
+            Some("My Museum".to_string())
+        );
+    }
+
+    #[test]
+    fn image_title_none_for_number_only() {
+        assert_eq!(parse_image_title("001"), None);
+    }
+
+    #[test]
+    fn image_title_none_for_empty_after_dash() {
+        assert_eq!(parse_image_title("001-"), None);
+    }
+
+    #[test]
+    fn image_title_from_unnumbered_filename() {
+        assert_eq!(parse_image_title("Museum"), Some("Museum".to_string()));
+    }
+
+    #[test]
+    fn image_title_extracted_in_scan() {
+        let tmp = TempDir::new().unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-Dawn.jpg"), "fake image").unwrap();
+        fs::write(album.join("002.jpg"), "fake image").unwrap();
+        fs::write(album.join("003-My-Museum.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let images = &manifest.albums[0].images;
+
+        assert_eq!(images[0].title.as_deref(), Some("Dawn"));
+        assert_eq!(images[1].title, None);
+        assert_eq!(images[2].title.as_deref(), Some("My Museum"));
     }
 
     #[test]

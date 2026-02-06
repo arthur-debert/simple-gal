@@ -137,6 +137,8 @@ pub struct InputImage {
     pub number: u32,
     pub source_path: String,
     pub filename: String,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// Output manifest (after processing)
@@ -165,6 +167,8 @@ pub struct OutputAlbum {
 pub struct OutputImage {
     pub number: u32,
     pub source_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// Original dimensions (width, height)
     pub dimensions: (u32, u32),
     /// Generated responsive images: { "800": { "avif": "path", "webp": "path" }, ... }
@@ -290,6 +294,7 @@ pub fn process_with_backend(
                 |(image, dimensions, generated, thumbnail_path)| OutputImage {
                     number: image.number,
                     source_path: image.source_path.clone(),
+                    title: image.title.clone(),
                     dimensions,
                     generated,
                     thumbnail: thumbnail_path,

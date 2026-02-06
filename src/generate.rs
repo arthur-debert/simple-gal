@@ -110,6 +110,8 @@ pub struct Album {
 pub struct Image {
     pub number: u32,
     pub source_path: String,
+    #[serde(default)]
+    pub title: Option<String>,
     pub dimensions: (u32, u32),
     pub generated: BTreeMap<String, GeneratedVariant>,
     pub thumbnail: String,
@@ -383,6 +385,32 @@ fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css:
     base_document(&album.title, css, None, content)
 }
 
+/// Format an image's display label for breadcrumbs and page titles.
+///
+/// The label is `<index>. <title>` when a title exists, or just `<index>` alone.
+///
+/// The index is the image's 1-based position in the album (not the sequence
+/// number from the filename — ordering can start at any number and be
+/// non-contiguous).
+///
+/// Zero-padding width adapts to the album size:
+/// - 1–9 images: no padding (1, 2, 3)
+/// - 10–99 images: 2 digits (01, 02, 03)
+/// - 100–999 images: 3 digits (001, 002, 003)
+/// - 1000+ images: 4 digits (0001, 0002, ...)
+fn format_image_label(position: usize, total: usize, title: Option<&str>) -> String {
+    let width = match total {
+        0..=9 => 1,
+        10..=99 => 2,
+        100..=999 => 3,
+        _ => 4,
+    };
+    match title {
+        Some(t) => format!("{:0>width$}. {}", position, t),
+        None => format!("{:0>width$}", position),
+    }
+}
+
 /// Renders an image viewer page
 fn render_image_page(
     album: &Album,
@@ -448,16 +476,22 @@ fn render_image_page(
     };
 
     let display_idx = image_idx + 1;
-    let page_title = format!("{} - {}", album.title, display_idx);
+    let image_label = format_image_label(display_idx, album.images.len(), image.title.as_deref());
+    let page_title = format!("{} - {}", album.title, image_label);
 
     let breadcrumb = html! {
         a href="/" { "Gallery" }
         " › "
         a href="index.html" { (album.title) }
+        " › "
+        (image_label)
     };
 
     let aspect_style = format!("--aspect-ratio: {};", aspect_ratio);
-    let alt_text = format!("{} - Image {}", album.title, display_idx);
+    let alt_text = match &image.title {
+        Some(t) => format!("{} - {}", album.title, t),
+        None => format!("{} - Image {}", album.title, display_idx),
+    };
 
     let content = html! {
         (site_header(breadcrumb, nav))
@@ -667,6 +701,7 @@ mod tests {
                 Image {
                     number: 1,
                     source_path: "010-test/001-image.jpg".to_string(),
+                    title: Some("Dawn".to_string()),
                     dimensions: (1600, 1200),
                     generated: {
                         let mut map = BTreeMap::new();
@@ -695,6 +730,7 @@ mod tests {
                 Image {
                     number: 2,
                     source_path: "010-test/002-image.jpg".to_string(),
+                    title: None,
                     dimensions: (1200, 1600),
                     generated: {
                         let mut map = BTreeMap::new();
@@ -878,6 +914,86 @@ mod tests {
 
         assert!(html.contains("<title>About Me</title>"));
         assert!(html.contains("class=\"page\""));
+    }
+
+    // =========================================================================
+    // Image label and breadcrumb tests
+    // =========================================================================
+
+    #[test]
+    fn format_label_with_title() {
+        assert_eq!(format_image_label(1, 5, Some("Museum")), "1. Museum");
+    }
+
+    #[test]
+    fn format_label_without_title() {
+        assert_eq!(format_image_label(1, 5, None), "1");
+    }
+
+    #[test]
+    fn format_label_zero_pads_for_10_plus() {
+        assert_eq!(format_image_label(3, 15, Some("Dawn")), "03. Dawn");
+        assert_eq!(format_image_label(3, 15, None), "03");
+    }
+
+    #[test]
+    fn format_label_zero_pads_for_100_plus() {
+        assert_eq!(format_image_label(7, 120, Some("X")), "007. X");
+        assert_eq!(format_image_label(7, 120, None), "007");
+    }
+
+    #[test]
+    fn format_label_no_padding_under_10() {
+        assert_eq!(format_image_label(3, 9, Some("Y")), "3. Y");
+    }
+
+    #[test]
+    fn image_breadcrumb_includes_title() {
+        let album = create_test_album();
+        let image = &album.images[0]; // has title "Dawn"
+        let nav = vec![];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
+            .into_string();
+
+        // Breadcrumb: Gallery › Test Album › 1. Dawn
+        assert!(html.contains("1. Dawn"));
+        assert!(html.contains("Test Album"));
+    }
+
+    #[test]
+    fn image_breadcrumb_without_title() {
+        let album = create_test_album();
+        let image = &album.images[1]; // no title
+        let nav = vec![];
+        let html = render_image_page(&album, image, Some(&album.images[0]), None, &nav, &[], "")
+            .into_string();
+
+        // Breadcrumb: Gallery › Test Album › 2
+        assert!(html.contains("Test Album"));
+        // Should contain just "2" without a period
+        assert!(html.contains(" › 2<"));
+    }
+
+    #[test]
+    fn image_page_title_includes_label() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let nav = vec![];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
+            .into_string();
+
+        assert!(html.contains("<title>Test Album - 1. Dawn</title>"));
+    }
+
+    #[test]
+    fn image_alt_text_uses_title() {
+        let album = create_test_album();
+        let image = &album.images[0]; // has title "Dawn"
+        let nav = vec![];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
+            .into_string();
+
+        assert!(html.contains("Test Album - Dawn"));
     }
 
     #[test]
