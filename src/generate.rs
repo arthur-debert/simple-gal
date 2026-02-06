@@ -235,7 +235,7 @@ fn base_document(title: &str, css: &str, body_class: Option<&str>, content: Mark
                 meta charset="UTF-8";
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { (title) }
-                style { (css) }
+                style { (PreEscaped(css)) }
             }
             body class=[body_class] {
                 (content)

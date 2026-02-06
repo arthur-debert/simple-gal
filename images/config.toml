@@ -18,9 +18,9 @@ quality = 90
 
 [theme.frame_x]
 # Horizontal frame padding (left/right) around images
-size = "3vw"
-min = "1rem"
-max = "2.5rem"
+size = "0.5vw"
+min = "3px"
+max = "8px"
 
 [theme.frame_y]
 # Vertical frame padding (top/bottom) around images
@@ -34,7 +34,7 @@ max = "5rem"
 # Light mode colors (when prefers-color-scheme: light or no preference)
 background = "#ffffff"
 text = "#111111"
-text_muted = "#666666"    # Used for nav menu, breadcrumbs, captions
+text_muted = "#666666" # Used for nav menu, breadcrumbs, captions
 border = "#e0e0e0"
 link = "#333333"
 link_hover = "#000000"
@@ -43,7 +43,7 @@ link_hover = "#000000"
 # Dark mode colors (when prefers-color-scheme: dark)
 background = "#0a0a0a"
 text = "#eeeeee"
-text_muted = "#999999"    # Used for nav menu, breadcrumbs, captions
+text_muted = "#999999" # Used for nav menu, breadcrumbs, captions
 border = "#333333"
 link = "#cccccc"
 link_hover = "#ffffff"
