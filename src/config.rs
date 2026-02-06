@@ -26,7 +26,6 @@
 //! aspect_ratio = [4, 5]     # width:height ratio
 //!
 //! [images]
-//! max_size = 2080           # Maximum image size (longest edge in pixels)
 //! sizes = [800, 1400, 2080] # Responsive sizes to generate
 //! quality = 90              # AVIF/WebP quality (0-100)
 //!
@@ -110,8 +109,6 @@ impl Default for ThumbnailsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ImagesConfig {
-    /// Maximum image size (pixels on longest edge)
-    pub max_size: u32,
     /// Responsive sizes to generate
     pub sizes: Vec<u32>,
     /// AVIF/WebP quality (0-100)
@@ -121,7 +118,6 @@ pub struct ImagesConfig {
 impl Default for ImagesConfig {
     fn default() -> Self {
         Self {
-            max_size: 2080,
             sizes: vec![800, 1400, 2080],
             quality: 90,
         }
@@ -318,7 +314,6 @@ mod tests {
     fn default_config_has_image_settings() {
         let config = SiteConfig::default();
         assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
-        assert_eq!(config.images.max_size, 2080);
         assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
         assert_eq!(config.images.quality, 90);
         assert_eq!(config.theme.frame_x.to_css(), "clamp(1rem, 3vw, 2.5rem)");
@@ -356,7 +351,6 @@ quality = 85
         assert_eq!(config.images.sizes, vec![400, 800]);
         assert_eq!(config.images.quality, 85);
         // Unspecified defaults preserved
-        assert_eq!(config.images.max_size, 2080);
         assert_eq!(config.colors.light.background, "#ffffff");
     }
 
