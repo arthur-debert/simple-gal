@@ -101,7 +101,7 @@ pub enum ConfigError {
 ///
 /// All fields have sensible defaults. User config files need only specify
 /// the values they want to override. Unknown keys are rejected.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct SiteConfig {
     /// Path to the content root directory (only meaningful at root level).
@@ -117,6 +117,18 @@ pub struct SiteConfig {
     pub theme: ThemeConfig,
     /// Parallel processing settings.
     pub processing: ProcessingConfig,
+}
+
+/// Partial site configuration for sparse loading and strict validation.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialSiteConfig {
+    pub content_root: Option<String>,
+    pub colors: Option<PartialColorConfig>,
+    pub thumbnails: Option<PartialThumbnailsConfig>,
+    pub images: Option<PartialImagesConfig>,
+    pub theme: Option<PartialThemeConfig>,
+    pub processing: Option<PartialProcessingConfig>,
 }
 
 fn default_content_root() -> String {
@@ -156,16 +168,54 @@ impl SiteConfig {
         }
         Ok(())
     }
+
+    /// Merge a partial config on top of this one.
+    pub fn merge(mut self, other: PartialSiteConfig) -> Self {
+        if let Some(cr) = other.content_root {
+            self.content_root = cr;
+        }
+        if let Some(c) = other.colors {
+            self.colors = self.colors.merge(c);
+        }
+        if let Some(t) = other.thumbnails {
+            self.thumbnails = self.thumbnails.merge(t);
+        }
+        if let Some(i) = other.images {
+            self.images = self.images.merge(i);
+        }
+        if let Some(t) = other.theme {
+            self.theme = self.theme.merge(t);
+        }
+        if let Some(p) = other.processing {
+            self.processing = self.processing.merge(p);
+        }
+        self
+    }
 }
 
 /// Parallel processing settings.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProcessingConfig {
     /// Maximum number of parallel image processing workers.
     /// When absent or null, defaults to the number of CPU cores.
     /// Values larger than the core count are clamped down.
     pub max_processes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialProcessingConfig {
+    pub max_processes: Option<usize>,
+}
+
+impl ProcessingConfig {
+    pub fn merge(mut self, other: PartialProcessingConfig) -> Self {
+        if other.max_processes.is_some() {
+            self.max_processes = other.max_processes;
+        }
+        self
+    }
 }
 
 /// Resolve the effective thread count from config.
@@ -180,13 +230,32 @@ pub fn effective_threads(config: &ProcessingConfig) -> usize {
 }
 
 /// Thumbnail generation settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ThumbnailsConfig {
     /// Aspect ratio as `[width, height]`, e.g. `[4, 5]` for portrait thumbnails.
     pub aspect_ratio: [u32; 2],
     /// Thumbnail short-edge size in pixels.
     pub size: u32,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialThumbnailsConfig {
+    pub aspect_ratio: Option<[u32; 2]>,
+    pub size: Option<u32>,
+}
+
+impl ThumbnailsConfig {
+    pub fn merge(mut self, other: PartialThumbnailsConfig) -> Self {
+        if let Some(ar) = other.aspect_ratio {
+            self.aspect_ratio = ar;
+        }
+        if let Some(s) = other.size {
+            self.size = s;
+        }
+        self
+    }
 }
 
 impl Default for ThumbnailsConfig {
@@ -199,13 +268,32 @@ impl Default for ThumbnailsConfig {
 }
 
 /// Responsive image generation settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ImagesConfig {
     /// Pixel widths (longer edge) to generate for responsive `<picture>` elements.
     pub sizes: Vec<u32>,
     /// AVIF/WebP encoding quality (0 = worst, 100 = best).
     pub quality: u32,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialImagesConfig {
+    pub sizes: Option<Vec<u32>>,
+    pub quality: Option<u32>,
+}
+
+impl ImagesConfig {
+    pub fn merge(mut self, other: PartialImagesConfig) -> Self {
+        if let Some(s) = other.sizes {
+            self.sizes = s;
+        }
+        if let Some(q) = other.quality {
+            self.quality = q;
+        }
+        self
+    }
 }
 
 impl Default for ImagesConfig {
@@ -224,7 +312,7 @@ impl Default for ImagesConfig {
 /// - `max`: the maximum bound (e.g. `"2.5rem"`)
 ///
 /// Generates `clamp(min, size, max)` in the output CSS.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ClampSize {
     /// Preferred/fluid value, typically viewport-relative (e.g. `"3vw"`).
@@ -235,6 +323,29 @@ pub struct ClampSize {
     pub max: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialClampSize {
+    pub size: Option<String>,
+    pub min: Option<String>,
+    pub max: Option<String>,
+}
+
+impl ClampSize {
+    pub fn merge(mut self, other: PartialClampSize) -> Self {
+        if let Some(s) = other.size {
+            self.size = s;
+        }
+        if let Some(m) = other.min {
+            self.min = m;
+        }
+        if let Some(m) = other.max {
+            self.max = m;
+        }
+        self
+    }
+}
+
 impl ClampSize {
     /// Render as a CSS `clamp()` expression.
     pub fn to_css(&self) -> String {
@@ -243,7 +354,7 @@ impl ClampSize {
 }
 
 /// Theme/layout settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
     /// Horizontal frame padding around images (left/right).
@@ -254,6 +365,33 @@ pub struct ThemeConfig {
     pub thumbnail_gap: String,
     /// Padding around the thumbnail grid container (CSS value).
     pub grid_padding: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialThemeConfig {
+    pub frame_x: Option<PartialClampSize>,
+    pub frame_y: Option<PartialClampSize>,
+    pub thumbnail_gap: Option<String>,
+    pub grid_padding: Option<String>,
+}
+
+impl ThemeConfig {
+    pub fn merge(mut self, other: PartialThemeConfig) -> Self {
+        if let Some(x) = other.frame_x {
+            self.frame_x = self.frame_x.merge(x);
+        }
+        if let Some(y) = other.frame_y {
+            self.frame_y = self.frame_y.merge(y);
+        }
+        if let Some(g) = other.thumbnail_gap {
+            self.thumbnail_gap = g;
+        }
+        if let Some(p) = other.grid_padding {
+            self.grid_padding = p;
+        }
+        self
+    }
 }
 
 impl Default for ThemeConfig {
@@ -276,13 +414,32 @@ impl Default for ThemeConfig {
 }
 
 /// Color configuration for light and dark modes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ColorConfig {
     /// Light mode color scheme.
     pub light: ColorScheme,
     /// Dark mode color scheme.
     pub dark: ColorScheme,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialColorConfig {
+    pub light: Option<PartialColorScheme>,
+    pub dark: Option<PartialColorScheme>,
+}
+
+impl ColorConfig {
+    pub fn merge(mut self, other: PartialColorConfig) -> Self {
+        if let Some(l) = other.light {
+            self.light = self.light.merge(l);
+        }
+        if let Some(d) = other.dark {
+            self.dark = self.dark.merge(d);
+        }
+        self
+    }
 }
 
 impl Default for ColorConfig {
@@ -295,7 +452,7 @@ impl Default for ColorConfig {
 }
 
 /// Individual color scheme (light or dark).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ColorScheme {
     /// Background color.
@@ -310,6 +467,41 @@ pub struct ColorScheme {
     pub link: String,
     /// Link hover color.
     pub link_hover: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialColorScheme {
+    pub background: Option<String>,
+    pub text: Option<String>,
+    pub text_muted: Option<String>,
+    pub border: Option<String>,
+    pub link: Option<String>,
+    pub link_hover: Option<String>,
+}
+
+impl ColorScheme {
+    pub fn merge(mut self, other: PartialColorScheme) -> Self {
+        if let Some(v) = other.background {
+            self.background = v;
+        }
+        if let Some(v) = other.text {
+            self.text = v;
+        }
+        if let Some(v) = other.text_muted {
+            self.text_muted = v;
+        }
+        if let Some(v) = other.border {
+            self.border = v;
+        }
+        if let Some(v) = other.link {
+            self.link = v;
+        }
+        if let Some(v) = other.link_hover {
+            self.link_hover = v;
+        }
+        self
+    }
 }
 
 impl ColorScheme {
@@ -346,73 +538,31 @@ impl Default for ColorScheme {
 // Config loading, merging, and validation
 // =============================================================================
 
-/// Returns the stock default config as a `toml::Value::Table`.
+/// Load a partial, validated config from `config.toml`.
 ///
-/// This is the canonical representation of all default values, used as the
-/// base layer for merging user overrides on top.
-pub fn stock_defaults_value() -> toml::Value {
-    toml::Value::try_from(SiteConfig::default()).expect("default config must serialize")
-}
-
-/// Recursively merge `overlay` on top of `base`.
-///
-/// - Tables are merged key-by-key (overlay keys override base keys).
-/// - Non-table values in overlay replace base values entirely.
-/// - Keys in base that are not in overlay are preserved.
-pub fn merge_toml(base: toml::Value, overlay: toml::Value) -> toml::Value {
-    match (base, overlay) {
-        (toml::Value::Table(mut base_table), toml::Value::Table(overlay_table)) => {
-            for (key, overlay_val) in overlay_table {
-                let merged = match base_table.remove(&key) {
-                    Some(base_val) => merge_toml(base_val, overlay_val),
-                    None => overlay_val,
-                };
-                base_table.insert(key, merged);
-            }
-            toml::Value::Table(base_table)
-        }
-        (_, overlay) => overlay,
-    }
-}
-
-/// Load a `config.toml` from a directory as a raw TOML value.
-///
-/// Returns `Ok(None)` if no `config.toml` exists in the directory.
-/// Returns `Err` if the file exists but contains invalid TOML.
-pub fn load_raw_config(path: &Path) -> Result<Option<toml::Value>, ConfigError> {
+/// Returns `Ok(None)` if no `config.toml` exists.
+/// Returns `Err` if the file exists but contains unknown keys or invalid values.
+pub fn load_partial_config(path: &Path) -> Result<Option<PartialSiteConfig>, ConfigError> {
     let config_path = path.join("config.toml");
     if !config_path.exists() {
         return Ok(None);
     }
     let content = fs::read_to_string(&config_path)?;
-    let value: toml::Value = toml::from_str(&content)?;
-    Ok(Some(value))
+    let partial: PartialSiteConfig = toml::from_str(&content)?;
+    Ok(Some(partial))
 }
 
-/// Merge an optional overlay onto a base value, then deserialize and validate.
-///
-/// Used to resolve a fully-merged config at any point in the directory hierarchy.
-pub fn resolve_config(
-    base: toml::Value,
-    overlay: Option<toml::Value>,
-) -> Result<SiteConfig, ConfigError> {
-    let merged = match overlay {
-        Some(ov) => merge_toml(base, ov),
-        None => base,
-    };
-    let config: SiteConfig = merged.try_into()?;
-    config.validate()?;
-    Ok(config)
-}
-
-/// Load config from `config.toml` in the given directory.
-///
-/// Merges user values on top of stock defaults, rejects unknown keys,
-/// and validates the result.
+/// Load config from `config.toml` in the given directory and merge onto defaults.
 pub fn load_config(root: &Path) -> Result<SiteConfig, ConfigError> {
-    let base = stock_defaults_value();
-    let overlay = load_raw_config(root)?;
-    resolve_config(base, overlay)
+    let base = SiteConfig::default();
+    let partial = load_partial_config(root)?;
+    if let Some(p) = partial {
+        let merged = base.merge(p);
+        merged.validate()?;
+        Ok(merged)
+    } else {
+        Ok(base)
+    }
 }
 
 /// Returns a fully-commented stock `config.toml` with all keys and explanations.
@@ -597,7 +747,9 @@ mod tests {
 [colors.light]
 background = "#fafafa"
 "##;
-        let config: SiteConfig = toml::from_str(toml).unwrap();
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+
         // Overridden value
         assert_eq!(config.colors.light.background, "#fafafa");
         // Default values preserved
@@ -617,7 +769,9 @@ aspect_ratio = [1, 1]
 sizes = [400, 800]
 quality = 85
 "##;
-        let config: SiteConfig = toml::from_str(toml).unwrap();
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+
         assert_eq!(config.thumbnails.aspect_ratio, [1, 1]);
         assert_eq!(config.images.sizes, vec![400, 800]);
         assert_eq!(config.images.quality, 85);
@@ -722,6 +876,24 @@ link_hover = "#f88"
         assert!(matches!(result, Err(ConfigError::Toml(_))));
     }
 
+    #[test]
+    fn load_config_unknown_keys_is_error() {
+        let tmp = TempDir::new().unwrap();
+        let config_path = tmp.path().join("config.toml");
+
+        // "unknown_key" is not a valid field
+        fs::write(
+            &config_path,
+            r#"
+            unknown_key = "foo"
+            "#,
+        )
+        .unwrap();
+
+        let result = load_config(tmp.path());
+        assert!(matches!(result, Err(ConfigError::Toml(_))));
+    }
+
     // =========================================================================
     // CSS generation tests
     // =========================================================================
@@ -781,7 +953,8 @@ link_hover = "#f88"
 thumbnail_gap = "0.5rem"
 grid_padding = "1rem"
 "#;
-        let config: SiteConfig = toml::from_str(toml).unwrap();
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
         assert_eq!(config.theme.thumbnail_gap, "0.5rem");
         assert_eq!(config.theme.grid_padding, "1rem");
     }
@@ -856,110 +1029,8 @@ background = "#fafafa"
     }
 
     // =========================================================================
-    // merge_toml tests
+    // merge_toml tests - REMOVED (function removed)
     // =========================================================================
-
-    #[test]
-    fn merge_toml_scalar_override() {
-        let base: toml::Value = toml::from_str(r#"quality = 90"#).unwrap();
-        let overlay: toml::Value = toml::from_str(r#"quality = 70"#).unwrap();
-        let merged = merge_toml(base, overlay);
-        assert_eq!(merged.get("quality").unwrap().as_integer(), Some(70));
-    }
-
-    #[test]
-    fn merge_toml_table_merge() {
-        let base: toml::Value = toml::from_str(
-            r#"
-[images]
-sizes = [800, 1400]
-quality = 90
-"#,
-        )
-        .unwrap();
-        let overlay: toml::Value = toml::from_str(
-            r#"
-[images]
-quality = 70
-"#,
-        )
-        .unwrap();
-        let merged = merge_toml(base, overlay);
-        let images = merged.get("images").unwrap();
-        assert_eq!(images.get("quality").unwrap().as_integer(), Some(70));
-        // sizes preserved from base
-        assert!(images.get("sizes").unwrap().as_array().unwrap().len() == 2);
-    }
-
-    #[test]
-    fn merge_toml_preserves_base_keys() {
-        let base: toml::Value = toml::from_str(
-            r#"
-a = 1
-b = 2
-"#,
-        )
-        .unwrap();
-        let overlay: toml::Value = toml::from_str(r#"a = 10"#).unwrap();
-        let merged = merge_toml(base, overlay);
-        assert_eq!(merged.get("a").unwrap().as_integer(), Some(10));
-        assert_eq!(merged.get("b").unwrap().as_integer(), Some(2));
-    }
-
-    #[test]
-    fn merge_toml_deep_nested() {
-        let base: toml::Value = toml::from_str(
-            r##"
-[colors.light]
-background = "#fff"
-text = "#000"
-"##,
-        )
-        .unwrap();
-        let overlay: toml::Value = toml::from_str(
-            r##"
-[colors.light]
-background = "#fafafa"
-"##,
-        )
-        .unwrap();
-        let merged = merge_toml(base, overlay);
-        let light = merged.get("colors").unwrap().get("light").unwrap();
-        assert_eq!(light.get("background").unwrap().as_str(), Some("#fafafa"));
-        assert_eq!(light.get("text").unwrap().as_str(), Some("#000"));
-    }
-
-    #[test]
-    fn merge_toml_three_layers() {
-        let stock: toml::Value = toml::from_str(
-            r#"
-[images]
-quality = 90
-sizes = [800, 1400, 2080]
-"#,
-        )
-        .unwrap();
-        let root: toml::Value = toml::from_str(
-            r#"
-[images]
-quality = 85
-"#,
-        )
-        .unwrap();
-        let gallery: toml::Value = toml::from_str(
-            r#"
-[images]
-quality = 70
-"#,
-        )
-        .unwrap();
-
-        let merged = merge_toml(merge_toml(stock, root), gallery);
-        let images = merged.get("images").unwrap();
-        assert_eq!(images.get("quality").unwrap().as_integer(), Some(70));
-        // sizes preserved from stock
-        assert_eq!(images.get("sizes").unwrap().as_array().unwrap().len(), 3);
-    }
 
     // =========================================================================
     // Unknown key rejection tests
@@ -1075,18 +1146,18 @@ quality = 200
     }
 
     // =========================================================================
-    // resolve_config / load_raw_config tests
+    // load_partial_config / merge tests
     // =========================================================================
 
     #[test]
-    fn load_raw_config_returns_none_when_no_file() {
+    fn load_partial_config_returns_none_when_no_file() {
         let tmp = TempDir::new().unwrap();
-        let result = load_raw_config(tmp.path()).unwrap();
+        let result = load_partial_config(tmp.path()).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
-    fn load_raw_config_returns_value_when_file_exists() {
+    fn load_partial_config_returns_value_when_file_exists() {
         let tmp = TempDir::new().unwrap();
         fs::write(
             tmp.path().join("config.toml"),
@@ -1097,54 +1168,49 @@ quality = 85
         )
         .unwrap();
 
-        let result = load_raw_config(tmp.path()).unwrap();
+        let result = load_partial_config(tmp.path()).unwrap();
         assert!(result.is_some());
-        let val = result.unwrap();
-        assert_eq!(
-            val.get("images")
-                .unwrap()
-                .get("quality")
-                .unwrap()
-                .as_integer(),
-            Some(85)
-        );
+        let partial = result.unwrap();
+        assert_eq!(partial.images.unwrap().quality, Some(85));
     }
 
     #[test]
-    fn resolve_config_with_no_overlay() {
-        let base = stock_defaults_value();
-        let config = resolve_config(base, None).unwrap();
+    fn merge_with_no_overlay() {
+        let base = SiteConfig::default();
+        let config = base.merge(PartialSiteConfig::default());
         assert_eq!(config.images.quality, 90);
         assert_eq!(config.colors.light.background, "#ffffff");
     }
 
     #[test]
-    fn resolve_config_with_overlay() {
-        let base = stock_defaults_value();
-        let overlay: toml::Value = toml::from_str(
-            r#"
+    fn merge_with_overlay() {
+        let base = SiteConfig::default();
+        let toml = r#"
 [images]
 quality = 70
-"#,
-        )
-        .unwrap();
-        let config = resolve_config(base, Some(overlay)).unwrap();
+"#;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = base.merge(partial);
         assert_eq!(config.images.quality, 70);
         // Other fields preserved from defaults
         assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
     }
 
     #[test]
-    fn resolve_config_rejects_invalid_values() {
-        let base = stock_defaults_value();
-        let overlay: toml::Value = toml::from_str(
+    fn load_config_validates_after_merge() {
+        let tmp = TempDir::new().unwrap();
+        // Create config with invalid value
+        fs::write(
+            tmp.path().join("config.toml"),
             r#"
 [images]
 quality = 200
 "#,
         )
         .unwrap();
-        let result = resolve_config(base, Some(overlay));
+
+        // load_config should fail validation
+        let result = load_config(tmp.path());
         assert!(matches!(result, Err(ConfigError::Validation(_))));
     }
 
@@ -1183,23 +1249,10 @@ quality = 200
         assert!(content.contains("[processing]"));
     }
 
-    // =========================================================================
-    // stock_defaults_value tests
-    // =========================================================================
-
     #[test]
-    fn stock_defaults_value_is_table() {
-        let val = stock_defaults_value();
-        assert!(val.is_table());
-    }
-
-    #[test]
-    fn stock_defaults_value_has_all_sections() {
-        let val = stock_defaults_value();
-        assert!(val.get("images").is_some());
-        assert!(val.get("thumbnails").is_some());
-        assert!(val.get("colors").is_some());
-        assert!(val.get("theme").is_some());
-        assert!(val.get("processing").is_some());
+    fn stock_defaults_equivalent_to_default_trait() {
+        // We removed stock_defaults_value, but we can test that Default trait works
+        let config = SiteConfig::default();
+        assert_eq!(config.images.quality, 90);
     }
 }
