@@ -12,6 +12,12 @@ exclude = ["content/", "fixtures/", "tests/", "scripts/", "*.config.*", "package
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = [
+    "jpeg", "png", "webp",
+    "avif",
+] }
+iptc = "0.1"
+webp = "0.3"
 maud = "0.26"
 pulldown-cmark = "0.13"
 rayon = "1"

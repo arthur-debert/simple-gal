@@ -10,6 +10,8 @@ pub mod backend;
 mod calculations;
 pub mod operations;
 mod params;
+#[allow(dead_code)]
+pub mod rust_backend;
 
 pub use backend::{BackendError, ImageBackend, ImageMagickBackend};
 // Re-exported for tests (process.rs, operations.rs tests use this)
