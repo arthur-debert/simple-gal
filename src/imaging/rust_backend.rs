@@ -83,24 +83,12 @@ impl ImageBackend for RustBackend {
     }
 
     fn read_metadata(&self, path: &Path) -> Result<ImageMetadata, BackendError> {
-        let iptc_data = match iptc::IPTC::read_from_path(path) {
-            Ok(data) => data,
-            Err(_) => return Ok(ImageMetadata::default()),
-        };
-
-        let to_opt = |s: String| {
-            let trimmed = s.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        };
-
-        let title = to_opt(iptc_data.get(iptc::IPTCTag::ObjectName));
-        let description = to_opt(iptc_data.get(iptc::IPTCTag::Caption));
-
-        Ok(ImageMetadata { title, description })
+        let iptc = super::iptc_parser::read_iptc(path);
+        Ok(ImageMetadata {
+            title: iptc.object_name,
+            description: iptc.caption,
+            keywords: iptc.keywords,
+        })
     }
 
     fn resize(&self, params: &ResizeParams) -> Result<(), BackendError> {

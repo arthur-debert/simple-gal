@@ -16,7 +16,6 @@ image = { version = "0.25", default-features = false, features = [
     "jpeg", "png", "tiff", "webp",
     "avif",
 ] }
-iptc = "0.1"
 webp = "0.3"
 maud = "0.26"
 pulldown-cmark = "0.13"

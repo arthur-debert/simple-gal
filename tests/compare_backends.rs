@@ -271,3 +271,32 @@ fn generate_comparison_images() {
     println!("\nTotal files: {}", entries.len());
     println!("Open in Finder: open {}", OUTPUT_DIR);
 }
+
+#[test]
+fn test_iptc_tiff_reading() {
+    let tiff_path = Path::new("/Users/adebert/Downloads/photo-exports/20260125-Q1021613.tif");
+    if !tiff_path.exists() {
+        println!("Test TIFF not found, skipping");
+        return;
+    }
+
+    // What ImageMagick reads (ground truth)
+    if Command::new("identify").arg("-version").output().is_err() {
+        println!("ImageMagick not found, skipping");
+        return;
+    }
+    let out = Command::new("identify")
+        .args([
+            "-format",
+            "%[IPTC:2:05]\t%[IPTC:2:120]\t%[IPTC:2:25]",
+            tiff_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let magick_raw = String::from_utf8_lossy(&out.stdout);
+    let magick_parts: Vec<&str> = magick_raw.splitn(3, '\t').collect();
+    println!("\n--- IPTC from TIFF ---");
+    println!("  ImageMagick title:    {:?}", magick_parts.first());
+    println!("  ImageMagick caption:  {:?}", magick_parts.get(1));
+    println!("  ImageMagick keywords: {:?}", magick_parts.get(2));
+}

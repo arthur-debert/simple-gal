@@ -25,15 +25,17 @@ pub struct Dimensions {
     pub height: u32,
 }
 
-/// Embedded image metadata extracted from IPTC/EXIF fields.
+/// Embedded image metadata extracted from IPTC fields.
 ///
 /// Field mapping:
-/// - `title`: IPTC Object Name (`IPTC:2:05`) — the "Title" field in Lightroom/Capture One
-/// - `description`: IPTC Caption-Abstract (`IPTC:2:120`) — the "Caption" field in Lightroom
+/// - `title`: IPTC Object Name (`2:05`) — the "Title" field in Lightroom/Capture One
+/// - `description`: IPTC Caption-Abstract (`2:120`) — the "Caption" field in Lightroom
+/// - `keywords`: IPTC Keywords (`2:25`) — repeatable field, one entry per keyword
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImageMetadata {
     pub title: Option<String>,
     pub description: Option<String>,
+    pub keywords: Vec<String>,
 }
 
 /// Trait for image processing backends.
@@ -122,7 +124,7 @@ impl ImageBackend for ImageMagickBackend {
         let output = Command::new("identify")
             .args([
                 "-format",
-                "%[IPTC:2:05]\t%[IPTC:2:120]",
+                "%[IPTC:2:05]\t%[IPTC:2:120]\t%[IPTC:2:25]",
                 path.to_str().unwrap(),
             ])
             .output()?;
@@ -134,7 +136,7 @@ impl ImageBackend for ImageMagickBackend {
         }
 
         let raw = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = raw.splitn(2, '\t').collect();
+        let parts: Vec<&str> = raw.splitn(3, '\t').collect();
 
         let to_opt = |s: &str| {
             let trimmed = s.trim();
@@ -145,9 +147,17 @@ impl ImageBackend for ImageMagickBackend {
             }
         };
 
+        let keywords: Vec<String> = parts
+            .get(2)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.split(';').map(|k| k.trim().to_string()).collect())
+            .unwrap_or_default();
+
         Ok(ImageMetadata {
             title: parts.first().and_then(|s| to_opt(s)),
             description: parts.get(1).and_then(|s| to_opt(s)),
+            keywords,
         })
     }
 

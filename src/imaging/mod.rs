@@ -8,6 +8,7 @@
 
 pub mod backend;
 mod calculations;
+pub(crate) mod iptc_parser;
 pub mod operations;
 mod params;
 #[allow(dead_code)]
