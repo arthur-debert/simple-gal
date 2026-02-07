@@ -15,44 +15,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Run tests first - must pass before build/deploy
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Cache apt packages
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        id: apt-cache
+      - name: Setup Rust with ImageMagick
+        uses: ./.github/actions/rust-setup
         with:
-          path: |
-            /var/cache/apt/archives
-            /var/lib/apt/lists
-          key: ${{ runner.os }}-apt-imagemagick-v1
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y imagemagick webp libavif-bin
-          convert -version
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          install-imagemagick: 'true'
 
       - name: Run tests
         run: cargo test --all-features
@@ -76,16 +48,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # Cache apt packages for image processing
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        id: apt-cache
-        with:
-          path: |
-            /var/cache/apt/archives
-            /var/lib/apt/lists
-          key: ${{ runner.os }}-apt-imagemagick-v1
 
       - name: Install system dependencies
         run: |
