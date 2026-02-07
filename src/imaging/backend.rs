@@ -207,10 +207,10 @@ impl ImageBackend for ImageMagickBackend {
             &quality,
         ];
 
-        // Optional sharpening
+        // Optional sharpening (radius=0 means auto-select from sigma)
         let sharpen_str;
         if let Some(sharpening) = params.sharpening {
-            sharpen_str = format!("{}x{}", sharpening.radius, sharpening.sigma);
+            sharpen_str = format!("0x{}", sharpening.sigma);
             args.push("-sharpen");
             args.push(&sharpen_str);
         }
@@ -255,7 +255,7 @@ pub mod tests {
             crop_width: u32,
             crop_height: u32,
             quality: u32,
-            sharpening: Option<(f32, f32)>,
+            sharpening: Option<(f32, i32)>,
         },
     }
 
@@ -333,7 +333,7 @@ pub mod tests {
                 crop_width: params.crop_width,
                 crop_height: params.crop_height,
                 quality: params.quality.value(),
-                sharpening: params.sharpening.map(|s| (s.radius, s.sigma)),
+                sharpening: params.sharpening.map(|s| (s.sigma, s.threshold)),
             });
             Ok(())
         }
@@ -406,7 +406,7 @@ pub mod tests {
             RecordedOp::Thumbnail {
                 crop_width: 400,
                 crop_height: 500,
-                sharpening: Some((0.0, 0.5)),
+                sharpening: Some((0.5, 0)),
                 ..
             }
         ));

@@ -109,7 +109,7 @@ impl ImageBackend for RustBackend {
             DynamicImage::from(image::imageops::unsharpen(
                 &filled,
                 sharpening.sigma,
-                sharpening.radius as i32,
+                sharpening.threshold,
             ))
         } else {
             filled
