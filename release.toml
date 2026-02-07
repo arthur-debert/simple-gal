@@ -1,0 +1,20 @@
+# cargo-release configuration
+# Usage: cargo release patch|minor|major
+
+# Update CHANGELOG.md: move Unreleased items under new version heading
+pre-release-replacements = [
+  { file = "CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}", exactly = 1 },
+]
+
+# Create a git tag like v0.1.0
+tag-name = "v{{version}}"
+tag-message = "Release v{{version}}"
+
+# Commit the version bump and changelog update
+pre-release-commit-message = "chore: release v{{version}}"
+
+# Don't publish to crates.io from local — CI handles that
+publish = false
+
+# Push the tag (which triggers the CI release workflow)
+push = true

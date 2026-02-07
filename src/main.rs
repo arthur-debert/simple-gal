@@ -54,9 +54,25 @@ mod types;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+fn version_string() -> &'static str {
+    let on_tag = env!("ON_RELEASE_TAG");
+    if on_tag == "true" {
+        env!("CARGO_PKG_VERSION")
+    } else {
+        let hash = env!("GIT_HASH");
+        if hash.is_empty() {
+            "dev@unknown"
+        } else {
+            // Leaked once at startup — trivial, called exactly once
+            Box::leak(format!("dev@{hash}").into_boxed_str())
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "simple-gal")]
 #[command(about = "Static site generator for photo portfolios")]
+#[command(version = version_string())]
 struct Cli {
     /// Content directory
     #[arg(long, default_value = "content", global = true)]
