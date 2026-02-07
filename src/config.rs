@@ -185,12 +185,15 @@ pub fn effective_threads(config: &ProcessingConfig) -> usize {
 pub struct ThumbnailsConfig {
     /// Aspect ratio as `[width, height]`, e.g. `[4, 5]` for portrait thumbnails.
     pub aspect_ratio: [u32; 2],
+    /// Thumbnail short-edge size in pixels.
+    pub size: u32,
 }
 
 impl Default for ThumbnailsConfig {
     fn default() -> Self {
         Self {
             aspect_ratio: [4, 5],
+            size: 400,
         }
     }
 }
@@ -439,6 +442,9 @@ content_root = "content"
 # Aspect ratio as [width, height] for thumbnail crops.
 # Common choices: [1, 1] for square, [4, 5] for portrait, [3, 2] for landscape.
 aspect_ratio = [4, 5]
+
+# Short-edge size in pixels for generated thumbnails.
+size = 400
 
 # ---------------------------------------------------------------------------
 # Responsive image generation

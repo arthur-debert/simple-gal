@@ -79,7 +79,7 @@ impl ProcessConfig {
             sizes: config.images.sizes.clone(),
             quality: config.images.quality,
             thumbnail_aspect: (ar[0], ar[1]),
-            thumbnail_size: 400,
+            thumbnail_size: config.thumbnails.size,
         }
     }
 }
@@ -687,7 +687,7 @@ mod tests {
 
         let manifest_path = create_test_manifest_with_config(
             tmp.path(),
-            r#"{"images": {"sizes": [100]}, "thumbnails": {"aspect_ratio": [4, 5]}}"#,
+            r#"{"images": {"sizes": [100]}, "thumbnails": {"aspect_ratio": [4, 5], "size": 80}}"#,
         );
 
         process(&manifest_path, &source_dir, &output_dir).unwrap();
