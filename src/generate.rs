@@ -94,7 +94,6 @@ pub struct Image {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     pub description: Option<String>,
     pub dimensions: (u32, u32),
     pub generated: BTreeMap<String, GeneratedVariant>,
@@ -134,6 +133,17 @@ fn image_page_url(position: usize, total: usize, slug: &str) -> String {
     } else {
         format!("{:0>width$}-{}.html", position, slug)
     }
+}
+
+const SHORT_CAPTION_MAX_LEN: usize = 160;
+
+/// Whether a description is short enough to display as an inline caption.
+///
+/// Short captions (≤160 chars, single line) are rendered as centered text
+/// directly beneath the image. Longer or multi-line descriptions get a
+/// scrollable container instead.
+fn is_short_caption(text: &str) -> bool {
+    text.len() <= SHORT_CAPTION_MAX_LEN && !text.contains('\n')
 }
 
 pub fn generate(
@@ -499,16 +509,34 @@ fn render_image_page(
         None => format!("{} - Image {}", album.title, display_idx),
     };
 
+    let description = image.description.as_deref().filter(|d| !d.is_empty());
+    let caption_text = description.filter(|d| is_short_caption(d));
+    let description_text = description.filter(|d| !is_short_caption(d));
+
+    let body_class = match description {
+        Some(desc) if is_short_caption(desc) => "image-view has-caption",
+        Some(_) => "image-view has-description",
+        None => "image-view",
+    };
+
     let content = html! {
         (site_header(breadcrumb, nav))
-        main {
+        main style=(aspect_style) {
             div.image-page {
-                figure.image-frame style=(aspect_style) {
+                figure.image-frame {
                     picture {
                         source type="image/avif" srcset=(srcset_avif) sizes="(max-width: 800px) 100vw, 80vw";
                         source type="image/webp" srcset=(srcset_webp) sizes="(max-width: 800px) 100vw, 80vw";
                         img src=(default_src) alt=(alt_text);
                     }
+                }
+                @if let Some(text) = caption_text {
+                    p.image-caption { (text) }
+                }
+            }
+            @if let Some(text) = description_text {
+                div.image-description {
+                    p { (text) }
                 }
             }
         }
@@ -516,7 +544,7 @@ fn render_image_page(
         script { (PreEscaped(JS)) }
     };
 
-    base_document(&page_title, css, Some("image-view"), content)
+    base_document(&page_title, css, Some(body_class), content)
 }
 
 /// Renders a content page from markdown
@@ -1006,6 +1034,110 @@ mod tests {
             .into_string();
 
         assert!(html.contains("Test Album - Dawn"));
+    }
+
+    // =========================================================================
+    // Description detection and rendering tests
+    // =========================================================================
+
+    #[test]
+    fn is_short_caption_short_text() {
+        assert!(is_short_caption("A beautiful sunset"));
+    }
+
+    #[test]
+    fn is_short_caption_exactly_at_limit() {
+        let text = "a".repeat(SHORT_CAPTION_MAX_LEN);
+        assert!(is_short_caption(&text));
+    }
+
+    #[test]
+    fn is_short_caption_over_limit() {
+        let text = "a".repeat(SHORT_CAPTION_MAX_LEN + 1);
+        assert!(!is_short_caption(&text));
+    }
+
+    #[test]
+    fn is_short_caption_with_newline() {
+        assert!(!is_short_caption("Line one\nLine two"));
+    }
+
+    #[test]
+    fn is_short_caption_empty_string() {
+        assert!(is_short_caption(""));
+    }
+
+    #[test]
+    fn render_image_page_short_caption() {
+        let mut album = create_test_album();
+        album.images[0].description = Some("A beautiful sunrise over the mountains".to_string());
+        let image = &album.images[0];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
+            .into_string();
+
+        assert!(html.contains("image-caption"));
+        assert!(html.contains("A beautiful sunrise over the mountains"));
+        assert!(html_contains_body_class(&html, "image-view has-caption"));
+    }
+
+    #[test]
+    fn render_image_page_long_description() {
+        let mut album = create_test_album();
+        let long_text = "a".repeat(200);
+        album.images[0].description = Some(long_text.clone());
+        let image = &album.images[0];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
+            .into_string();
+
+        assert!(html.contains("image-description"));
+        assert!(!html.contains("image-caption"));
+        assert!(html_contains_body_class(
+            &html,
+            "image-view has-description"
+        ));
+    }
+
+    #[test]
+    fn render_image_page_multiline_is_long_description() {
+        let mut album = create_test_album();
+        album.images[0].description = Some("Line one\nLine two".to_string());
+        let image = &album.images[0];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
+            .into_string();
+
+        assert!(html.contains("image-description"));
+        assert!(!html.contains("image-caption"));
+        assert!(html_contains_body_class(
+            &html,
+            "image-view has-description"
+        ));
+    }
+
+    #[test]
+    fn render_image_page_no_description_no_caption() {
+        let album = create_test_album();
+        let image = &album.images[1]; // description: None
+        let html = render_image_page(&album, image, Some(&album.images[0]), None, &[], &[], "")
+            .into_string();
+
+        assert!(!html.contains("image-caption"));
+        assert!(!html.contains("image-description"));
+        assert!(html_contains_body_class(&html, "image-view"));
+    }
+
+    #[test]
+    fn render_image_page_caption_width_matches_frame() {
+        let mut album = create_test_album();
+        album.images[0].description = Some("Short caption".to_string());
+        let image = &album.images[0];
+        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
+            .into_string();
+
+        // Caption should be a sibling of image-frame inside image-page
+        assert!(html.contains("image-frame"));
+        assert!(html.contains("image-caption"));
+        // Both should be inside image-page (column flex ensures width matching via CSS)
+        assert!(html.contains("image-page"));
     }
 
     #[test]

@@ -401,6 +401,62 @@ body.image-view main {
     pointer-events: none;
 }
 
+/* ===== Image Caption ===== */
+/* Short text (≤160 chars, single line) centered beneath the image */
+body.has-caption {
+    --caption-space: 2.5rem;
+}
+
+body.has-caption .image-page {
+    flex-direction: column;
+}
+
+body.has-caption .image-frame {
+    width: min(100%, calc((100cqh - var(--caption-space)) * var(--aspect-ratio)));
+    height: min(calc(100cqh - var(--caption-space)), calc(100cqw / var(--aspect-ratio)));
+}
+
+.image-caption {
+    width: min(100%, calc((100cqh - var(--caption-space)) * var(--aspect-ratio)));
+    color: var(--color-text-muted);
+    font-size: var(--font-size-small);
+    padding-top: 0.75rem;
+    line-height: 1.5;
+    text-align: left;
+}
+
+/* ===== Image Description ===== */
+/* Long text in a separate section that peeks from the viewport bottom. */
+/* The page scrolls to reveal the full text. */
+body.has-description {
+    overflow-y: auto;
+    --description-peek: 5rem;
+}
+
+body.has-description main {
+    height: auto;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding-bottom: 0;
+}
+
+body.has-description .image-page {
+    height: calc(100dvh - var(--header-height) - var(--frame-width-y) - var(--description-peek));
+    flex-shrink: 0;
+}
+
+.image-description {
+    width: min(100%, calc((100dvh - var(--header-height) - var(--frame-width-y) - var(--description-peek)) * var(--aspect-ratio)));
+    padding: 1.5rem 1rem 3rem;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-small);
+    line-height: 1.6;
+}
+
+.image-description p {
+    white-space: pre-line;
+}
+
 /* ===== Mobile Styles ===== */
 @media (max-width: 768px) {
     .site-header {

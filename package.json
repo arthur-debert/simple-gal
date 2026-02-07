@@ -1,0 +1,24 @@
+{
+  "name": "simple-gal",
+  "version": "1.0.0",
+  "description": "A minimal static site generator for fine art photography portfolios. Generates fast-loading, responsive photo albums from a filesystem-based data source.",
+  "main": "index.js",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arthur-debert/simple-gal.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/arthur-debert/simple-gal/issues"
+  },
+  "homepage": "https://github.com/arthur-debert/simple-gal#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}
