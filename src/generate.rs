@@ -419,7 +419,7 @@ fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css:
             header.album-header {
                 h1 { (album.title) }
                 @if let Some(desc) = &album.description {
-                    p.album-description { (desc) }
+                    div.album-description { (PreEscaped(desc)) }
                 }
             }
             div.thumbnail-grid {
@@ -766,7 +766,7 @@ mod tests {
         Album {
             path: "test".to_string(),
             title: "Test Album".to_string(),
-            description: Some("A test album description".to_string()),
+            description: Some("<p>A test album description</p>".to_string()),
             thumbnail: "test/001-image-thumb.webp".to_string(),
             images: vec![
                 Image {
