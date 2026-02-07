@@ -34,7 +34,7 @@ fn load_image(path: &Path) -> Result<DynamicImage, BackendError> {
         .map_err(BackendError::Io)?
         .decode()
         .map_err(|e| {
-            BackendError::CommandFailed(format!("Failed to decode {}: {}", path.display(), e))
+            BackendError::ProcessingFailed(format!("Failed to decode {}: {}", path.display(), e))
         })
 }
 
@@ -49,7 +49,7 @@ fn save_image(img: &DynamicImage, path: &Path, quality: u32) -> Result<(), Backe
     match ext.as_str() {
         "webp" => save_webp(img, path, quality),
         "avif" => save_avif(img, path, quality),
-        other => Err(BackendError::CommandFailed(format!(
+        other => Err(BackendError::ProcessingFailed(format!(
             "Unsupported output format: {}",
             other
         ))),
@@ -59,7 +59,7 @@ fn save_image(img: &DynamicImage, path: &Path, quality: u32) -> Result<(), Backe
 /// Encode and save as lossy WebP using the `webp` crate (vendored libwebp).
 fn save_webp(img: &DynamicImage, path: &Path, quality: u32) -> Result<(), BackendError> {
     let encoder = webp::Encoder::from_image(img)
-        .map_err(|e| BackendError::CommandFailed(format!("WebP encoder init failed: {}", e)))?;
+        .map_err(|e| BackendError::ProcessingFailed(format!("WebP encoder init failed: {}", e)))?;
     let encoded = encoder.encode(quality as f32);
     std::fs::write(path, &*encoded).map_err(BackendError::Io)
 }
@@ -71,13 +71,13 @@ fn save_avif(img: &DynamicImage, path: &Path, quality: u32) -> Result<(), Backen
     let encoder =
         image::codecs::avif::AvifEncoder::new_with_speed_quality(writer, 6, quality as u8);
     img.write_with_encoder(encoder)
-        .map_err(|e| BackendError::CommandFailed(format!("AVIF encode failed: {}", e)))
+        .map_err(|e| BackendError::ProcessingFailed(format!("AVIF encode failed: {}", e)))
 }
 
 impl ImageBackend for RustBackend {
     fn identify(&self, path: &Path) -> Result<Dimensions, BackendError> {
         let (width, height) = image::image_dimensions(path).map_err(|e| {
-            BackendError::CommandFailed(format!("Failed to read dimensions: {}", e))
+            BackendError::ProcessingFailed(format!("Failed to read dimensions: {}", e))
         })?;
         Ok(Dimensions { width, height })
     }

@@ -12,8 +12,8 @@ use thiserror::Error;
 pub enum BackendError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Command failed: {0}")]
-    CommandFailed(String),
+    #[error("Processing failed: {0}")]
+    ProcessingFailed(String),
     #[error("Invalid output: {0}")]
     InvalidOutput(String),
 }
@@ -73,7 +73,7 @@ impl ImageMagickBackend {
         let output = Command::new("convert").args(args).output()?;
 
         if !output.status.success() {
-            return Err(BackendError::CommandFailed(
+            return Err(BackendError::ProcessingFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
         }
@@ -95,7 +95,7 @@ impl ImageBackend for ImageMagickBackend {
             .output()?;
 
         if !output.status.success() {
-            return Err(BackendError::CommandFailed(
+            return Err(BackendError::ProcessingFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
         }
@@ -130,7 +130,7 @@ impl ImageBackend for ImageMagickBackend {
             .output()?;
 
         if !output.status.success() {
-            return Err(BackendError::CommandFailed(
+            return Err(BackendError::ProcessingFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
         }
