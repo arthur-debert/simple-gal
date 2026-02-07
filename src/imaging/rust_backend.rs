@@ -213,8 +213,6 @@ mod tests {
             .thumbnail(&ThumbnailParams {
                 source,
                 output: output.clone(),
-                fill_width: 500,
-                fill_height: 625,
                 crop_width: 400,
                 crop_height: 500,
                 quality: Quality::new(85),

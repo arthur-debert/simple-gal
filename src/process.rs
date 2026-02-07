@@ -261,7 +261,6 @@ pub fn process_with_backend(
                     &source_path,
                     &album_output_dir,
                     stem,
-                    dimensions,
                     &thumbnail_config,
                 )?;
 

@@ -5,8 +5,7 @@
 
 use super::backend::{BackendError, ImageBackend};
 use super::calculations::{
-    ResponsiveSize, calculate_fill_dimensions, calculate_responsive_sizes,
-    calculate_thumbnail_dimensions,
+    ResponsiveSize, calculate_responsive_sizes, calculate_thumbnail_dimensions,
 };
 use super::params::{Quality, ResizeParams, Sharpening, ThumbnailParams};
 use std::path::Path;
@@ -125,17 +124,13 @@ impl Default for ThumbnailConfig {
 pub fn plan_thumbnail(
     source: &Path,
     output_path: &Path,
-    source_dims: (u32, u32),
     config: &ThumbnailConfig,
 ) -> ThumbnailParams {
     let (crop_w, crop_h) = calculate_thumbnail_dimensions(config.aspect, config.short_edge);
-    let (fill_w, fill_h) = calculate_fill_dimensions(source_dims, (crop_w, crop_h));
 
     ThumbnailParams {
         source: source.to_path_buf(),
         output: output_path.to_path_buf(),
-        fill_width: fill_w,
-        fill_height: fill_h,
         crop_width: crop_w,
         crop_height: crop_h,
         quality: config.quality,
@@ -151,13 +146,12 @@ pub fn create_thumbnail(
     source: &Path,
     output_dir: &Path,
     filename_stem: &str,
-    source_dims: (u32, u32),
     config: &ThumbnailConfig,
 ) -> Result<String> {
     let thumb_name = format!("{}-thumb.webp", filename_stem);
     let thumb_path = output_dir.join(&thumb_name);
 
-    let params = plan_thumbnail(source, &thumb_path, source_dims, config);
+    let params = plan_thumbnail(source, &thumb_path, config);
     backend.thumbnail(&params)?;
 
     let relative_dir = output_dir
@@ -186,42 +180,29 @@ mod tests {
     }
 
     #[test]
-    fn plan_thumbnail_calculates_fill_and_crop() {
-        // 800x600 landscape source → 4:5 portrait thumb at 400 short edge
-        // Crop target: 400x500
-        // Fill: source is wider (4:3 > 4:5), so height matches
-        // Fill height = 500, width = 500 * (800/600) = 667
+    fn plan_thumbnail_calculates_crop_dimensions() {
+        // 4:5 portrait thumb at 400 short edge → crop 400x500
         let params = plan_thumbnail(
             Path::new("/source.jpg"),
             Path::new("/thumb.webp"),
-            (800, 600),
             &ThumbnailConfig::default(),
         );
 
         assert_eq!(params.crop_width, 400);
         assert_eq!(params.crop_height, 500);
-        assert_eq!(params.fill_width, 667);
-        assert_eq!(params.fill_height, 500);
     }
 
     #[test]
-    fn plan_thumbnail_with_portrait_source() {
-        // 600x800 portrait source → 4:5 portrait thumb at 400 short edge
-        // Crop target: 400x500
-        // Source is 3:4 = 0.75, target is 4:5 = 0.8
-        // Source is taller (0.75 < 0.8), so width matches
-        // Fill width = 400, height = 400 / 0.75 = 533
-        let params = plan_thumbnail(
-            Path::new("/source.jpg"),
-            Path::new("/thumb.webp"),
-            (600, 800),
-            &ThumbnailConfig::default(),
-        );
+    fn plan_thumbnail_landscape_aspect() {
+        let config = ThumbnailConfig {
+            aspect: (16, 9),
+            short_edge: 180,
+            ..ThumbnailConfig::default()
+        };
+        let params = plan_thumbnail(Path::new("/source.jpg"), Path::new("/thumb.webp"), &config);
 
-        assert_eq!(params.crop_width, 400);
-        assert_eq!(params.crop_height, 500);
-        assert_eq!(params.fill_width, 400);
-        assert_eq!(params.fill_height, 533);
+        assert_eq!(params.crop_width, 320);
+        assert_eq!(params.crop_height, 180);
     }
 
     #[test]
@@ -234,7 +215,6 @@ mod tests {
             Path::new("/source.jpg"),
             Path::new("/output"),
             "001-test",
-            (800, 600),
             &config,
         )
         .unwrap();

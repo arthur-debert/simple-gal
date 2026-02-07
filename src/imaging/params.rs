@@ -60,9 +60,6 @@ pub struct ResizeParams {
 pub struct ThumbnailParams {
     pub source: PathBuf,
     pub output: PathBuf,
-    /// Fill dimensions (may exceed final size).
-    pub fill_width: u32,
-    pub fill_height: u32,
     /// Final crop dimensions.
     pub crop_width: u32,
     pub crop_height: u32,

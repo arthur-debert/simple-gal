@@ -191,7 +191,8 @@ impl ImageBackend for ImageMagickBackend {
     }
 
     fn thumbnail(&self, params: &ThumbnailParams) -> Result<(), BackendError> {
-        let fill_size = format!("{}x{}^", params.fill_width, params.fill_height);
+        // The ^ modifier does minimum-fit resize: the image covers the target area
+        let fill_size = format!("{}x{}^", params.crop_width, params.crop_height);
         let crop_size = format!("{}x{}", params.crop_width, params.crop_height);
         let quality = params.quality.value().to_string();
 
@@ -250,8 +251,6 @@ pub mod tests {
         Thumbnail {
             source: String,
             output: String,
-            fill_width: u32,
-            fill_height: u32,
             crop_width: u32,
             crop_height: u32,
             quality: u32,
@@ -328,8 +327,6 @@ pub mod tests {
             self.operations.lock().unwrap().push(RecordedOp::Thumbnail {
                 source: params.source.to_string_lossy().to_string(),
                 output: params.output.to_string_lossy().to_string(),
-                fill_width: params.fill_width,
-                fill_height: params.fill_height,
                 crop_width: params.crop_width,
                 crop_height: params.crop_height,
                 quality: params.quality.value(),
@@ -390,8 +387,6 @@ pub mod tests {
             .thumbnail(&ThumbnailParams {
                 source: "/source.jpg".into(),
                 output: "/thumb.webp".into(),
-                fill_width: 500,
-                fill_height: 625,
                 crop_width: 400,
                 crop_height: 500,
                 quality: super::super::params::Quality::new(85),
