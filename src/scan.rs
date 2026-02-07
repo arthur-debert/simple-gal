@@ -13,7 +13,7 @@
 //! ├── 040-about.md                 # Page (numbered = appears in nav)
 //! ├── 050-github.md                # External link page (URL-only content)
 //! ├── 010-Landscapes/              # Album (numbered = appears in nav)
-//! │   ├── info.txt                 # Album description (optional)
+//! │   ├── description.txt                 # Album description (optional)
 //! │   ├── 001-dawn.jpg             # Preview image (lowest number)
 //! │   ├── 002-sunset.jpg
 //! │   └── 010-mountains.jpg
@@ -321,9 +321,9 @@ fn collect_entries(path: &Path) -> Result<Vec<PathBuf>, ScanError> {
         .map(|e| e.path())
         .filter(|p| {
             let name = p.file_name().unwrap().to_string_lossy();
-            // Skip hidden files, info.txt, config.toml, and build artifacts
+            // Skip hidden files, description.txt, config.toml, and build artifacts
             !name.starts_with('.')
-                && name != "info.txt"
+                && name != "description.txt"
                 && name != "config.toml"
                 && name != "processed"
                 && name != "dist"
@@ -414,7 +414,7 @@ fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, S
         .collect();
 
     // Read description if present
-    let info_path = path.join("info.txt");
+    let info_path = path.join("description.txt");
     let description = if info_path.exists() {
         let content = fs::read_to_string(&info_path)?.trim().to_string();
         if content.is_empty() {
@@ -558,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn description_read_from_info_txt() {
+    fn description_read_from_description_txt() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
