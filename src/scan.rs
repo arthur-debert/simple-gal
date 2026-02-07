@@ -83,7 +83,7 @@ pub struct Manifest {
     pub config: SiteConfig,
 }
 
-/// Album with its images
+/// Album with its images and resolved configuration.
 #[derive(Debug, Serialize)]
 pub struct Album {
     pub path: String,
@@ -93,6 +93,8 @@ pub struct Album {
     pub preview_image: String,
     pub images: Vec<Image>,
     pub in_nav: bool,
+    /// Resolved config for this album (stock → root → group → gallery chain).
+    pub config: SiteConfig,
 }
 
 /// Image metadata
@@ -125,7 +127,15 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     let mut albums = Vec::new();
     let mut nav_items = Vec::new();
 
-    scan_directory(root, root, &mut albums, &mut nav_items)?;
+    // Build the config chain: stock defaults → root config.toml
+    let base = config::stock_defaults_value();
+    let root_raw = config::load_raw_config(root)?;
+    let root_config_value = match root_raw {
+        Some(overlay) => config::merge_toml(base, overlay),
+        None => base,
+    };
+
+    scan_directory(root, root, &mut albums, &mut nav_items, &root_config_value)?;
 
     // Strip number prefixes from output paths (used for URLs and output dirs).
     // Sorting has already happened with original paths, so this is safe.
@@ -136,8 +146,8 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
 
     let pages = parse_pages(root)?;
 
-    // Load site config (uses defaults if config.toml doesn't exist)
-    let config = config::load_config(root)?;
+    // Root-level resolved config for CSS generation
+    let config = config::resolve_config(root_config_value, None)?;
 
     Ok(Manifest {
         navigation: nav_items,
@@ -241,6 +251,7 @@ fn scan_directory(
     root: &Path,
     albums: &mut Vec<Album>,
     nav_items: &mut Vec<NavItem>,
+    inherited_config: &toml::Value,
 ) -> Result<(), ScanError> {
     let entries = collect_entries(path)?;
 
@@ -253,9 +264,20 @@ fn scan_directory(
         return Err(ScanError::MixedContent(path.to_path_buf()));
     }
 
+    // Merge any local config.toml onto the inherited config (skip root — already handled)
+    let effective_config = if path != root {
+        match config::load_raw_config(path)? {
+            Some(overlay) => config::merge_toml(inherited_config.clone(), overlay),
+            None => inherited_config.clone(),
+        }
+    } else {
+        inherited_config.clone()
+    };
+
     if !images.is_empty() {
-        // This is an album
-        let album = build_album(path, root, &images)?;
+        // This is an album — resolve the accumulated config
+        let resolved = config::resolve_config(effective_config, None)?;
+        let album = build_album(path, root, &images, resolved)?;
         let in_nav = album.in_nav;
         let title = album.title.clone();
         let album_path = album.path.clone();
@@ -282,7 +304,7 @@ fn scan_directory(
         });
 
         for subdir in sorted_subdirs {
-            scan_directory(subdir, root, albums, &mut child_nav)?;
+            scan_directory(subdir, root, albums, &mut child_nav, &effective_config)?;
         }
 
         // If this directory is numbered, add it to nav with children
@@ -424,7 +446,12 @@ fn linkify_urls(text: &str) -> String {
     result
 }
 
-fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, ScanError> {
+fn build_album(
+    path: &Path,
+    root: &Path,
+    images: &[&PathBuf],
+    config: SiteConfig,
+) -> Result<Album, ScanError> {
     let rel_path = path.strip_prefix(root).unwrap();
     let dir_name = path.file_name().unwrap().to_string_lossy();
 
@@ -501,6 +528,7 @@ fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, S
         preview_image: preview_rel.to_string_lossy().to_string(),
         images,
         in_nav,
+        config,
     })
 }
 
@@ -1063,5 +1091,108 @@ mod tests {
             linkify_urls("Check https://example.com"),
             r#"Check <a href="https://example.com">https://example.com</a>"#
         );
+    }
+
+    // =========================================================================
+    // Per-gallery config chain tests
+    // =========================================================================
+
+    #[test]
+    fn album_gets_default_config_when_no_configs() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert_eq!(manifest.albums[0].config.images.quality, 90);
+        assert_eq!(manifest.albums[0].config.thumbnails.aspect_ratio, [4, 5]);
+    }
+
+    #[test]
+    fn album_inherits_root_config() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("config.toml"), "[images]\nquality = 85\n").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert_eq!(manifest.albums[0].config.images.quality, 85);
+        // Other defaults preserved
+        assert_eq!(
+            manifest.albums[0].config.images.sizes,
+            vec![800, 1400, 2080]
+        );
+    }
+
+    #[test]
+    fn album_config_overrides_root() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("config.toml"), "[images]\nquality = 85\n").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(album.join("config.toml"), "[images]\nquality = 70\n").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert_eq!(manifest.albums[0].config.images.quality, 70);
+        // Root config still at 85
+        assert_eq!(manifest.config.images.quality, 85);
+    }
+
+    #[test]
+    fn nested_config_chain_three_levels() {
+        let tmp = TempDir::new().unwrap();
+
+        // Root config: quality = 85
+        fs::write(tmp.path().join("config.toml"), "[images]\nquality = 85\n").unwrap();
+
+        // Group: Travel with aspect_ratio override
+        let travel = tmp.path().join("020-Travel");
+        fs::create_dir_all(&travel).unwrap();
+        fs::write(
+            travel.join("config.toml"),
+            "[thumbnails]\naspect_ratio = [1, 1]\n",
+        )
+        .unwrap();
+
+        // Gallery: Japan with quality override
+        let japan = travel.join("010-Japan");
+        fs::create_dir_all(&japan).unwrap();
+        fs::write(japan.join("001-tokyo.jpg"), "fake image").unwrap();
+        fs::write(japan.join("config.toml"), "[images]\nquality = 70\n").unwrap();
+
+        // Gallery: Italy with no config
+        let italy = travel.join("020-Italy");
+        fs::create_dir_all(&italy).unwrap();
+        fs::write(italy.join("001-rome.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        let japan_album = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
+        // Japan: quality from its own config (70), aspect from group (1:1), sizes from stock
+        assert_eq!(japan_album.config.images.quality, 70);
+        assert_eq!(japan_album.config.thumbnails.aspect_ratio, [1, 1]);
+        assert_eq!(japan_album.config.images.sizes, vec![800, 1400, 2080]);
+
+        let italy_album = manifest.albums.iter().find(|a| a.title == "Italy").unwrap();
+        // Italy: quality from root (85), aspect from group (1:1)
+        assert_eq!(italy_album.config.images.quality, 85);
+        assert_eq!(italy_album.config.thumbnails.aspect_ratio, [1, 1]);
+    }
+
+    #[test]
+    fn album_config_unknown_key_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(album.join("config.toml"), "[images]\nqualty = 90\n").unwrap();
+
+        let result = scan(tmp.path());
+        assert!(result.is_err());
     }
 }

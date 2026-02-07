@@ -82,6 +82,9 @@ pub struct Album {
     pub thumbnail: String,
     pub images: Vec<Image>,
     pub in_nav: bool,
+    /// Resolved config for this album (available for future per-album theming).
+    #[allow(dead_code)]
+    pub config: SiteConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -822,6 +825,7 @@ mod tests {
                 },
             ],
             in_nav: true,
+            config: SiteConfig::default(),
         }
     }
 
