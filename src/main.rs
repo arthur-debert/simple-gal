@@ -26,6 +26,9 @@
 //! simple-gal process
 //! simple-gal generate
 //!
+//! # Generate a stock config.toml
+//! simple-gal gen-config config.toml
+//!
 //! # Override paths
 //! simple-gal --source photos --output public build
 //! ```
@@ -81,6 +84,12 @@ enum Command {
     Generate,
     /// Run full build pipeline (scan + process + generate)
     Build,
+    /// Output a stock config.toml with all options and documentation
+    GenConfig {
+        /// Path to write the config file (use - for stdout)
+        #[arg(default_value = "config.toml")]
+        path: String,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,14 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let site_config: config::SiteConfig =
                 serde_json::from_value(input_manifest.get("config").cloned().unwrap_or_default())?;
             init_thread_pool(&site_config.processing);
-            let process_config = process::ProcessConfig::from_site_config(&site_config);
             let processed_dir = cli.temp_dir.join("processed");
-            let result = process::process(
-                &scan_manifest_path,
-                &cli.source,
-                &processed_dir,
-                &process_config,
-            )?;
+            let result = process::process(&scan_manifest_path, &cli.source, &processed_dir)?;
             let output_manifest = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&result)?;
             std::fs::write(&output_manifest, &json)?;
@@ -136,13 +139,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("==> Stage 2: Processing images");
             init_thread_pool(&manifest.config.processing);
             let processed_dir = cli.temp_dir.join("processed");
-            let process_config = process::ProcessConfig::from_site_config(&manifest.config);
-            let processed_manifest = process::process(
-                &scan_manifest_path,
-                &source,
-                &processed_dir,
-                &process_config,
-            )?;
+            let processed_manifest =
+                process::process(&scan_manifest_path, &source, &processed_dir)?;
             let processed_manifest_path = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&processed_manifest)?;
             std::fs::write(&processed_manifest_path, &json)?;
@@ -151,6 +149,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             generate::generate(&processed_manifest_path, &processed_dir, &cli.output)?;
 
             println!("==> Build complete: {}", cli.output.display());
+        }
+        Command::GenConfig { path } => {
+            let content = config::stock_config_toml();
+            if path == "-" {
+                print!("{}", content);
+            } else {
+                let p = std::path::Path::new(&path);
+                if p.exists() {
+                    eprintln!(
+                        "Error: {} already exists. Remove it first or choose a different path.",
+                        path
+                    );
+                    std::process::exit(1);
+                }
+                std::fs::write(p, content)?;
+                println!("Wrote stock config to {}", path);
+            }
         }
     }
 

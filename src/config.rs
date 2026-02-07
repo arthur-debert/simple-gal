@@ -1,20 +1,25 @@
 //! Site configuration module.
 //!
-//! Handles loading and parsing the `config.toml` file from the content root directory.
-//! Configuration is optional - sensible defaults are used when no config file exists.
+//! Handles loading, validating, and merging `config.toml` files. Configuration
+//! is hierarchical: stock defaults are overridden by user config files at any
+//! level of the directory tree (root → group → gallery).
 //!
 //! ## Config File Location
 //!
-//! Place `config.toml` in the content root directory:
+//! Place `config.toml` in the content root and/or any album group or album directory:
 //!
 //! ```text
 //! content/
-//! ├── config.toml          # Site configuration
-//! ├── about.md             # Optional about page
+//! ├── config.toml              # Root config (overrides stock defaults)
 //! ├── 010-Landscapes/
 //! │   └── ...
-//! └── 020-Portraits/
-//!     └── ...
+//! └── 020-Travel/
+//!     ├── config.toml          # Group config (overrides root)
+//!     ├── 010-Japan/
+//!     │   ├── config.toml      # Gallery config (overrides group)
+//!     │   └── ...
+//!     └── 020-Italy/
+//!         └── ...
 //! ```
 //!
 //! ## Configuration Options
@@ -22,7 +27,7 @@
 //! ```toml
 //! # All options are optional - defaults shown below
 //!
-//! content_root = "content"  # Path to content directory
+//! content_root = "content"  # Path to content directory (root-level only)
 //!
 //! [thumbnails]
 //! aspect_ratio = [4, 5]     # width:height ratio
@@ -62,18 +67,20 @@
 //! link_hover = "#ffffff"
 //!
 //! [processing]
-//! max_processes = 4             # Max parallel workers (omit for auto = CPU cores)
+//! max_processes = 4         # Max parallel workers (omit for auto = CPU cores)
 //! ```
 //!
 //! ## Partial Configuration
 //!
-//! You can override just the values you want to change:
+//! Config files are sparse — override just the values you want:
 //!
 //! ```toml
 //! # Only override the light mode background
 //! [colors.light]
 //! background = "#fafafa"
 //! ```
+//!
+//! Unknown keys are rejected to catch typos early.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -86,19 +93,29 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("TOML parse error: {0}")]
     Toml(#[from] toml::de::Error),
+    #[error("Config validation error: {0}")]
+    Validation(String),
 }
 
-/// Site configuration loaded from config.toml
+/// Site configuration loaded from `config.toml`.
+///
+/// All fields have sensible defaults. User config files need only specify
+/// the values they want to override. Unknown keys are rejected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SiteConfig {
-    /// Path to the content root directory (where albums, config, and pages live)
+    /// Path to the content root directory (only meaningful at root level).
     #[serde(default = "default_content_root")]
     pub content_root: String,
+    /// Color schemes for light and dark modes.
     pub colors: ColorConfig,
+    /// Thumbnail generation settings (aspect ratio).
     pub thumbnails: ThumbnailsConfig,
+    /// Responsive image generation settings (sizes, quality).
     pub images: ImagesConfig,
+    /// Theme/layout settings (frame padding, grid spacing).
     pub theme: ThemeConfig,
+    /// Parallel processing settings.
     pub processing: ProcessingConfig,
 }
 
@@ -119,9 +136,31 @@ impl Default for SiteConfig {
     }
 }
 
-/// Parallel processing settings
+impl SiteConfig {
+    /// Validate config values are within acceptable ranges.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.images.quality > 100 {
+            return Err(ConfigError::Validation(
+                "images.quality must be 0-100".into(),
+            ));
+        }
+        if self.thumbnails.aspect_ratio[0] == 0 || self.thumbnails.aspect_ratio[1] == 0 {
+            return Err(ConfigError::Validation(
+                "thumbnails.aspect_ratio values must be non-zero".into(),
+            ));
+        }
+        if self.images.sizes.is_empty() {
+            return Err(ConfigError::Validation(
+                "images.sizes must not be empty".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Parallel processing settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProcessingConfig {
     /// Maximum number of parallel image processing workers.
     /// When absent or null, defaults to the number of CPU cores.
@@ -140,29 +179,32 @@ pub fn effective_threads(config: &ProcessingConfig) -> usize {
     config.max_processes.map(|n| n.min(cores)).unwrap_or(cores)
 }
 
-/// Thumbnail generation settings
+/// Thumbnail generation settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ThumbnailsConfig {
-    /// Aspect ratio as [width, height], e.g. [4, 5] for portrait
+    /// Aspect ratio as `[width, height]`, e.g. `[4, 5]` for portrait thumbnails.
     pub aspect_ratio: [u32; 2],
+    /// Thumbnail short-edge size in pixels.
+    pub size: u32,
 }
 
 impl Default for ThumbnailsConfig {
     fn default() -> Self {
         Self {
             aspect_ratio: [4, 5],
+            size: 400,
         }
     }
 }
 
-/// Responsive image generation settings
+/// Responsive image generation settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ImagesConfig {
-    /// Responsive sizes to generate
+    /// Pixel widths (longer edge) to generate for responsive `<picture>` elements.
     pub sizes: Vec<u32>,
-    /// AVIF/WebP quality (0-100)
+    /// AVIF/WebP encoding quality (0 = worst, 100 = best).
     pub quality: u32,
 }
 
@@ -183,9 +225,13 @@ impl Default for ImagesConfig {
 ///
 /// Generates `clamp(min, size, max)` in the output CSS.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClampSize {
+    /// Preferred/fluid value, typically viewport-relative (e.g. `"3vw"`).
     pub size: String,
+    /// Minimum bound (e.g. `"1rem"`).
     pub min: String,
+    /// Maximum bound (e.g. `"2.5rem"`).
     pub max: String,
 }
 
@@ -196,26 +242,18 @@ impl ClampSize {
     }
 }
 
-/// Theme/layout settings
+/// Theme/layout settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
-    /// Horizontal frame padding around images (left/right)
+    /// Horizontal frame padding around images (left/right).
     pub frame_x: ClampSize,
-    /// Vertical frame padding around images (top/bottom)
+    /// Vertical frame padding around images (top/bottom).
     pub frame_y: ClampSize,
-    /// Gap between thumbnails in both album and image grids
+    /// Gap between thumbnails in both album and image grids (CSS value).
     pub thumbnail_gap: String,
-    /// Padding around the thumbnail grid container
+    /// Padding around the thumbnail grid container (CSS value).
     pub grid_padding: String,
-}
-
-fn default_thumbnail_gap() -> String {
-    "1rem".to_string()
-}
-
-fn default_grid_padding() -> String {
-    "2rem".to_string()
 }
 
 impl Default for ThemeConfig {
@@ -231,17 +269,19 @@ impl Default for ThemeConfig {
                 min: "2rem".to_string(),
                 max: "5rem".to_string(),
             },
-            thumbnail_gap: default_thumbnail_gap(),
-            grid_padding: default_grid_padding(),
+            thumbnail_gap: "1rem".to_string(),
+            grid_padding: "2rem".to_string(),
         }
     }
 }
 
-/// Color configuration for light and dark modes
+/// Color configuration for light and dark modes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ColorConfig {
+    /// Light mode color scheme.
     pub light: ColorScheme,
+    /// Dark mode color scheme.
     pub dark: ColorScheme,
 }
 
@@ -254,21 +294,21 @@ impl Default for ColorConfig {
     }
 }
 
-/// Individual color scheme
+/// Individual color scheme (light or dark).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ColorScheme {
-    /// Background color
+    /// Background color.
     pub background: String,
-    /// Primary text color
+    /// Primary text color.
     pub text: String,
-    /// Muted/secondary text color (used for nav menu, breadcrumbs)
+    /// Muted/secondary text color (used for nav menu, breadcrumbs, captions).
     pub text_muted: String,
-    /// Border color
+    /// Border color.
     pub border: String,
-    /// Link color
+    /// Link color.
     pub link: String,
-    /// Link hover color
+    /// Link hover color.
     pub link_hover: String,
 }
 
@@ -302,19 +342,175 @@ impl Default for ColorScheme {
     }
 }
 
-/// Load config from config.toml in the given directory
-pub fn load_config(root: &Path) -> Result<SiteConfig, ConfigError> {
-    let config_path = root.join("config.toml");
-    if !config_path.exists() {
-        return Ok(SiteConfig::default());
-    }
+// =============================================================================
+// Config loading, merging, and validation
+// =============================================================================
 
+/// Returns the stock default config as a `toml::Value::Table`.
+///
+/// This is the canonical representation of all default values, used as the
+/// base layer for merging user overrides on top.
+pub fn stock_defaults_value() -> toml::Value {
+    toml::Value::try_from(SiteConfig::default()).expect("default config must serialize")
+}
+
+/// Recursively merge `overlay` on top of `base`.
+///
+/// - Tables are merged key-by-key (overlay keys override base keys).
+/// - Non-table values in overlay replace base values entirely.
+/// - Keys in base that are not in overlay are preserved.
+pub fn merge_toml(base: toml::Value, overlay: toml::Value) -> toml::Value {
+    match (base, overlay) {
+        (toml::Value::Table(mut base_table), toml::Value::Table(overlay_table)) => {
+            for (key, overlay_val) in overlay_table {
+                let merged = match base_table.remove(&key) {
+                    Some(base_val) => merge_toml(base_val, overlay_val),
+                    None => overlay_val,
+                };
+                base_table.insert(key, merged);
+            }
+            toml::Value::Table(base_table)
+        }
+        (_, overlay) => overlay,
+    }
+}
+
+/// Load a `config.toml` from a directory as a raw TOML value.
+///
+/// Returns `Ok(None)` if no `config.toml` exists in the directory.
+/// Returns `Err` if the file exists but contains invalid TOML.
+pub fn load_raw_config(path: &Path) -> Result<Option<toml::Value>, ConfigError> {
+    let config_path = path.join("config.toml");
+    if !config_path.exists() {
+        return Ok(None);
+    }
     let content = fs::read_to_string(&config_path)?;
-    let config: SiteConfig = toml::from_str(&content)?;
+    let value: toml::Value = toml::from_str(&content)?;
+    Ok(Some(value))
+}
+
+/// Merge an optional overlay onto a base value, then deserialize and validate.
+///
+/// Used to resolve a fully-merged config at any point in the directory hierarchy.
+pub fn resolve_config(
+    base: toml::Value,
+    overlay: Option<toml::Value>,
+) -> Result<SiteConfig, ConfigError> {
+    let merged = match overlay {
+        Some(ov) => merge_toml(base, ov),
+        None => base,
+    };
+    let config: SiteConfig = merged.try_into()?;
+    config.validate()?;
     Ok(config)
 }
 
-/// Generate CSS custom properties from color config
+/// Load config from `config.toml` in the given directory.
+///
+/// Merges user values on top of stock defaults, rejects unknown keys,
+/// and validates the result.
+pub fn load_config(root: &Path) -> Result<SiteConfig, ConfigError> {
+    let base = stock_defaults_value();
+    let overlay = load_raw_config(root)?;
+    resolve_config(base, overlay)
+}
+
+/// Returns a fully-commented stock `config.toml` with all keys and explanations.
+///
+/// Used by the `gen-config` CLI command.
+pub fn stock_config_toml() -> &'static str {
+    r##"# Simple Gal Configuration
+# ========================
+# All settings are optional. Remove or comment out any you don't need.
+# Values shown below are the defaults.
+#
+# Config files can be placed at any level of the directory tree:
+#   content/config.toml          -> root (overrides stock defaults)
+#   content/020-Travel/config.toml -> group (overrides root)
+#   content/020-Travel/010-Japan/config.toml -> gallery (overrides group)
+#
+# Each level only needs the keys it wants to override.
+# Unknown keys will cause an error.
+
+# Path to content directory (only meaningful at root level)
+content_root = "content"
+
+# ---------------------------------------------------------------------------
+# Thumbnail generation
+# ---------------------------------------------------------------------------
+[thumbnails]
+# Aspect ratio as [width, height] for thumbnail crops.
+# Common choices: [1, 1] for square, [4, 5] for portrait, [3, 2] for landscape.
+aspect_ratio = [4, 5]
+
+# Short-edge size in pixels for generated thumbnails.
+size = 400
+
+# ---------------------------------------------------------------------------
+# Responsive image generation
+# ---------------------------------------------------------------------------
+[images]
+# Pixel widths (longer edge) to generate for responsive <picture> elements.
+sizes = [800, 1400, 2080]
+
+# AVIF/WebP encoding quality (0 = worst, 100 = best).
+quality = 90
+
+# ---------------------------------------------------------------------------
+# Theme / layout
+# ---------------------------------------------------------------------------
+[theme]
+# Gap between thumbnails in album and image grids (CSS value).
+thumbnail_gap = "1rem"
+
+# Padding around the thumbnail grid container (CSS value).
+grid_padding = "2rem"
+
+# Horizontal frame padding around images, as CSS clamp(min, size, max).
+[theme.frame_x]
+size = "3vw"
+min = "1rem"
+max = "2.5rem"
+
+# Vertical frame padding around images, as CSS clamp(min, size, max).
+[theme.frame_y]
+size = "6vw"
+min = "2rem"
+max = "5rem"
+
+# ---------------------------------------------------------------------------
+# Colors - Light mode (prefers-color-scheme: light)
+# ---------------------------------------------------------------------------
+[colors.light]
+background = "#ffffff"
+text = "#111111"
+text_muted = "#666666"    # Nav, breadcrumbs, captions
+border = "#e0e0e0"
+link = "#333333"
+link_hover = "#000000"
+
+# ---------------------------------------------------------------------------
+# Colors - Dark mode (prefers-color-scheme: dark)
+# ---------------------------------------------------------------------------
+[colors.dark]
+background = "#0a0a0a"
+text = "#eeeeee"
+text_muted = "#999999"
+border = "#333333"
+link = "#cccccc"
+link_hover = "#ffffff"
+
+# ---------------------------------------------------------------------------
+# Processing
+# ---------------------------------------------------------------------------
+[processing]
+# Maximum parallel image-processing workers.
+# Omit or comment out to auto-detect (= number of CPU cores).
+# max_processes = 4
+"##
+}
+
+/// Generate CSS custom properties from color config.
 pub fn generate_color_css(colors: &ColorConfig) -> String {
     format!(
         r#":root {{
@@ -351,7 +547,7 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
     )
 }
 
-/// Generate CSS custom properties from theme config
+/// Generate CSS custom properties from theme config.
 pub fn generate_theme_css(theme: &ThemeConfig) -> String {
     format!(
         r#":root {{
@@ -657,5 +853,353 @@ background = "#fafafa"
 "##;
         let config: SiteConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.processing.max_processes, None);
+    }
+
+    // =========================================================================
+    // merge_toml tests
+    // =========================================================================
+
+    #[test]
+    fn merge_toml_scalar_override() {
+        let base: toml::Value = toml::from_str(r#"quality = 90"#).unwrap();
+        let overlay: toml::Value = toml::from_str(r#"quality = 70"#).unwrap();
+        let merged = merge_toml(base, overlay);
+        assert_eq!(merged.get("quality").unwrap().as_integer(), Some(70));
+    }
+
+    #[test]
+    fn merge_toml_table_merge() {
+        let base: toml::Value = toml::from_str(
+            r#"
+[images]
+sizes = [800, 1400]
+quality = 90
+"#,
+        )
+        .unwrap();
+        let overlay: toml::Value = toml::from_str(
+            r#"
+[images]
+quality = 70
+"#,
+        )
+        .unwrap();
+        let merged = merge_toml(base, overlay);
+        let images = merged.get("images").unwrap();
+        assert_eq!(images.get("quality").unwrap().as_integer(), Some(70));
+        // sizes preserved from base
+        assert!(images.get("sizes").unwrap().as_array().unwrap().len() == 2);
+    }
+
+    #[test]
+    fn merge_toml_preserves_base_keys() {
+        let base: toml::Value = toml::from_str(
+            r#"
+a = 1
+b = 2
+"#,
+        )
+        .unwrap();
+        let overlay: toml::Value = toml::from_str(r#"a = 10"#).unwrap();
+        let merged = merge_toml(base, overlay);
+        assert_eq!(merged.get("a").unwrap().as_integer(), Some(10));
+        assert_eq!(merged.get("b").unwrap().as_integer(), Some(2));
+    }
+
+    #[test]
+    fn merge_toml_deep_nested() {
+        let base: toml::Value = toml::from_str(
+            r##"
+[colors.light]
+background = "#fff"
+text = "#000"
+"##,
+        )
+        .unwrap();
+        let overlay: toml::Value = toml::from_str(
+            r##"
+[colors.light]
+background = "#fafafa"
+"##,
+        )
+        .unwrap();
+        let merged = merge_toml(base, overlay);
+        let light = merged.get("colors").unwrap().get("light").unwrap();
+        assert_eq!(light.get("background").unwrap().as_str(), Some("#fafafa"));
+        assert_eq!(light.get("text").unwrap().as_str(), Some("#000"));
+    }
+
+    #[test]
+    fn merge_toml_three_layers() {
+        let stock: toml::Value = toml::from_str(
+            r#"
+[images]
+quality = 90
+sizes = [800, 1400, 2080]
+"#,
+        )
+        .unwrap();
+        let root: toml::Value = toml::from_str(
+            r#"
+[images]
+quality = 85
+"#,
+        )
+        .unwrap();
+        let gallery: toml::Value = toml::from_str(
+            r#"
+[images]
+quality = 70
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_toml(merge_toml(stock, root), gallery);
+        let images = merged.get("images").unwrap();
+        assert_eq!(images.get("quality").unwrap().as_integer(), Some(70));
+        // sizes preserved from stock
+        assert_eq!(images.get("sizes").unwrap().as_array().unwrap().len(), 3);
+    }
+
+    // =========================================================================
+    // Unknown key rejection tests
+    // =========================================================================
+
+    #[test]
+    fn unknown_key_rejected() {
+        let toml_str = r#"
+[images]
+qualty = 90
+"#;
+        let result: Result<SiteConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown field"));
+    }
+
+    #[test]
+    fn unknown_section_rejected() {
+        let toml_str = r#"
+[imagez]
+quality = 90
+"#;
+        let result: Result<SiteConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unknown_nested_key_rejected() {
+        let toml_str = r##"
+[colors.light]
+bg = "#fff"
+"##;
+        let result: Result<SiteConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unknown_key_rejected_via_load_config() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("config.toml"),
+            r#"
+[images]
+qualty = 90
+"#,
+        )
+        .unwrap();
+
+        let result = load_config(tmp.path());
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Validation tests
+    // =========================================================================
+
+    #[test]
+    fn validate_quality_boundary_ok() {
+        let mut config = SiteConfig::default();
+        config.images.quality = 100;
+        assert!(config.validate().is_ok());
+
+        config.images.quality = 0;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_quality_too_high() {
+        let mut config = SiteConfig::default();
+        config.images.quality = 101;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("quality"));
+    }
+
+    #[test]
+    fn validate_aspect_ratio_zero() {
+        let mut config = SiteConfig::default();
+        config.thumbnails.aspect_ratio = [0, 5];
+        assert!(config.validate().is_err());
+
+        config.thumbnails.aspect_ratio = [4, 0];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_sizes_empty() {
+        let mut config = SiteConfig::default();
+        config.images.sizes = vec![];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_default_config_passes() {
+        let config = SiteConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn load_config_validates_values() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("config.toml"),
+            r#"
+[images]
+quality = 200
+"#,
+        )
+        .unwrap();
+
+        let result = load_config(tmp.path());
+        assert!(matches!(result, Err(ConfigError::Validation(_))));
+    }
+
+    // =========================================================================
+    // resolve_config / load_raw_config tests
+    // =========================================================================
+
+    #[test]
+    fn load_raw_config_returns_none_when_no_file() {
+        let tmp = TempDir::new().unwrap();
+        let result = load_raw_config(tmp.path()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_raw_config_returns_value_when_file_exists() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("config.toml"),
+            r#"
+[images]
+quality = 85
+"#,
+        )
+        .unwrap();
+
+        let result = load_raw_config(tmp.path()).unwrap();
+        assert!(result.is_some());
+        let val = result.unwrap();
+        assert_eq!(
+            val.get("images")
+                .unwrap()
+                .get("quality")
+                .unwrap()
+                .as_integer(),
+            Some(85)
+        );
+    }
+
+    #[test]
+    fn resolve_config_with_no_overlay() {
+        let base = stock_defaults_value();
+        let config = resolve_config(base, None).unwrap();
+        assert_eq!(config.images.quality, 90);
+        assert_eq!(config.colors.light.background, "#ffffff");
+    }
+
+    #[test]
+    fn resolve_config_with_overlay() {
+        let base = stock_defaults_value();
+        let overlay: toml::Value = toml::from_str(
+            r#"
+[images]
+quality = 70
+"#,
+        )
+        .unwrap();
+        let config = resolve_config(base, Some(overlay)).unwrap();
+        assert_eq!(config.images.quality, 70);
+        // Other fields preserved from defaults
+        assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
+    }
+
+    #[test]
+    fn resolve_config_rejects_invalid_values() {
+        let base = stock_defaults_value();
+        let overlay: toml::Value = toml::from_str(
+            r#"
+[images]
+quality = 200
+"#,
+        )
+        .unwrap();
+        let result = resolve_config(base, Some(overlay));
+        assert!(matches!(result, Err(ConfigError::Validation(_))));
+    }
+
+    // =========================================================================
+    // stock_config_toml tests
+    // =========================================================================
+
+    #[test]
+    fn stock_config_toml_is_valid_toml() {
+        let content = stock_config_toml();
+        let _: toml::Value = toml::from_str(content).expect("stock config must be valid TOML");
+    }
+
+    #[test]
+    fn stock_config_toml_roundtrips_to_defaults() {
+        let content = stock_config_toml();
+        let config: SiteConfig = toml::from_str(content).unwrap();
+        assert_eq!(config.images.quality, 90);
+        assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
+        assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
+        assert_eq!(config.colors.light.background, "#ffffff");
+        assert_eq!(config.colors.dark.background, "#0a0a0a");
+        assert_eq!(config.theme.thumbnail_gap, "1rem");
+    }
+
+    #[test]
+    fn stock_config_toml_contains_all_sections() {
+        let content = stock_config_toml();
+        assert!(content.contains("[thumbnails]"));
+        assert!(content.contains("[images]"));
+        assert!(content.contains("[theme]"));
+        assert!(content.contains("[theme.frame_x]"));
+        assert!(content.contains("[theme.frame_y]"));
+        assert!(content.contains("[colors.light]"));
+        assert!(content.contains("[colors.dark]"));
+        assert!(content.contains("[processing]"));
+    }
+
+    // =========================================================================
+    // stock_defaults_value tests
+    // =========================================================================
+
+    #[test]
+    fn stock_defaults_value_is_table() {
+        let val = stock_defaults_value();
+        assert!(val.is_table());
+    }
+
+    #[test]
+    fn stock_defaults_value_has_all_sections() {
+        let val = stock_defaults_value();
+        assert!(val.get("images").is_some());
+        assert!(val.get("thumbnails").is_some());
+        assert!(val.get("colors").is_some());
+        assert!(val.get("theme").is_some());
+        assert!(val.get("processing").is_some());
     }
 }

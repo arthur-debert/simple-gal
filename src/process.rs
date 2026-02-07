@@ -79,7 +79,7 @@ impl ProcessConfig {
             sizes: config.images.sizes.clone(),
             quality: config.images.quality,
             thumbnail_aspect: (ar[0], ar[1]),
-            thumbnail_size: 400,
+            thumbnail_size: config.thumbnails.size,
         }
     }
 }
@@ -108,6 +108,7 @@ pub struct InputAlbum {
     pub preview_image: String,
     pub images: Vec<InputImage>,
     pub in_nav: bool,
+    pub config: SiteConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +144,7 @@ pub struct OutputAlbum {
     pub thumbnail: String,
     pub images: Vec<OutputImage>,
     pub in_nav: bool,
+    pub config: SiteConfig,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,10 +176,9 @@ pub fn process(
     manifest_path: &Path,
     source_root: &Path,
     output_dir: &Path,
-    config: &ProcessConfig,
 ) -> Result<OutputManifest, ProcessError> {
     let backend = ImageMagickBackend::new();
-    process_with_backend(&backend, manifest_path, source_root, output_dir, config)
+    process_with_backend(&backend, manifest_path, source_root, output_dir)
 }
 
 /// Process images using a specific backend (allows testing with mock).
@@ -186,29 +187,31 @@ pub fn process_with_backend(
     manifest_path: &Path,
     source_root: &Path,
     output_dir: &Path,
-    config: &ProcessConfig,
 ) -> Result<OutputManifest, ProcessError> {
     let manifest_content = std::fs::read_to_string(manifest_path)?;
     let input: InputManifest = serde_json::from_str(&manifest_content)?;
 
     std::fs::create_dir_all(output_dir)?;
 
-    let responsive_config = ResponsiveConfig {
-        sizes: config.sizes.clone(),
-        quality: Quality::new(config.quality),
-    };
-
-    let thumbnail_config = ThumbnailConfig {
-        aspect: config.thumbnail_aspect,
-        short_edge: config.thumbnail_size,
-        quality: Quality::new(config.quality),
-        sharpening: Some(Sharpening::light()),
-    };
-
     let mut output_albums = Vec::new();
 
     for album in &input.albums {
         println!("Processing album: {}", album.title);
+
+        // Per-album config from the resolved config chain
+        let album_process = ProcessConfig::from_site_config(&album.config);
+
+        let responsive_config = ResponsiveConfig {
+            sizes: album_process.sizes.clone(),
+            quality: Quality::new(album_process.quality),
+        };
+
+        let thumbnail_config = ThumbnailConfig {
+            aspect: album_process.thumbnail_aspect,
+            short_edge: album_process.thumbnail_size,
+            quality: Quality::new(album_process.quality),
+            sharpening: Some(Sharpening::light()),
+        };
         let album_output_dir = output_dir.join(&album.path);
         std::fs::create_dir_all(&album_output_dir)?;
 
@@ -328,6 +331,7 @@ pub fn process_with_backend(
             thumbnail: album_thumbnail,
             images: output_images,
             in_nav: album.in_nav,
+            config: album.config.clone(),
         });
     }
 
@@ -394,7 +398,8 @@ mod tests {
                     "source_path": "010-album/001-test.jpg",
                     "filename": "001-test.jpg"
                 }],
-                "in_nav": true
+                "in_nav": true,
+                "config": {}
             }],
             "pages": [{
                 "title": "About",
@@ -405,26 +410,7 @@ mod tests {
                 "sort_key": 40,
                 "is_link": false
             }],
-            "config": {
-                "colors": {
-                    "light": {
-                        "background": "#fff",
-                        "text": "#000",
-                        "text_muted": "#666",
-                        "border": "#ccc",
-                        "link": "#00f",
-                        "link_hover": "#f00"
-                    },
-                    "dark": {
-                        "background": "#000",
-                        "text": "#fff",
-                        "text_muted": "#999",
-                        "border": "#333",
-                        "link": "#88f",
-                        "link_hover": "#f88"
-                    }
-                }
-            }
+            "config": {}
         }"##;
 
         let manifest: InputManifest = serde_json::from_str(manifest_json).unwrap();
@@ -447,26 +433,7 @@ mod tests {
         let manifest_json = r##"{
             "navigation": [],
             "albums": [],
-            "config": {
-                "colors": {
-                    "light": {
-                        "background": "#fff",
-                        "text": "#000",
-                        "text_muted": "#666",
-                        "border": "#ccc",
-                        "link": "#00f",
-                        "link_hover": "#f00"
-                    },
-                    "dark": {
-                        "background": "#000",
-                        "text": "#fff",
-                        "text_muted": "#999",
-                        "border": "#333",
-                        "link": "#88f",
-                        "link_hover": "#f88"
-                    }
-                }
-            }
+            "config": {}
         }"##;
 
         let manifest: InputManifest = serde_json::from_str(manifest_json).unwrap();
@@ -498,41 +465,30 @@ mod tests {
     use crate::imaging::backend::tests::MockBackend;
 
     fn create_test_manifest(tmp: &Path) -> PathBuf {
-        let manifest = r##"{
+        create_test_manifest_with_config(tmp, "{}")
+    }
+
+    fn create_test_manifest_with_config(tmp: &Path, album_config_json: &str) -> PathBuf {
+        let manifest = format!(
+            r##"{{
             "navigation": [],
-            "albums": [{
+            "albums": [{{
                 "path": "test-album",
                 "title": "Test Album",
                 "description": null,
                 "preview_image": "test-album/001-test.jpg",
-                "images": [{
+                "images": [{{
                     "number": 1,
                     "source_path": "test-album/001-test.jpg",
                     "filename": "001-test.jpg"
-                }],
-                "in_nav": true
-            }],
-            "config": {
-                "colors": {
-                    "light": {
-                        "background": "#fff",
-                        "text": "#000",
-                        "text_muted": "#666",
-                        "border": "#ccc",
-                        "link": "#00f",
-                        "link_hover": "#f00"
-                    },
-                    "dark": {
-                        "background": "#000",
-                        "text": "#fff",
-                        "text_muted": "#999",
-                        "border": "#333",
-                        "link": "#88f",
-                        "link_hover": "#f88"
-                    }
-                }
-            }
-        }"##;
+                }}],
+                "in_nav": true,
+                "config": {album_config}
+            }}],
+            "config": {{}}
+        }}"##,
+            album_config = album_config_json,
+        );
 
         let manifest_path = tmp.join("manifest.json");
         fs::write(&manifest_path, manifest).unwrap();
@@ -555,8 +511,9 @@ mod tests {
         let image_path = source_dir.join("test-album/001-test.jpg");
         create_dummy_source(&image_path);
 
-        // Create manifest
-        let manifest_path = create_test_manifest(tmp.path());
+        // Create manifest with per-album config
+        let manifest_path =
+            create_test_manifest_with_config(tmp.path(), r#"{"images": {"sizes": [100, 150]}}"#);
 
         // Create mock backend with dimensions
         let backend = MockBackend::with_dimensions(vec![Dimensions {
@@ -564,16 +521,8 @@ mod tests {
             height: 250,
         }]);
 
-        // Process
-        let config = ProcessConfig {
-            sizes: vec![100, 150],
-            thumbnail_size: 80,
-            ..Default::default()
-        };
-
         let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config)
-                .unwrap();
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir).unwrap();
 
         // Verify outputs
         assert_eq!(result.albums.len(), 1);
@@ -594,7 +543,11 @@ mod tests {
         let image_path = source_dir.join("test-album/001-test.jpg");
         create_dummy_source(&image_path);
 
-        let manifest_path = create_test_manifest(tmp.path());
+        // Per-album config with quality=85 and sizes=[800,1400]
+        let manifest_path = create_test_manifest_with_config(
+            tmp.path(),
+            r#"{"images": {"sizes": [800, 1400], "quality": 85}}"#,
+        );
 
         // 2000x1500 landscape - should generate both sizes
         let backend = MockBackend::with_dimensions(vec![Dimensions {
@@ -602,14 +555,7 @@ mod tests {
             height: 1500,
         }]);
 
-        let config = ProcessConfig {
-            sizes: vec![800, 1400],
-            quality: 85,
-            thumbnail_size: 100,
-            ..Default::default()
-        };
-
-        process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config).unwrap();
+        process_with_backend(&backend, &manifest_path, &source_dir, &output_dir).unwrap();
 
         use crate::imaging::backend::tests::RecordedOp;
         let ops = backend.get_operations();
@@ -641,7 +587,11 @@ mod tests {
         let image_path = source_dir.join("test-album/001-test.jpg");
         create_dummy_source(&image_path);
 
-        let manifest_path = create_test_manifest(tmp.path());
+        // Per-album config with sizes larger than the source image
+        let manifest_path = create_test_manifest_with_config(
+            tmp.path(),
+            r#"{"images": {"sizes": [800, 1400, 2080]}}"#,
+        );
 
         // 500x400 - smaller than all requested sizes
         let backend = MockBackend::with_dimensions(vec![Dimensions {
@@ -649,14 +599,8 @@ mod tests {
             height: 400,
         }]);
 
-        let config = ProcessConfig {
-            sizes: vec![800, 1400, 2080],
-            ..Default::default()
-        };
-
         let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config)
-                .unwrap();
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir).unwrap();
 
         // Should only have original size
         let image = &result.albums[0].images[0];
@@ -673,10 +617,8 @@ mod tests {
         // Don't create the source file
         let manifest_path = create_test_manifest(tmp.path());
         let backend = MockBackend::new();
-        let config = ProcessConfig::default();
 
-        let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, &config);
+        let result = process_with_backend(&backend, &manifest_path, &source_dir, &output_dir);
 
         assert!(matches!(result, Err(ProcessError::SourceNotFound(_))));
     }
@@ -714,17 +656,11 @@ mod tests {
         let image_path = source_dir.join("test-album/001-test.jpg");
         create_test_image(&image_path);
 
-        // Create manifest
-        let manifest_path = create_test_manifest(tmp.path());
+        // Create manifest with per-album config
+        let manifest_path =
+            create_test_manifest_with_config(tmp.path(), r#"{"images": {"sizes": [100, 150]}}"#);
 
-        // Process
-        let config = ProcessConfig {
-            sizes: vec![100, 150],
-            thumbnail_size: 80,
-            ..Default::default()
-        };
-
-        let result = process(&manifest_path, &source_dir, &output_dir, &config).unwrap();
+        let result = process(&manifest_path, &source_dir, &output_dir).unwrap();
 
         // Verify outputs exist
         assert_eq!(result.albums.len(), 1);
@@ -749,16 +685,12 @@ mod tests {
         let image_path = source_dir.join("test-album/001-test.jpg");
         create_test_image(&image_path);
 
-        let manifest_path = create_test_manifest(tmp.path());
+        let manifest_path = create_test_manifest_with_config(
+            tmp.path(),
+            r#"{"images": {"sizes": [100]}, "thumbnails": {"aspect_ratio": [4, 5], "size": 80}}"#,
+        );
 
-        let config = ProcessConfig {
-            sizes: vec![100],
-            thumbnail_size: 80,
-            thumbnail_aspect: (4, 5),
-            ..Default::default()
-        };
-
-        process(&manifest_path, &source_dir, &output_dir, &config).unwrap();
+        process(&manifest_path, &source_dir, &output_dir).unwrap();
 
         // Check thumbnail dimensions
         let thumb_path = output_dir.join("test-album/001-test-thumb.webp");
