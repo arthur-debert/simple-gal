@@ -123,15 +123,18 @@ fn index_width(total: usize) -> usize {
     }
 }
 
-/// Build an image page filename like `"02-L1020411.html"` or `"02.html"` (when no slug).
+/// Build an image page directory name like `"02-L1020411/"` or `"02/"` (when no slug).
+///
+/// Image pages are directories with an `index.html` inside, so that static
+/// servers can serve them without requiring `.html` in the URL.
 ///
 /// Uses the same zero-padded index as [`format_image_label`].
 fn image_page_url(position: usize, total: usize, slug: &str) -> String {
     let width = index_width(total);
     if slug.is_empty() {
-        format!("{:0>width$}.html", position)
+        format!("{:0>width$}/", position)
     } else {
-        format!("{:0>width$}-{}.html", position, slug)
+        format!("{:0>width$}-{}/", position, slug)
     }
 }
 
@@ -208,8 +211,10 @@ pub fn generate(
                 &manifest.pages,
                 &css,
             );
-            let image_filename = image_page_url(idx + 1, album.images.len(), &image.slug);
-            fs::write(album_dir.join(&image_filename), image_html.into_string())?;
+            let image_dir_name = image_page_url(idx + 1, album.images.len(), &image.slug);
+            let image_dir = album_dir.join(&image_dir_name);
+            fs::create_dir_all(&image_dir)?;
+            fs::write(image_dir.join("index.html"), image_html.into_string())?;
         }
         println!(
             "Generated {} image pages for {}",
@@ -440,12 +445,13 @@ fn render_image_page(
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
-    // Strip album path prefix since image pages are inside the album directory
+    // Strip album path prefix and add ../ since image pages are in subdirectories
     let strip_prefix = |path: &str| -> String {
-        path.strip_prefix(&album.path)
+        let relative = path
+            .strip_prefix(&album.path)
             .and_then(|p| p.strip_prefix('/'))
-            .unwrap_or(path)
-            .to_string()
+            .unwrap_or(path);
+        format!("../{}", relative)
     };
 
     // Build srcsets
@@ -482,13 +488,13 @@ fn render_image_page(
 
     let total = album.images.len();
     let prev_url = match prev {
-        Some(p) => image_page_url(image_idx, total, &p.slug), // image_idx is 0-based = prev's 1-based
-        None => "index.html".to_string(),
+        Some(p) => format!("../{}", image_page_url(image_idx, total, &p.slug)), // image_idx is 0-based = prev's 1-based
+        None => "../".to_string(),
     };
 
     let next_url = match next {
-        Some(n) => image_page_url(image_idx + 2, total, &n.slug),
-        None => "index.html".to_string(),
+        Some(n) => format!("../{}", image_page_url(image_idx + 2, total, &n.slug)),
+        None => "../".to_string(),
     };
 
     let display_idx = image_idx + 1;
@@ -498,7 +504,7 @@ fn render_image_page(
     let breadcrumb = html! {
         a href="/" { "Gallery" }
         " › "
-        a href="index.html" { (album.title) }
+        a href="../" { (album.title) }
         " › "
         (image_label)
     };
@@ -818,9 +824,9 @@ mod tests {
         let nav = vec![];
         let html = render_album_page(&album, &nav, &[], "").into_string();
 
-        // Should have links to image pages (1-dawn.html, 2-night.html)
-        assert!(html.contains("1-dawn.html"));
-        assert!(html.contains("2-night.html"));
+        // Should have links to image pages (1-dawn/, 2-night/)
+        assert!(html.contains("1-dawn/"));
+        assert!(html.contains("2-night/"));
         // Thumbnails should have paths relative to album dir
         assert!(html.contains("001-dawn-thumb.webp"));
     }
@@ -892,8 +898,8 @@ mod tests {
             "",
         )
         .into_string();
-        assert!(html1.contains(r#"data-prev="index.html""#));
-        assert!(html1.contains(r#"data-next="2-night.html""#));
+        assert!(html1.contains(r#"data-prev="../""#));
+        assert!(html1.contains(r#"data-next="../2-night/""#));
 
         // Second image - has prev, no next
         let html2 = render_image_page(
@@ -906,8 +912,8 @@ mod tests {
             "",
         )
         .into_string();
-        assert!(html2.contains(r#"data-prev="1-dawn.html""#));
-        assert!(html2.contains(r#"data-next="index.html""#));
+        assert!(html2.contains(r#"data-prev="../1-dawn/""#));
+        assert!(html2.contains(r#"data-next="../""#));
     }
 
     #[test]
