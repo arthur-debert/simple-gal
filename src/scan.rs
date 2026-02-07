@@ -13,7 +13,7 @@
 //! ├── 040-about.md                 # Page (numbered = appears in nav)
 //! ├── 050-github.md                # External link page (URL-only content)
 //! ├── 010-Landscapes/              # Album (numbered = appears in nav)
-//! │   ├── info.txt                 # Album description (optional)
+//! │   ├── description.txt                 # Album description (optional)
 //! │   ├── 001-dawn.jpg             # Preview image (lowest number)
 //! │   ├── 002-sunset.jpg
 //! │   └── 010-mountains.jpg
@@ -321,9 +321,10 @@ fn collect_entries(path: &Path) -> Result<Vec<PathBuf>, ScanError> {
         .map(|e| e.path())
         .filter(|p| {
             let name = p.file_name().unwrap().to_string_lossy();
-            // Skip hidden files, info.txt, config.toml, and build artifacts
+            // Skip hidden files, description files, config.toml, and build artifacts
             !name.starts_with('.')
-                && name != "info.txt"
+                && name != "description.txt"
+                && name != "description.md"
                 && name != "config.toml"
                 && name != "processed"
                 && name != "dist"
@@ -344,6 +345,83 @@ fn is_image(path: &Path) -> bool {
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     IMAGE_EXTENSIONS.contains(&ext.as_str())
+}
+
+/// Read an album description from `description.md` or `description.txt`.
+///
+/// - `description.md` takes priority and is rendered as markdown HTML.
+/// - `description.txt` is converted to HTML with smart paragraph handling
+///   and URL linkification.
+/// - Returns `None` if neither file exists or contents are empty.
+fn read_album_description(album_dir: &Path) -> Result<Option<String>, ScanError> {
+    let md_path = album_dir.join("description.md");
+    if md_path.exists() {
+        let content = fs::read_to_string(&md_path)?.trim().to_string();
+        if content.is_empty() {
+            return Ok(None);
+        }
+        let parser = pulldown_cmark::Parser::new(&content);
+        let mut html = String::new();
+        pulldown_cmark::html::push_html(&mut html, parser);
+        return Ok(Some(html));
+    }
+
+    let txt_path = album_dir.join("description.txt");
+    if txt_path.exists() {
+        let content = fs::read_to_string(&txt_path)?.trim().to_string();
+        if content.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(plain_text_to_html(&content)));
+    }
+
+    Ok(None)
+}
+
+/// Convert plain text to HTML with smart paragraph detection and URL linkification.
+///
+/// - Double newlines (`\n\n`) split text into `<p>` elements.
+/// - URLs starting with `http://` or `https://` are wrapped in `<a>` tags.
+fn plain_text_to_html(text: &str) -> String {
+    let paragraphs: Vec<&str> = text.split("\n\n").collect();
+    paragraphs
+        .iter()
+        .map(|p| {
+            let escaped = linkify_urls(&html_escape(p.trim()));
+            format!("<p>{}</p>", escaped)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Escape HTML special characters.
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Find URLs in text and wrap them in anchor tags.
+fn linkify_urls(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+
+    while let Some(start) = remaining
+        .find("https://")
+        .or_else(|| remaining.find("http://"))
+    {
+        result.push_str(&remaining[..start]);
+        let url_text = &remaining[start..];
+        let end = url_text
+            .find(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '"')
+            .unwrap_or(url_text.len());
+        let url = &url_text[..end];
+        result.push_str(&format!(r#"<a href="{url}">{url}</a>"#));
+        remaining = &url_text[end..];
+    }
+    result.push_str(remaining);
+    result
 }
 
 fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, ScanError> {
@@ -413,18 +491,8 @@ fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, S
         })
         .collect();
 
-    // Read description if present
-    let info_path = path.join("info.txt");
-    let description = if info_path.exists() {
-        let content = fs::read_to_string(&info_path)?.trim().to_string();
-        if content.is_empty() {
-            None
-        } else {
-            Some(content)
-        }
-    } else {
-        None
-    };
+    // Read description: description.md takes priority over description.txt
+    let description = read_album_description(path)?;
 
     Ok(Album {
         path: rel_path.to_string_lossy().to_string(),
@@ -558,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn description_read_from_info_txt() {
+    fn description_read_from_description_txt() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
@@ -568,13 +636,10 @@ mod tests {
             .find(|a| a.title == "Landscapes")
             .unwrap();
         assert!(landscapes.description.is_some());
-        assert!(
-            landscapes
-                .description
-                .as_ref()
-                .unwrap()
-                .contains("landscape")
-        );
+        let desc = landscapes.description.as_ref().unwrap();
+        // Should be wrapped in <p> tags (plain text → HTML conversion)
+        assert!(desc.contains("<p>"));
+        assert!(desc.contains("landscape"));
 
         let minimal = manifest
             .albums
@@ -582,6 +647,104 @@ mod tests {
             .find(|a| a.title == "Minimal")
             .unwrap();
         assert!(minimal.description.is_none());
+    }
+
+    #[test]
+    fn description_md_takes_priority_over_txt() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(album.join("description.txt"), "Text version").unwrap();
+        fs::write(album.join("description.md"), "**Markdown** version").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.albums[0].description.as_ref().unwrap();
+        assert!(desc.contains("<strong>Markdown</strong>"));
+        assert!(!desc.contains("Text version"));
+    }
+
+    #[test]
+    fn description_txt_converts_paragraphs() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(
+            album.join("description.txt"),
+            "First paragraph.\n\nSecond paragraph.",
+        )
+        .unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.albums[0].description.as_ref().unwrap();
+        assert!(desc.contains("<p>First paragraph.</p>"));
+        assert!(desc.contains("<p>Second paragraph.</p>"));
+    }
+
+    #[test]
+    fn description_txt_linkifies_urls() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(
+            album.join("description.txt"),
+            "Visit https://example.com for more.",
+        )
+        .unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.albums[0].description.as_ref().unwrap();
+        assert!(desc.contains(r#"<a href="https://example.com">https://example.com</a>"#));
+    }
+
+    #[test]
+    fn description_md_renders_markdown() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(
+            album.join("description.md"),
+            "# Title\n\nSome *italic* text.",
+        )
+        .unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.albums[0].description.as_ref().unwrap();
+        assert!(desc.contains("<h1>Title</h1>"));
+        assert!(desc.contains("<em>italic</em>"));
+    }
+
+    #[test]
+    fn description_empty_file_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(album.join("description.txt"), "   \n  ").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.albums[0].description.is_none());
+    }
+
+    #[test]
+    fn description_txt_escapes_html() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(
+            album.join("description.txt"),
+            "<script>alert('xss')</script>",
+        )
+        .unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.albums[0].description.as_ref().unwrap();
+        assert!(!desc.contains("<script>"));
+        assert!(desc.contains("&lt;script&gt;"));
     }
 
     #[test]
@@ -854,5 +1017,51 @@ mod tests {
                 assert!(!image.source_path.starts_with('/'));
             }
         }
+    }
+
+    // =========================================================================
+    // plain_text_to_html and linkify_urls unit tests
+    // =========================================================================
+
+    #[test]
+    fn plain_text_single_paragraph() {
+        assert_eq!(plain_text_to_html("Hello world"), "<p>Hello world</p>");
+    }
+
+    #[test]
+    fn plain_text_multiple_paragraphs() {
+        assert_eq!(
+            plain_text_to_html("First.\n\nSecond."),
+            "<p>First.</p>\n<p>Second.</p>"
+        );
+    }
+
+    #[test]
+    fn linkify_urls_https() {
+        assert_eq!(
+            linkify_urls("Visit https://example.com today"),
+            r#"Visit <a href="https://example.com">https://example.com</a> today"#
+        );
+    }
+
+    #[test]
+    fn linkify_urls_http() {
+        assert_eq!(
+            linkify_urls("See http://example.com here"),
+            r#"See <a href="http://example.com">http://example.com</a> here"#
+        );
+    }
+
+    #[test]
+    fn linkify_urls_no_urls() {
+        assert_eq!(linkify_urls("No links here"), "No links here");
+    }
+
+    #[test]
+    fn linkify_urls_at_end_of_text() {
+        assert_eq!(
+            linkify_urls("Check https://example.com"),
+            r#"Check <a href="https://example.com">https://example.com</a>"#
+        );
     }
 }

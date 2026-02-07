@@ -31,6 +31,10 @@
 //! sizes = [800, 1400, 2080] # Responsive sizes to generate
 //! quality = 90              # AVIF/WebP quality (0-100)
 //!
+//! [theme]
+//! thumbnail_gap = "1rem"    # Gap between thumbnails in grids
+//! grid_padding = "2rem"     # Padding around thumbnail grids
+//!
 //! [theme.frame_x]
 //! size = "3vw"              # Preferred horizontal frame size
 //! min = "1rem"              # Minimum horizontal frame size
@@ -200,6 +204,18 @@ pub struct ThemeConfig {
     pub frame_x: ClampSize,
     /// Vertical frame padding around images (top/bottom)
     pub frame_y: ClampSize,
+    /// Gap between thumbnails in both album and image grids
+    pub thumbnail_gap: String,
+    /// Padding around the thumbnail grid container
+    pub grid_padding: String,
+}
+
+fn default_thumbnail_gap() -> String {
+    "1rem".to_string()
+}
+
+fn default_grid_padding() -> String {
+    "2rem".to_string()
 }
 
 impl Default for ThemeConfig {
@@ -215,6 +231,8 @@ impl Default for ThemeConfig {
                 min: "2rem".to_string(),
                 max: "5rem".to_string(),
             },
+            thumbnail_gap: default_thumbnail_gap(),
+            grid_padding: default_grid_padding(),
         }
     }
 }
@@ -339,9 +357,13 @@ pub fn generate_theme_css(theme: &ThemeConfig) -> String {
         r#":root {{
     --frame-width-x: {frame_x};
     --frame-width-y: {frame_y};
+    --thumbnail-gap: {thumbnail_gap};
+    --grid-padding: {grid_padding};
 }}"#,
         frame_x = theme.frame_x.to_css(),
         frame_y = theme.frame_y.to_css(),
+        thumbnail_gap = theme.thumbnail_gap,
+        grid_padding = theme.grid_padding,
     )
 }
 
@@ -552,6 +574,27 @@ link_hover = "#f88"
         let css = generate_theme_css(&theme);
         assert!(css.contains("--frame-width-x: clamp(1rem, 3vw, 2.5rem)"));
         assert!(css.contains("--frame-width-y: clamp(2rem, 6vw, 5rem)"));
+        assert!(css.contains("--thumbnail-gap: 1rem"));
+        assert!(css.contains("--grid-padding: 2rem"));
+    }
+
+    #[test]
+    fn parse_thumbnail_gap_and_grid_padding() {
+        let toml = r#"
+[theme]
+thumbnail_gap = "0.5rem"
+grid_padding = "1rem"
+"#;
+        let config: SiteConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.theme.thumbnail_gap, "0.5rem");
+        assert_eq!(config.theme.grid_padding, "1rem");
+    }
+
+    #[test]
+    fn default_thumbnail_gap_and_grid_padding() {
+        let config = SiteConfig::default();
+        assert_eq!(config.theme.thumbnail_gap, "1rem");
+        assert_eq!(config.theme.grid_padding, "2rem");
     }
 
     // =========================================================================

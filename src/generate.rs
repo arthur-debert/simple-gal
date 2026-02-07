@@ -90,8 +90,6 @@ pub struct Image {
     #[allow(dead_code)]
     pub source_path: String,
     #[serde(default)]
-    pub slug: String,
-    #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
@@ -123,16 +121,43 @@ fn index_width(total: usize) -> usize {
     }
 }
 
-/// Build an image page filename like `"02-L1020411.html"` or `"02.html"` (when no slug).
+/// Build an image page directory name like `"02-My-Title/"` or `"02/"` (when no title).
 ///
-/// Uses the same zero-padded index as [`format_image_label`].
-fn image_page_url(position: usize, total: usize, slug: &str) -> String {
+/// The directory name mirrors the display label shown in the header/breadcrumb
+/// (`"02. My Title"`) but URL-escaped: dots and spaces become hyphens, consecutive
+/// hyphens are collapsed.
+///
+/// Image pages are directories with an `index.html` inside, so that static
+/// servers can serve them without requiring `.html` in the URL.
+fn image_page_url(position: usize, total: usize, title: Option<&str>) -> String {
     let width = index_width(total);
-    if slug.is_empty() {
-        format!("{:0>width$}.html", position)
-    } else {
-        format!("{:0>width$}-{}.html", position, slug)
+    match title {
+        Some(t) => {
+            let escaped = escape_for_url(t);
+            format!("{:0>width$}-{}/", position, escaped)
+        }
+        None => format!("{:0>width$}/", position),
     }
+}
+
+/// Escape a display title for use in URL paths.
+///
+/// Replaces spaces and dots with hyphens and collapses consecutive hyphens.
+fn escape_for_url(title: &str) -> String {
+    let mut result = String::with_capacity(title.len());
+    let mut prev_dash = false;
+    for c in title.chars() {
+        if c == ' ' || c == '.' {
+            if !prev_dash {
+                result.push('-');
+            }
+            prev_dash = true;
+        } else {
+            result.push(c);
+            prev_dash = false;
+        }
+    }
+    result.trim_matches('-').to_string()
 }
 
 const SHORT_CAPTION_MAX_LEN: usize = 160;
@@ -208,8 +233,11 @@ pub fn generate(
                 &manifest.pages,
                 &css,
             );
-            let image_filename = image_page_url(idx + 1, album.images.len(), &image.slug);
-            fs::write(album_dir.join(&image_filename), image_html.into_string())?;
+            let image_dir_name =
+                image_page_url(idx + 1, album.images.len(), image.title.as_deref());
+            let image_dir = album_dir.join(&image_dir_name);
+            fs::create_dir_all(&image_dir)?;
+            fs::write(image_dir.join("index.html"), image_html.into_string())?;
         }
         println!(
             "Generated {} image pages for {}",
@@ -391,12 +419,12 @@ fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css:
             header.album-header {
                 h1 { (album.title) }
                 @if let Some(desc) = &album.description {
-                    p.album-description { (desc) }
+                    div.album-description { (PreEscaped(desc)) }
                 }
             }
             div.thumbnail-grid {
                 @for (idx, image) in album.images.iter().enumerate() {
-                    a.thumb-link href=(image_page_url(idx + 1, album.images.len(), &image.slug)) {
+                    a.thumb-link href=(image_page_url(idx + 1, album.images.len(), image.title.as_deref())) {
                         img src=(strip_prefix(&image.thumbnail)) alt={ "Image " (idx + 1) } loading="lazy";
                     }
                 }
@@ -440,12 +468,13 @@ fn render_image_page(
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
-    // Strip album path prefix since image pages are inside the album directory
+    // Strip album path prefix and add ../ since image pages are in subdirectories
     let strip_prefix = |path: &str| -> String {
-        path.strip_prefix(&album.path)
+        let relative = path
+            .strip_prefix(&album.path)
             .and_then(|p| p.strip_prefix('/'))
-            .unwrap_or(path)
-            .to_string()
+            .unwrap_or(path);
+        format!("../{}", relative)
     };
 
     // Build srcsets
@@ -482,13 +511,19 @@ fn render_image_page(
 
     let total = album.images.len();
     let prev_url = match prev {
-        Some(p) => image_page_url(image_idx, total, &p.slug), // image_idx is 0-based = prev's 1-based
-        None => "index.html".to_string(),
+        Some(p) => format!(
+            "../{}",
+            image_page_url(image_idx, total, p.title.as_deref())
+        ), // image_idx is 0-based = prev's 1-based
+        None => "../".to_string(),
     };
 
     let next_url = match next {
-        Some(n) => image_page_url(image_idx + 2, total, &n.slug),
-        None => "index.html".to_string(),
+        Some(n) => format!(
+            "../{}",
+            image_page_url(image_idx + 2, total, n.title.as_deref())
+        ),
+        None => "../".to_string(),
     };
 
     let display_idx = image_idx + 1;
@@ -498,7 +533,7 @@ fn render_image_page(
     let breadcrumb = html! {
         a href="/" { "Gallery" }
         " › "
-        a href="index.html" { (album.title) }
+        a href="../" { (album.title) }
         " › "
         (image_label)
     };
@@ -731,13 +766,12 @@ mod tests {
         Album {
             path: "test".to_string(),
             title: "Test Album".to_string(),
-            description: Some("A test album description".to_string()),
+            description: Some("<p>A test album description</p>".to_string()),
             thumbnail: "test/001-image-thumb.webp".to_string(),
             images: vec![
                 Image {
                     number: 1,
                     source_path: "test/001-dawn.jpg".to_string(),
-                    slug: "dawn".to_string(),
                     title: Some("Dawn".to_string()),
                     description: None,
                     dimensions: (1600, 1200),
@@ -768,7 +802,6 @@ mod tests {
                 Image {
                     number: 2,
                     source_path: "test/002-night.jpg".to_string(),
-                    slug: "night".to_string(),
                     title: None,
                     description: None,
                     dimensions: (1200, 1600),
@@ -818,9 +851,9 @@ mod tests {
         let nav = vec![];
         let html = render_album_page(&album, &nav, &[], "").into_string();
 
-        // Should have links to image pages (1-dawn.html, 2-night.html)
-        assert!(html.contains("1-dawn.html"));
-        assert!(html.contains("2-night.html"));
+        // Should have links to image pages (1-Dawn/, 2/)
+        assert!(html.contains("1-Dawn/"));
+        assert!(html.contains("2/"));
         // Thumbnails should have paths relative to album dir
         assert!(html.contains("001-dawn-thumb.webp"));
     }
@@ -892,10 +925,10 @@ mod tests {
             "",
         )
         .into_string();
-        assert!(html1.contains(r#"data-prev="index.html""#));
-        assert!(html1.contains(r#"data-next="2-night.html""#));
+        assert!(html1.contains(r#"data-prev="../""#));
+        assert!(html1.contains(r#"data-next="../2/""#));
 
-        // Second image - has prev, no next
+        // Second image - has prev, no next (image[1] has no title)
         let html2 = render_image_page(
             &album,
             &album.images[1],
@@ -906,8 +939,8 @@ mod tests {
             "",
         )
         .into_string();
-        assert!(html2.contains(r#"data-prev="1-dawn.html""#));
-        assert!(html2.contains(r#"data-next="index.html""#));
+        assert!(html2.contains(r#"data-prev="../1-Dawn/""#));
+        assert!(html2.contains(r#"data-next="../""#));
     }
 
     #[test]
@@ -1153,5 +1186,54 @@ mod tests {
         // Should be escaped, not raw script tag
         assert!(!html.contains("<script>alert"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    // =========================================================================
+    // escape_for_url tests
+    // =========================================================================
+
+    #[test]
+    fn escape_for_url_spaces_become_dashes() {
+        assert_eq!(escape_for_url("My Title"), "My-Title");
+    }
+
+    #[test]
+    fn escape_for_url_dots_become_dashes() {
+        assert_eq!(escape_for_url("St. Louis"), "St-Louis");
+    }
+
+    #[test]
+    fn escape_for_url_collapses_consecutive() {
+        assert_eq!(escape_for_url("A.  B"), "A-B");
+    }
+
+    #[test]
+    fn escape_for_url_strips_leading_trailing() {
+        assert_eq!(escape_for_url(". Title ."), "Title");
+    }
+
+    #[test]
+    fn escape_for_url_preserves_dashes() {
+        assert_eq!(escape_for_url("My-Title"), "My-Title");
+    }
+
+    #[test]
+    fn image_page_url_with_title() {
+        assert_eq!(image_page_url(3, 15, Some("Dawn")), "03-Dawn/");
+    }
+
+    #[test]
+    fn image_page_url_without_title() {
+        assert_eq!(image_page_url(3, 15, None), "03/");
+    }
+
+    #[test]
+    fn image_page_url_title_with_spaces() {
+        assert_eq!(image_page_url(1, 5, Some("My Museum")), "1-My-Museum/");
+    }
+
+    #[test]
+    fn image_page_url_title_with_dot() {
+        assert_eq!(image_page_url(1, 5, Some("St. Louis")), "1-St-Louis/");
     }
 }
