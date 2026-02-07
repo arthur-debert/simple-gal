@@ -42,6 +42,7 @@
 mod config;
 mod generate;
 mod imaging;
+mod metadata;
 mod naming;
 mod process;
 mod scan;

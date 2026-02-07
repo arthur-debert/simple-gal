@@ -43,6 +43,7 @@ use crate::imaging::{
     BackendError, ImageBackend, ImageMagickBackend, Quality, ResponsiveConfig, Sharpening,
     ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
+use crate::metadata;
 use crate::types::{NavItem, Page};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -118,6 +119,8 @@ pub struct InputImage {
     pub slug: String,
     #[serde(default)]
     pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Output manifest (after processing)
@@ -149,6 +152,8 @@ pub struct OutputImage {
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Original dimensions (width, height)
     pub dimensions: (u32, u32),
     /// Generated responsive images: { "800": { "avif": "path", "webp": "path" }, ... }
@@ -221,6 +226,18 @@ pub fn process_with_backend(
 
                 let dimensions = get_dimensions(backend, &source_path)?;
 
+                // Read embedded IPTC metadata and merge with scan-phase values
+                let exif = backend.read_metadata(&source_path)?;
+                let title = metadata::resolve(&[exif.title.as_deref(), image.title.as_deref()]);
+                let description =
+                    metadata::resolve(&[image.description.as_deref(), exif.description.as_deref()]);
+                // If EXIF provided a title, derive slug from it (sanitized for URLs)
+                let slug = if exif.title.is_some() && title.is_some() {
+                    metadata::sanitize_slug(title.as_deref().unwrap())
+                } else {
+                    image.slug.clone()
+                };
+
                 let stem = Path::new(&image.filename)
                     .file_stem()
                     .unwrap()
@@ -260,7 +277,15 @@ pub fn process_with_backend(
                     })
                     .collect();
 
-                Ok((image, dimensions, generated, thumbnail_path))
+                Ok((
+                    image,
+                    dimensions,
+                    generated,
+                    thumbnail_path,
+                    title,
+                    description,
+                    slug,
+                ))
             })
             .collect();
         let processed_images = processed_images?;
@@ -269,14 +294,17 @@ pub fn process_with_backend(
         let mut output_images: Vec<OutputImage> = processed_images
             .into_iter()
             .map(
-                |(image, dimensions, generated, thumbnail_path)| OutputImage {
-                    number: image.number,
-                    source_path: image.source_path.clone(),
-                    slug: image.slug.clone(),
-                    title: image.title.clone(),
-                    dimensions,
-                    generated,
-                    thumbnail: thumbnail_path,
+                |(image, dimensions, generated, thumbnail_path, title, description, slug)| {
+                    OutputImage {
+                        number: image.number,
+                        source_path: image.source_path.clone(),
+                        slug,
+                        title,
+                        description,
+                        dimensions,
+                        generated,
+                        thumbnail: thumbnail_path,
+                    }
                 },
             )
             .collect();
@@ -586,19 +614,22 @@ mod tests {
         use crate::imaging::backend::tests::RecordedOp;
         let ops = backend.get_operations();
 
-        // Should have: 1 identify + 4 resizes (2 sizes × 2 formats) + 1 thumbnail = 6 ops
-        assert_eq!(ops.len(), 6);
+        // Should have: 1 identify + 1 read_metadata + 4 resizes (2 sizes × 2 formats) + 1 thumbnail = 7 ops
+        assert_eq!(ops.len(), 7);
 
         // First is identify
         assert!(matches!(&ops[0], RecordedOp::Identify(_)));
 
+        // Second is read_metadata
+        assert!(matches!(&ops[1], RecordedOp::ReadMetadata(_)));
+
         // Then resizes with correct quality
-        for op in &ops[1..5] {
+        for op in &ops[2..6] {
             assert!(matches!(op, RecordedOp::Resize { quality: 85, .. }));
         }
 
         // Last is thumbnail
-        assert!(matches!(&ops[5], RecordedOp::Thumbnail { .. }));
+        assert!(matches!(&ops[6], RecordedOp::Thumbnail { .. }));
     }
 
     #[test]

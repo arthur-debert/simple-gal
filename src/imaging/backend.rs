@@ -25,6 +25,17 @@ pub struct Dimensions {
     pub height: u32,
 }
 
+/// Embedded image metadata extracted from IPTC/EXIF fields.
+///
+/// Field mapping:
+/// - `title`: IPTC Object Name (`IPTC:2:05`) — the "Title" field in Lightroom/Capture One
+/// - `description`: IPTC Caption-Abstract (`IPTC:2:120`) — the "Caption" field in Lightroom
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImageMetadata {
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+
 /// Trait for image processing backends.
 ///
 /// Implementations execute the actual image operations.
@@ -34,6 +45,9 @@ pub struct Dimensions {
 pub trait ImageBackend: Sync {
     /// Get image dimensions.
     fn identify(&self, path: &Path) -> Result<Dimensions, BackendError>;
+
+    /// Read embedded IPTC/EXIF metadata (title, description).
+    fn read_metadata(&self, path: &Path) -> Result<ImageMetadata, BackendError>;
 
     /// Execute a resize operation.
     fn resize(&self, params: &ResizeParams) -> Result<(), BackendError>;
@@ -102,6 +116,39 @@ impl ImageBackend for ImageMagickBackend {
             .map_err(|_| BackendError::InvalidOutput(format!("Invalid height: {}", parts[1])))?;
 
         Ok(Dimensions { width, height })
+    }
+
+    fn read_metadata(&self, path: &Path) -> Result<ImageMetadata, BackendError> {
+        let output = Command::new("identify")
+            .args([
+                "-format",
+                "%[IPTC:2:05]\t%[IPTC:2:120]",
+                path.to_str().unwrap(),
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(BackendError::CommandFailed(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+
+        let raw = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = raw.splitn(2, '\t').collect();
+
+        let to_opt = |s: &str| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        };
+
+        Ok(ImageMetadata {
+            title: parts.first().and_then(|s| to_opt(s)),
+            description: parts.get(1).and_then(|s| to_opt(s)),
+        })
     }
 
     fn resize(&self, params: &ResizeParams) -> Result<(), BackendError> {
@@ -175,12 +222,14 @@ pub mod tests {
     #[derive(Default)]
     pub struct MockBackend {
         pub identify_results: Mutex<Vec<Dimensions>>,
+        pub metadata_results: Mutex<Vec<ImageMetadata>>,
         pub operations: Mutex<Vec<RecordedOp>>,
     }
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum RecordedOp {
         Identify(String),
+        ReadMetadata(String),
         Resize {
             source: String,
             output: String,
@@ -208,6 +257,15 @@ pub mod tests {
         pub fn with_dimensions(dims: Vec<Dimensions>) -> Self {
             Self {
                 identify_results: Mutex::new(dims),
+                metadata_results: Mutex::new(Vec::new()),
+                operations: Mutex::new(Vec::new()),
+            }
+        }
+
+        pub fn with_metadata(dims: Vec<Dimensions>, metadata: Vec<ImageMetadata>) -> Self {
+            Self {
+                identify_results: Mutex::new(dims),
+                metadata_results: Mutex::new(metadata),
                 operations: Mutex::new(Vec::new()),
             }
         }
@@ -229,6 +287,20 @@ pub mod tests {
                 .unwrap()
                 .pop()
                 .ok_or_else(|| BackendError::InvalidOutput("No mock dimensions".to_string()))
+        }
+
+        fn read_metadata(&self, path: &Path) -> Result<ImageMetadata, BackendError> {
+            self.operations
+                .lock()
+                .unwrap()
+                .push(RecordedOp::ReadMetadata(path.to_string_lossy().to_string()));
+
+            Ok(self
+                .metadata_results
+                .lock()
+                .unwrap()
+                .pop()
+                .unwrap_or_default())
         }
 
         fn resize(&self, params: &ResizeParams) -> Result<(), BackendError> {

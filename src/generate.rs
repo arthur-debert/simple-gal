@@ -93,6 +93,9 @@ pub struct Image {
     pub slug: String,
     #[serde(default)]
     pub title: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub description: Option<String>,
     pub dimensions: (u32, u32),
     pub generated: BTreeMap<String, GeneratedVariant>,
     pub thumbnail: String,
@@ -708,6 +711,7 @@ mod tests {
                     source_path: "test/001-dawn.jpg".to_string(),
                     slug: "dawn".to_string(),
                     title: Some("Dawn".to_string()),
+                    description: None,
                     dimensions: (1600, 1200),
                     generated: {
                         let mut map = BTreeMap::new();
@@ -738,6 +742,7 @@ mod tests {
                     source_path: "test/002-night.jpg".to_string(),
                     slug: "night".to_string(),
                     title: None,
+                    description: None,
                     dimensions: (1200, 1600),
                     generated: {
                         let mut map = BTreeMap::new();

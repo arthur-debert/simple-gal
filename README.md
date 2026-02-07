@@ -44,6 +44,15 @@ All entities (albums, images, pages, container directories) follow the same `NNN
 - **Preview image**: Image numbered `001-*` is used as the album thumbnail. Falls back to the first image by sort order if no `001` exists.
 - Directories cannot mix images and subdirectories
 
+### Image Metadata
+
+Image titles and descriptions can come from multiple sources. The first available value wins:
+
+- **Title**: IPTC title (from Lightroom/Capture One) → filename stem → none
+- **Description**: sidecar `.txt` file → IPTC caption → none
+
+A sidecar file uses the same stem as the image: `001-photo.txt` for `001-photo.jpg`. IPTC titles sourced from metadata are sanitized for use in URLs (truncated to 80 chars, special characters replaced).
+
 ### Container Directories
 
 - A directory containing other directories (not images)

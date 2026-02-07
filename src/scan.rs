@@ -52,6 +52,7 @@
 //! - Every album must have at least one image
 
 use crate::config::{self, SiteConfig};
+use crate::metadata;
 use crate::naming::parse_entry_name;
 use crate::types::{NavItem, Page};
 use serde::Serialize;
@@ -113,6 +114,9 @@ pub struct Image {
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Image description from sidecar `.txt` file (e.g., `001-photo.txt` for `001-photo.jpg`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
@@ -397,12 +401,14 @@ fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, S
                 Some(parsed.display_title.clone())
             };
             let source = img_path.strip_prefix(root).unwrap();
+            let description = metadata::read_sidecar(img_path);
             Image {
                 number: num,
                 source_path: source.to_string_lossy().to_string(),
                 filename,
                 slug: parsed.name.clone(),
                 title,
+                description,
             }
         })
         .collect();
