@@ -62,7 +62,7 @@
     --font-family-menu: "Libre Franklin", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-weight-menu: 500;
 
-    --thumbnail-gap: 1rem;
+    /* Note: --thumbnail-gap and --grid-padding are generated from config.toml */
     --transition-speed: 0.2s;
 }
 
@@ -265,7 +265,8 @@ main {
 .album-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 2rem;
+    gap: var(--thumbnail-gap);
+    padding: var(--grid-padding);
 }
 
 .album-card {
@@ -316,6 +317,7 @@ main {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: var(--thumbnail-gap);
+    padding: var(--grid-padding);
 }
 
 .thumb-link {
@@ -473,12 +475,10 @@ body.has-description .image-page {
 
     .album-grid {
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-        gap: 1rem;
     }
 
     .thumbnail-grid {
         grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-        gap: 0.5rem;
     }
 }
 
