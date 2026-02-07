@@ -7,7 +7,7 @@
 //!
 //! - **Index page** (`/index.html`): Album grid showing thumbnails of all albums
 //! - **Album pages** (`/{album}/index.html`): Thumbnail grid for an album
-//! - **Image pages** (`/{album}/{n}.html`): Full-screen image viewer with navigation
+//! - **Image pages** (`/{album}/{n}-{slug}.html`): Full-screen image viewer with navigation
 //! - **Content pages** (`/{slug}.html`): Markdown pages (e.g. about, contact)
 //!
 //! ## Features
@@ -24,14 +24,14 @@
 //! dist/
 //! ├── index.html                 # Home/gallery page
 //! ├── about.html                 # Content page (from 040-about.md)
-//! ├── 010-Landscapes/
+//! ├── Landscapes/
 //! │   ├── index.html             # Album page
-//! │   ├── 1.html                 # Image viewer pages
-//! │   ├── 2.html
+//! │   ├── 1-dawn.html            # Image viewer pages
+//! │   ├── 2-sunset.html
 //! │   ├── 001-dawn-800.avif      # Processed images (copied)
 //! │   ├── 001-dawn-800.webp
 //! │   └── ...
-//! └── 020-Travel/
+//! └── Travel/
 //!     └── ...
 //! ```
 //!
@@ -47,6 +47,7 @@
 //! Templates are type-safe Rust code with automatic XSS escaping.
 
 use crate::config::{self, SiteConfig};
+use crate::types::{NavItem, Page};
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 use pulldown_cmark::{Parser, html as md_html};
 use serde::Deserialize;
@@ -65,7 +66,6 @@ pub enum GenerateError {
 
 /// Processed manifest from stage 2
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct Manifest {
     pub navigation: Vec<NavItem>,
     pub albums: Vec<Album>,
@@ -74,28 +74,7 @@ pub struct Manifest {
     pub config: SiteConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
-pub struct Page {
-    pub title: String,
-    pub link_title: String,
-    pub slug: String,
-    pub body: String,
-    pub in_nav: bool,
-    pub sort_key: u32,
-    pub is_link: bool,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct NavItem {
-    pub title: String,
-    pub path: String,
-    #[serde(default)]
-    pub children: Vec<NavItem>,
-}
-
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct Album {
     pub path: String,
     pub title: String,
@@ -106,10 +85,12 @@ pub struct Album {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct Image {
     pub number: u32,
+    #[allow(dead_code)]
     pub source_path: String,
+    #[serde(default)]
+    pub slug: String,
     #[serde(default)]
     pub title: Option<String>,
     pub dimensions: (u32, u32),
@@ -118,16 +99,39 @@ pub struct Image {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct GeneratedVariant {
     pub avif: String,
     pub webp: String,
+    #[allow(dead_code)]
     pub width: u32,
+    #[allow(dead_code)]
     pub height: u32,
 }
 
 const CSS_STATIC: &str = include_str!("../static/style.css");
 const JS: &str = include_str!("../static/nav.js");
+
+/// Zero-padding width for image indices, based on album size.
+fn index_width(total: usize) -> usize {
+    match total {
+        0..=9 => 1,
+        10..=99 => 2,
+        100..=999 => 3,
+        _ => 4,
+    }
+}
+
+/// Build an image page filename like `"02-L1020411.html"` or `"02.html"` (when no slug).
+///
+/// Uses the same zero-padded index as [`format_image_label`].
+fn image_page_url(position: usize, total: usize, slug: &str) -> String {
+    let width = index_width(total);
+    if slug.is_empty() {
+        format!("{:0>width$}.html", position)
+    } else {
+        format!("{:0>width$}-{}.html", position, slug)
+    }
+}
 
 pub fn generate(
     manifest_path: &Path,
@@ -191,7 +195,7 @@ pub fn generate(
                 &manifest.pages,
                 &css,
             );
-            let image_filename = format!("{}.html", idx + 1);
+            let image_filename = image_page_url(idx + 1, album.images.len(), &image.slug);
             fs::write(album_dir.join(&image_filename), image_html.into_string())?;
         }
         println!(
@@ -379,7 +383,7 @@ fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css:
             }
             div.thumbnail-grid {
                 @for (idx, image) in album.images.iter().enumerate() {
-                    a.thumb-link href={ (idx + 1) ".html" } {
+                    a.thumb-link href=(image_page_url(idx + 1, album.images.len(), &image.slug)) {
                         img src=(strip_prefix(&image.thumbnail)) alt={ "Image " (idx + 1) } loading="lazy";
                     }
                 }
@@ -404,12 +408,7 @@ fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css:
 /// - 100–999 images: 3 digits (001, 002, 003)
 /// - 1000+ images: 4 digits (0001, 0002, ...)
 fn format_image_label(position: usize, total: usize, title: Option<&str>) -> String {
-    let width = match total {
-        0..=9 => 1,
-        10..=99 => 2,
-        100..=999 => 3,
-        _ => 4,
-    };
+    let width = index_width(total);
     match title {
         Some(t) => format!("{:0>width$}. {}", position, t),
         None => format!("{:0>width$}", position),
@@ -468,16 +467,15 @@ fn render_image_page(
         .position(|i| i.number == image.number)
         .unwrap();
 
-    let prev_url = if prev.is_some() {
-        format!("{}.html", image_idx) // image_idx is 0-based, filename is 1-based
-    } else {
-        "index.html".to_string()
+    let total = album.images.len();
+    let prev_url = match prev {
+        Some(p) => image_page_url(image_idx, total, &p.slug), // image_idx is 0-based = prev's 1-based
+        None => "index.html".to_string(),
     };
 
-    let next_url = if next.is_some() {
-        format!("{}.html", image_idx + 2)
-    } else {
-        "index.html".to_string()
+    let next_url = match next {
+        Some(n) => image_page_url(image_idx + 2, total, &n.slug),
+        None => "index.html".to_string(),
     };
 
     let display_idx = image_idx + 1;
@@ -700,14 +698,15 @@ mod tests {
 
     fn create_test_album() -> Album {
         Album {
-            path: "010-test".to_string(),
+            path: "test".to_string(),
             title: "Test Album".to_string(),
             description: Some("A test album description".to_string()),
-            thumbnail: "010-test/001-image-thumb.webp".to_string(),
+            thumbnail: "test/001-image-thumb.webp".to_string(),
             images: vec![
                 Image {
                     number: 1,
-                    source_path: "010-test/001-image.jpg".to_string(),
+                    source_path: "test/001-dawn.jpg".to_string(),
+                    slug: "dawn".to_string(),
                     title: Some("Dawn".to_string()),
                     dimensions: (1600, 1200),
                     generated: {
@@ -715,8 +714,8 @@ mod tests {
                         map.insert(
                             "800".to_string(),
                             GeneratedVariant {
-                                avif: "010-test/001-image-800.avif".to_string(),
-                                webp: "010-test/001-image-800.webp".to_string(),
+                                avif: "test/001-dawn-800.avif".to_string(),
+                                webp: "test/001-dawn-800.webp".to_string(),
                                 width: 800,
                                 height: 600,
                             },
@@ -724,19 +723,20 @@ mod tests {
                         map.insert(
                             "1400".to_string(),
                             GeneratedVariant {
-                                avif: "010-test/001-image-1400.avif".to_string(),
-                                webp: "010-test/001-image-1400.webp".to_string(),
+                                avif: "test/001-dawn-1400.avif".to_string(),
+                                webp: "test/001-dawn-1400.webp".to_string(),
                                 width: 1400,
                                 height: 1050,
                             },
                         );
                         map
                     },
-                    thumbnail: "010-test/001-image-thumb.webp".to_string(),
+                    thumbnail: "test/001-dawn-thumb.webp".to_string(),
                 },
                 Image {
                     number: 2,
-                    source_path: "010-test/002-image.jpg".to_string(),
+                    source_path: "test/002-night.jpg".to_string(),
+                    slug: "night".to_string(),
                     title: None,
                     dimensions: (1200, 1600),
                     generated: {
@@ -744,15 +744,15 @@ mod tests {
                         map.insert(
                             "800".to_string(),
                             GeneratedVariant {
-                                avif: "010-test/002-image-800.avif".to_string(),
-                                webp: "010-test/002-image-800.webp".to_string(),
+                                avif: "test/002-night-800.avif".to_string(),
+                                webp: "test/002-night-800.webp".to_string(),
                                 width: 600,
                                 height: 800,
                             },
                         );
                         map
                     },
-                    thumbnail: "010-test/002-image-thumb.webp".to_string(),
+                    thumbnail: "test/002-night-thumb.webp".to_string(),
                 },
             ],
             in_nav: true,
@@ -785,11 +785,11 @@ mod tests {
         let nav = vec![];
         let html = render_album_page(&album, &nav, &[], "").into_string();
 
-        // Should have links to image pages (1.html, 2.html)
-        assert!(html.contains("1.html"));
-        assert!(html.contains("2.html"));
+        // Should have links to image pages (1-dawn.html, 2-night.html)
+        assert!(html.contains("1-dawn.html"));
+        assert!(html.contains("2-night.html"));
         // Thumbnails should have paths relative to album dir
-        assert!(html.contains("001-image-thumb.webp"));
+        assert!(html.contains("001-dawn-thumb.webp"));
     }
 
     #[test]
@@ -860,7 +860,7 @@ mod tests {
         )
         .into_string();
         assert!(html1.contains(r#"data-prev="index.html""#));
-        assert!(html1.contains(r#"data-next="2.html""#));
+        assert!(html1.contains(r#"data-next="2-night.html""#));
 
         // Second image - has prev, no next
         let html2 = render_image_page(
@@ -873,7 +873,7 @@ mod tests {
             "",
         )
         .into_string();
-        assert!(html2.contains(r#"data-prev="1.html""#));
+        assert!(html2.contains(r#"data-prev="1-dawn.html""#));
         assert!(html2.contains(r#"data-next="index.html""#));
     }
 

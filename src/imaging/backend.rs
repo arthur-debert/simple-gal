@@ -31,7 +31,7 @@ pub struct Dimensions {
 /// This allows for:
 /// - Different backends (ImageMagick, pure Rust)
 /// - Mock backends for testing
-pub trait ImageBackend {
+pub trait ImageBackend: Sync {
     /// Get image dimensions.
     fn identify(&self, path: &Path) -> Result<Dimensions, BackendError>;
 
@@ -168,13 +168,14 @@ impl ImageBackend for ImageMagickBackend {
 pub mod tests {
     use super::*;
     use crate::imaging::Sharpening;
-    use std::cell::RefCell;
+    use std::sync::Mutex;
 
     /// Mock backend that records operations without executing them.
+    /// Uses Mutex (not RefCell) so it is Sync and works with rayon's par_iter.
     #[derive(Default)]
     pub struct MockBackend {
-        pub identify_results: RefCell<Vec<Dimensions>>,
-        pub operations: RefCell<Vec<RecordedOp>>,
+        pub identify_results: Mutex<Vec<Dimensions>>,
+        pub operations: Mutex<Vec<RecordedOp>>,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -206,30 +207,32 @@ pub mod tests {
 
         pub fn with_dimensions(dims: Vec<Dimensions>) -> Self {
             Self {
-                identify_results: RefCell::new(dims),
-                operations: RefCell::new(Vec::new()),
+                identify_results: Mutex::new(dims),
+                operations: Mutex::new(Vec::new()),
             }
         }
 
         pub fn get_operations(&self) -> Vec<RecordedOp> {
-            self.operations.borrow().clone()
+            self.operations.lock().unwrap().clone()
         }
     }
 
     impl ImageBackend for MockBackend {
         fn identify(&self, path: &Path) -> Result<Dimensions, BackendError> {
             self.operations
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push(RecordedOp::Identify(path.to_string_lossy().to_string()));
 
             self.identify_results
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .pop()
                 .ok_or_else(|| BackendError::InvalidOutput("No mock dimensions".to_string()))
         }
 
         fn resize(&self, params: &ResizeParams) -> Result<(), BackendError> {
-            self.operations.borrow_mut().push(RecordedOp::Resize {
+            self.operations.lock().unwrap().push(RecordedOp::Resize {
                 source: params.source.to_string_lossy().to_string(),
                 output: params.output.to_string_lossy().to_string(),
                 width: params.width,
@@ -240,7 +243,7 @@ pub mod tests {
         }
 
         fn thumbnail(&self, params: &ThumbnailParams) -> Result<(), BackendError> {
-            self.operations.borrow_mut().push(RecordedOp::Thumbnail {
+            self.operations.lock().unwrap().push(RecordedOp::Thumbnail {
                 source: params.source.to_string_lossy().to_string(),
                 output: params.output.to_string_lossy().to_string(),
                 fill_width: params.fill_width,

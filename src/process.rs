@@ -38,16 +38,13 @@
 //! └── ...
 //! ```
 //!
-//! ## Parallel Processing
-//!
-//! Images are processed in parallel using [rayon](https://docs.rs/rayon) for
-//! optimal performance on multi-core systems.
-
 use crate::config::SiteConfig;
 use crate::imaging::{
     BackendError, ImageBackend, ImageMagickBackend, Quality, ResponsiveConfig, Sharpening,
     ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
+use crate::types::{NavItem, Page};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -92,18 +89,6 @@ impl Default for ProcessConfig {
     }
 }
 
-/// A page from a markdown file in the content root.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Page {
-    pub title: String,
-    pub link_title: String,
-    pub slug: String,
-    pub body: String,
-    pub in_nav: bool,
-    pub sort_key: u32,
-    pub is_link: bool,
-}
-
 /// Input manifest (from scan stage)
 #[derive(Debug, Deserialize)]
 pub struct InputManifest {
@@ -112,14 +97,6 @@ pub struct InputManifest {
     #[serde(default)]
     pub pages: Vec<Page>,
     pub config: SiteConfig,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct NavItem {
-    pub title: String,
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<NavItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +114,8 @@ pub struct InputImage {
     pub number: u32,
     pub source_path: String,
     pub filename: String,
+    #[serde(default)]
+    pub slug: String,
     #[serde(default)]
     pub title: Option<String>,
 }
@@ -167,6 +146,7 @@ pub struct OutputAlbum {
 pub struct OutputImage {
     pub number: u32,
     pub source_path: String,
+    pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// Original dimensions (width, height)
@@ -227,65 +207,63 @@ pub fn process_with_backend(
         let album_output_dir = output_dir.join(&album.path);
         std::fs::create_dir_all(&album_output_dir)?;
 
-        // Process images (sequentially when using backend reference)
-        let mut processed_images = Vec::new();
+        // Process images in parallel (rayon thread pool sized by config)
+        let processed_images: Result<Vec<_>, ProcessError> = album
+            .images
+            .par_iter()
+            .map(|image| {
+                let source_path = source_root.join(&image.source_path);
+                if !source_path.exists() {
+                    return Err(ProcessError::SourceNotFound(source_path));
+                }
 
-        for image in &album.images {
-            let source_path = source_root.join(&image.source_path);
-            if !source_path.exists() {
-                return Err(ProcessError::SourceNotFound(source_path));
-            }
+                println!("  {} ", image.filename);
 
-            println!("  {} ", image.filename);
+                let dimensions = get_dimensions(backend, &source_path)?;
 
-            // Get original dimensions
-            let dimensions = get_dimensions(backend, &source_path)?;
+                let stem = Path::new(&image.filename)
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap();
 
-            // Get filename stem
-            let stem = Path::new(&image.filename)
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap();
+                let variants = create_responsive_images(
+                    backend,
+                    &source_path,
+                    &album_output_dir,
+                    stem,
+                    dimensions,
+                    &responsive_config,
+                )?;
 
-            // Generate responsive sizes
-            let variants = create_responsive_images(
-                backend,
-                &source_path,
-                &album_output_dir,
-                stem,
-                dimensions,
-                &responsive_config,
-            )?;
+                let thumbnail_path = create_thumbnail(
+                    backend,
+                    &source_path,
+                    &album_output_dir,
+                    stem,
+                    dimensions,
+                    &thumbnail_config,
+                )?;
 
-            // Generate thumbnail
-            let thumbnail_path = create_thumbnail(
-                backend,
-                &source_path,
-                &album_output_dir,
-                stem,
-                dimensions,
-                &thumbnail_config,
-            )?;
+                let generated: std::collections::BTreeMap<String, GeneratedVariant> = variants
+                    .into_iter()
+                    .map(|v| {
+                        (
+                            v.target_size.to_string(),
+                            GeneratedVariant {
+                                avif: v.avif_path,
+                                webp: v.webp_path,
+                                width: v.width,
+                                height: v.height,
+                            },
+                        )
+                    })
+                    .collect();
 
-            // Convert variants to BTreeMap
-            let generated: std::collections::BTreeMap<String, GeneratedVariant> = variants
-                .into_iter()
-                .map(|v| {
-                    (
-                        v.target_size.to_string(),
-                        GeneratedVariant {
-                            avif: v.avif_path,
-                            webp: v.webp_path,
-                            width: v.width,
-                            height: v.height,
-                        },
-                    )
-                })
-                .collect();
-
-            processed_images.push((image, dimensions, generated, thumbnail_path));
-        }
+                Ok((image, dimensions, generated, thumbnail_path))
+            })
+            .collect();
+        let processed_images = processed_images?;
 
         // Build output images (preserving order)
         let mut output_images: Vec<OutputImage> = processed_images
@@ -294,6 +272,7 @@ pub fn process_with_backend(
                 |(image, dimensions, generated, thumbnail_path)| OutputImage {
                     number: image.number,
                     source_path: image.source_path.clone(),
+                    slug: image.slug.clone(),
                     title: image.title.clone(),
                     dimensions,
                     generated,

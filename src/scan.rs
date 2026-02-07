@@ -34,7 +34,7 @@
 //! - **Numbered directories** (`NNN-name`): Appear in navigation, sorted by number
 //! - **Unnumbered directories**: Albums exist but are hidden from navigation
 //! - **Numbered images** (`NNN-name.ext`): Sorted by number within album
-//! - **Image 001**: Automatically becomes the album preview/thumbnail
+//! - **Image #1**: Automatically becomes the album preview/thumbnail (falls back to first image)
 //!
 //! ## Output
 //!
@@ -52,6 +52,8 @@
 //! - Every album must have at least one image
 
 use crate::config::{self, SiteConfig};
+use crate::naming::parse_entry_name;
+use crate::types::{NavItem, Page};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -68,8 +70,6 @@ pub enum ScanError {
     MixedContent(PathBuf),
     #[error("Duplicate image number {0} in {1}")]
     DuplicateNumber(u32, PathBuf),
-    #[error("No preview image (001-*) found in album: {0}")]
-    NoPreviewImage(PathBuf),
 }
 
 /// Manifest output from the scan stage
@@ -80,40 +80,6 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pages: Vec<Page>,
     pub config: SiteConfig,
-}
-
-/// A page generated from a markdown file in the content root.
-///
-/// Pages follow the same numbering convention as albums:
-/// - Numbered files (`NNN-name.md`) appear in navigation, sorted by number
-/// - Unnumbered files are generated but hidden from navigation
-///
-/// If the file content is just a URL, the page becomes an external link in nav.
-#[derive(Debug, Clone, Serialize)]
-pub struct Page {
-    /// Title from first `# heading` in markdown, or link_title as fallback
-    pub title: String,
-    /// Display label in nav (filename with number stripped and dashes → spaces)
-    pub link_title: String,
-    /// URL slug (filename stem with number prefix stripped)
-    pub slug: String,
-    /// Raw markdown content (or URL for link pages)
-    pub body: String,
-    /// Whether this page appears in navigation (has number prefix)
-    pub in_nav: bool,
-    /// Sort key from number prefix (for ordering)
-    pub sort_key: u32,
-    /// If true, body is a URL and this page is an external link
-    pub is_link: bool,
-}
-
-/// Navigation tree item (only numbered directories)
-#[derive(Debug, Serialize)]
-pub struct NavItem {
-    pub title: String,
-    pub path: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<NavItem>,
 }
 
 /// Album with its images
@@ -143,6 +109,8 @@ pub struct Image {
     pub number: u32,
     pub source_path: String,
     pub filename: String,
+    /// URL-safe name from filename, dashes preserved (e.g., "L1020411" from "015-L1020411.jpg")
+    pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
@@ -155,6 +123,13 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
 
     scan_directory(root, root, &mut albums, &mut nav_items)?;
 
+    // Strip number prefixes from output paths (used for URLs and output dirs).
+    // Sorting has already happened with original paths, so this is safe.
+    for album in &mut albums {
+        album.path = slug_path(&album.path);
+    }
+    slugify_nav_paths(&mut nav_items);
+
     let pages = parse_pages(root)?;
 
     // Load site config (uses defaults if config.toml doesn't exist)
@@ -166,6 +141,31 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
         pages,
         config,
     })
+}
+
+/// Convert a relative path to a slug path by stripping number prefixes from each component.
+/// `"020-Travel/010-Japan"` → `"Travel/Japan"`
+fn slug_path(rel_path: &str) -> String {
+    rel_path
+        .split('/')
+        .map(|component| {
+            let parsed = parse_entry_name(component);
+            if parsed.name.is_empty() {
+                component.to_string()
+            } else {
+                parsed.name
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Recursively strip number prefixes from all NavItem paths.
+fn slugify_nav_paths(items: &mut [NavItem]) {
+    for item in items.iter_mut() {
+        item.path = slug_path(&item.path);
+        slugify_nav_paths(&mut item.children);
+    }
 }
 
 /// Parse all markdown files in the root directory into pages.
@@ -194,14 +194,11 @@ fn parse_pages(root: &Path) -> Result<Vec<Page>, ScanError> {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let (in_nav, sort_key, name) = if let Some((num, name)) = parse_numbered_name(&stem) {
-            (true, num, name)
-        } else {
-            (false, u32::MAX, stem.clone())
-        };
-
-        let link_title = name.replace('-', " ");
-        let slug = name;
+        let parsed = parse_entry_name(&stem);
+        let in_nav = parsed.number.is_some();
+        let sort_key = parsed.number.unwrap_or(u32::MAX);
+        let link_title = parsed.display_title;
+        let slug = parsed.name;
 
         let content = fs::read_to_string(md_path)?;
         let trimmed = content.trim();
@@ -276,10 +273,8 @@ fn scan_directory(
         // Sort subdirs by their number prefix
         let mut sorted_subdirs = subdirs.clone();
         sorted_subdirs.sort_by_key(|d| {
-            (
-                parse_number_prefix(&d.file_name().unwrap().to_string_lossy()).unwrap_or(u32::MAX),
-                d.file_name().unwrap().to_string_lossy().to_string(),
-            )
+            let name = d.file_name().unwrap().to_string_lossy().to_string();
+            (parse_entry_name(&name).number.unwrap_or(u32::MAX), name)
         });
 
         for subdir in sorted_subdirs {
@@ -289,10 +284,11 @@ fn scan_directory(
         // If this directory is numbered, add it to nav with children
         if path != root {
             let dir_name = path.file_name().unwrap().to_string_lossy();
-            if let Some((_, title)) = parse_numbered_name(&dir_name) {
+            let parsed = parse_entry_name(&dir_name);
+            if parsed.number.is_some() {
                 let rel_path = path.strip_prefix(root).unwrap();
                 nav_items.push(NavItem {
-                    title,
+                    title: parsed.display_title,
                     path: rel_path.to_string_lossy().to_string(),
                     children: child_nav,
                 });
@@ -308,16 +304,8 @@ fn scan_directory(
 
     // Sort nav_items by their original directory number
     nav_items.sort_by_key(|item| {
-        parse_number_prefix(&format!(
-            "{:03}-{}",
-            item.path
-                .split('/')
-                .next_back()
-                .and_then(parse_number_prefix)
-                .unwrap_or(0),
-            &item.title
-        ))
-        .unwrap_or(u32::MAX)
+        let dir_name = item.path.split('/').next_back().unwrap_or("");
+        parse_entry_name(dir_name).number.unwrap_or(u32::MAX)
     });
 
     Ok(())
@@ -358,52 +346,62 @@ fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, S
     let rel_path = path.strip_prefix(root).unwrap();
     let dir_name = path.file_name().unwrap().to_string_lossy();
 
-    let (in_nav, title) = if let Some((_, t)) = parse_numbered_name(&dir_name) {
-        (true, t)
+    let parsed_dir = parse_entry_name(&dir_name);
+    let in_nav = parsed_dir.number.is_some();
+    let title = if in_nav {
+        parsed_dir.display_title
     } else {
-        (false, dir_name.to_string())
+        dir_name.to_string()
     };
 
-    // Parse image numbers and check for duplicates
-    let mut numbered_images: BTreeMap<u32, &PathBuf> = BTreeMap::new();
+    // Parse image names and check for duplicates.
+    // Store ParsedName alongside each image to avoid double-parsing.
+    let mut numbered_images: BTreeMap<u32, (&PathBuf, crate::naming::ParsedName)> = BTreeMap::new();
     let mut unnumbered_counter = 0u32;
     for img in images {
         let filename = img.file_name().unwrap().to_string_lossy();
-        if let Some(num) = parse_number_prefix(&filename) {
+        let stem = Path::new(&*filename).file_stem().unwrap().to_string_lossy();
+        let parsed = parse_entry_name(&stem);
+        if let Some(num) = parsed.number {
             if numbered_images.contains_key(&num) {
                 return Err(ScanError::DuplicateNumber(num, path.to_path_buf()));
             }
-            numbered_images.insert(num, img);
+            numbered_images.insert(num, (img, parsed));
         } else {
             // Images without numbers get sorted to the end, preserving filename order
             let high_num = 1_000_000 + unnumbered_counter;
             unnumbered_counter += 1;
-            numbered_images.insert(high_num, img);
+            numbered_images.insert(high_num, (img, parsed));
         }
     }
 
-    // Find preview image (001-*)
+    // Find preview image (#1, or first image by sort order)
     let preview_image = numbered_images
         .iter()
         .find(|&(&num, _)| num == 1)
-        .map(|(_, path)| *path)
-        .or_else(|| numbered_images.values().next().copied())
-        .ok_or_else(|| ScanError::NoPreviewImage(path.to_path_buf()))?;
+        .map(|(_, (path, _))| *path)
+        .or_else(|| numbered_images.values().next().map(|(path, _)| *path))
+        // Safe: build_album is only called with non-empty images
+        .unwrap();
 
     let preview_rel = preview_image.strip_prefix(root).unwrap();
 
     // Build image list
     let images: Vec<Image> = numbered_images
         .iter()
-        .map(|(&num, img_path)| {
+        .map(|(&num, (img_path, parsed))| {
             let filename = img_path.file_name().unwrap().to_string_lossy().to_string();
-            let stem = Path::new(&filename).file_stem().unwrap().to_string_lossy();
-            let title = parse_image_title(&stem);
+            let title = if parsed.display_title.is_empty() {
+                None
+            } else {
+                Some(parsed.display_title.clone())
+            };
             let source = img_path.strip_prefix(root).unwrap();
             Image {
                 number: num,
                 source_path: source.to_string_lossy().to_string(),
                 filename,
+                slug: parsed.name.clone(),
                 title,
             }
         })
@@ -430,47 +428,6 @@ fn build_album(path: &Path, root: &Path, images: &[&PathBuf]) -> Result<Album, S
         images,
         in_nav,
     })
-}
-
-/// Parse "NNN-title" format, returns (number, title)
-fn parse_numbered_name(name: &str) -> Option<(u32, String)> {
-    let parts: Vec<&str> = name.splitn(2, '-').collect();
-    if parts.len() == 2
-        && let Ok(num) = parts[0].parse::<u32>()
-    {
-        return Some((num, parts[1].to_string()));
-    }
-    None
-}
-
-/// Parse just the number prefix from a name
-fn parse_number_prefix(name: &str) -> Option<u32> {
-    let prefix: String = name.chars().take_while(|c| c.is_ascii_digit()).collect();
-    prefix.parse().ok()
-}
-
-/// Extract an optional title from an image filename stem.
-///
-/// Filenames follow `(<seq>-)?<title>` format where both parts are optional:
-/// - `001-Museum` → Some("Museum")
-/// - `001-My-Museum` → Some("My Museum")  (dashes become spaces)
-/// - `001` → None  (number only, no title)
-/// - `001-` → None  (empty after dash)
-/// - `Museum` → Some("Museum")  (no number prefix)
-fn parse_image_title(stem: &str) -> Option<String> {
-    if let Some((_, name)) = parse_numbered_name(stem) {
-        if name.is_empty() {
-            None
-        } else {
-            Some(name.replace('-', " "))
-        }
-    } else if parse_number_prefix(stem).is_some() {
-        // Pure number, no title
-        None
-    } else {
-        // No number prefix — entire stem is the title
-        Some(stem.replace('-', " "))
-    }
 }
 
 #[cfg(test)]
@@ -509,7 +466,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Should find 4 albums: Landscapes, Japan, Italy, Minimal, wip-drafts
+        // Should find 5 albums: Landscapes, Japan, Italy, Minimal, wip-drafts
         assert_eq!(manifest.albums.len(), 5);
     }
 
@@ -574,38 +531,6 @@ mod tests {
         let numbers: Vec<u32> = landscapes.images.iter().map(|i| i.number).collect();
 
         assert_eq!(numbers, vec![1, 2, 10]);
-    }
-
-    // =========================================================================
-    // Image title tests
-    // =========================================================================
-
-    #[test]
-    fn image_title_from_numbered_filename() {
-        assert_eq!(parse_image_title("001-Museum"), Some("Museum".to_string()));
-    }
-
-    #[test]
-    fn image_title_dashes_become_spaces() {
-        assert_eq!(
-            parse_image_title("001-My-Museum"),
-            Some("My Museum".to_string())
-        );
-    }
-
-    #[test]
-    fn image_title_none_for_number_only() {
-        assert_eq!(parse_image_title("001"), None);
-    }
-
-    #[test]
-    fn image_title_none_for_empty_after_dash() {
-        assert_eq!(parse_image_title("001-"), None);
-    }
-
-    #[test]
-    fn image_title_from_unnumbered_filename() {
-        assert_eq!(parse_image_title("Museum"), Some("Museum".to_string()));
     }
 
     #[test]
@@ -907,8 +832,10 @@ mod tests {
         let manifest = scan(tmp.path()).unwrap();
 
         let japan = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
-        assert!(japan.path.contains("020-Travel"));
-        assert!(japan.path.contains("010-Japan"));
+        assert!(japan.path.contains("Travel"));
+        assert!(japan.path.contains("Japan"));
+        assert!(!japan.path.contains("020-"));
+        assert!(!japan.path.contains("010-"));
     }
 
     #[test]

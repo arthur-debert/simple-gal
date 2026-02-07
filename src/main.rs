@@ -18,18 +18,23 @@
 //! ## Usage
 //!
 //! ```bash
-//! # Full build (uses content_root from config.toml, output defaults to dist/)
+//! # Full build (defaults: --source content --output dist)
 //! simple-gal build
 //!
 //! # Or run stages individually
-//! simple-gal scan ./content
-//! simple-gal process manifest.json --output processed
-//! simple-gal generate processed/manifest.json --output dist
+//! simple-gal scan
+//! simple-gal process
+//! simple-gal generate
+//!
+//! # Override paths
+//! simple-gal --source photos --output public build
 //! ```
 //!
 //! ## Modules
 //!
 //! - [`config`] - Site configuration loaded from `config.toml`
+//! - [`naming`] - Centralized filename parsing (`NNN-name` convention)
+//! - [`types`] - Shared types used across pipeline stages
 //! - [`scan`] - Stage 1: Filesystem scanning and manifest generation
 //! - [`process`] - Stage 2: Image processing (responsive sizes, thumbnails)
 //! - [`generate`] - Stage 3: HTML site generation
@@ -37,8 +42,10 @@
 mod config;
 mod generate;
 mod imaging;
+mod naming;
 mod process;
 mod scan;
+mod types;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -47,134 +54,126 @@ use std::path::PathBuf;
 #[command(name = "simple-gal")]
 #[command(about = "Static site generator for photo portfolios")]
 struct Cli {
+    /// Content directory
+    #[arg(long, default_value = "content", global = true)]
+    source: PathBuf,
+
+    /// Output directory
+    #[arg(long, default_value = "dist", global = true)]
+    output: PathBuf,
+
+    /// Directory for intermediate files (manifest, processed images)
+    #[arg(long, default_value = ".simple-gal-temp", global = true)]
+    temp_dir: PathBuf,
+
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Scan filesystem and generate manifest.json
-    Scan {
-        /// Root directory containing albums
-        #[arg(default_value = ".")]
-        root: PathBuf,
-
-        /// Output manifest path
-        #[arg(short, long, default_value = "manifest.json")]
-        output: PathBuf,
-    },
-    /// Process images (generate responsive sizes)
-    Process {
-        /// Manifest file from scan stage
-        #[arg(default_value = "manifest.json")]
-        manifest: PathBuf,
-
-        /// Source root (where original images are)
-        #[arg(short, long)]
-        source: Option<PathBuf>,
-
-        /// Output directory for processed images
-        #[arg(short, long, default_value = "processed")]
-        output: PathBuf,
-    },
+    /// Scan filesystem and generate manifest
+    Scan,
+    /// Process images (generate responsive sizes and thumbnails)
+    Process,
     /// Generate final HTML site
-    Generate {
-        /// Manifest file (from process stage)
-        #[arg(default_value = "processed/manifest.json")]
-        manifest: PathBuf,
-
-        /// Processed images directory
-        #[arg(short, long, default_value = "processed")]
-        processed: PathBuf,
-
-        /// Output directory
-        #[arg(short, long, default_value = "dist")]
-        output: PathBuf,
-    },
-    /// Run full build pipeline
-    Build {
-        /// Root directory containing albums
-        root: Option<PathBuf>,
-
-        /// Output directory
-        #[arg(default_value = "dist")]
-        output: PathBuf,
-    },
+    Generate,
+    /// Run full build pipeline (scan + process + generate)
+    Build,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Scan { root, output } => {
-            let manifest = scan::scan(&root)?;
+        Command::Scan => {
+            let manifest = scan::scan(&cli.source)?;
+            std::fs::create_dir_all(&cli.temp_dir)?;
+            let manifest_path = cli.temp_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&manifest)?;
-            std::fs::write(&output, json)?;
-            println!("Wrote manifest to {}", output.display());
+            std::fs::write(&manifest_path, json)?;
+            println!("Wrote manifest to {}", manifest_path.display());
         }
-        Command::Process {
-            manifest,
-            source,
-            output,
-        } => {
-            let source_root = source.unwrap_or_else(|| PathBuf::from("."));
-            // Read site config from the manifest to get image processing settings
-            let manifest_content = std::fs::read_to_string(&manifest)?;
+        Command::Process => {
+            let scan_manifest_path = cli.temp_dir.join("manifest.json");
+            let manifest_content = std::fs::read_to_string(&scan_manifest_path)?;
             let input_manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
             let site_config: config::SiteConfig =
                 serde_json::from_value(input_manifest.get("config").cloned().unwrap_or_default())?;
-            let config = process::ProcessConfig::from_site_config(&site_config);
-            let result = process::process(&manifest, &source_root, &output, &config)?;
-            let output_manifest = output.join("manifest.json");
+            init_thread_pool(&site_config.processing);
+            let process_config = process::ProcessConfig::from_site_config(&site_config);
+            let processed_dir = cli.temp_dir.join("processed");
+            let result = process::process(
+                &scan_manifest_path,
+                &cli.source,
+                &processed_dir,
+                &process_config,
+            )?;
+            let output_manifest = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&result)?;
             std::fs::write(&output_manifest, &json)?;
             println!("Processed {} albums", result.albums.len());
             println!("Wrote manifest to {}", output_manifest.display());
         }
-        Command::Generate {
-            manifest,
-            processed,
-            output,
-        } => {
-            generate::generate(&manifest, &processed, &output)?;
+        Command::Generate => {
+            let processed_dir = cli.temp_dir.join("processed");
+            let processed_manifest_path = processed_dir.join("manifest.json");
+            generate::generate(&processed_manifest_path, &processed_dir, &cli.output)?;
         }
-        Command::Build { root, output } => {
-            // Resolve content root: CLI arg > config.toml content_root > "content"
-            let root = root.unwrap_or_else(|| {
-                let default = PathBuf::from("content");
-                config::load_config(&default)
-                    .map(|c| PathBuf::from(c.content_root))
-                    .unwrap_or(default)
-            });
+        Command::Build => {
+            // Resolve content root: check config.toml in source dir for content_root override
+            let source = resolve_build_source(&cli.source);
 
-            // Use a temp directory for all intermediate files - never touch source
-            let temp_dir = std::env::temp_dir().join(format!("simple-gal-{}", std::process::id()));
-            std::fs::create_dir_all(&temp_dir)?;
+            std::fs::create_dir_all(&cli.temp_dir)?;
 
             println!("==> Stage 1: Scanning filesystem");
-            let manifest = scan::scan(&root)?;
-            let scan_manifest_path = temp_dir.join("manifest.json");
+            let manifest = scan::scan(&source)?;
+            let scan_manifest_path = cli.temp_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&manifest)?;
             std::fs::write(&scan_manifest_path, json)?;
 
             println!("==> Stage 2: Processing images");
-            let processed_dir = temp_dir.join("processed");
-            let config = process::ProcessConfig::from_site_config(&manifest.config);
-            let processed_manifest =
-                process::process(&scan_manifest_path, &root, &processed_dir, &config)?;
+            init_thread_pool(&manifest.config.processing);
+            let processed_dir = cli.temp_dir.join("processed");
+            let process_config = process::ProcessConfig::from_site_config(&manifest.config);
+            let processed_manifest = process::process(
+                &scan_manifest_path,
+                &source,
+                &processed_dir,
+                &process_config,
+            )?;
             let processed_manifest_path = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&processed_manifest)?;
             std::fs::write(&processed_manifest_path, &json)?;
 
             println!("==> Stage 3: Generating HTML");
-            generate::generate(&processed_manifest_path, &processed_dir, &output)?;
+            generate::generate(&processed_manifest_path, &processed_dir, &cli.output)?;
 
-            println!("==> Cleaning up temp files");
-            std::fs::remove_dir_all(&temp_dir)?;
-
-            println!("==> Build complete: {}", output.display());
+            println!("==> Build complete: {}", cli.output.display());
         }
     }
 
     Ok(())
+}
+
+/// Initialize the rayon thread pool based on processing config.
+///
+/// Caps at the number of available CPU cores — user can constrain down, not up.
+fn init_thread_pool(processing: &config::ProcessingConfig) {
+    let threads = config::effective_threads(processing);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .ok();
+    println!("Using {} worker threads", threads);
+}
+
+/// Resolve the content source directory for the build command.
+///
+/// Loads `config.toml` from the given source directory and uses its `content_root`
+/// if it specifies a different path. Otherwise returns the source path as-is.
+fn resolve_build_source(cli_source: &std::path::Path) -> PathBuf {
+    config::load_config(cli_source)
+        .map(|c| PathBuf::from(c.content_root))
+        .unwrap_or_else(|_| cli_source.to_path_buf())
 }

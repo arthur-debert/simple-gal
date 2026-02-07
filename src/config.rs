@@ -56,6 +56,9 @@
 //! border = "#333333"
 //! link = "#cccccc"
 //! link_hover = "#ffffff"
+//!
+//! [processing]
+//! max_processes = 4             # Max parallel workers (omit for auto = CPU cores)
 //! ```
 //!
 //! ## Partial Configuration
@@ -92,6 +95,7 @@ pub struct SiteConfig {
     pub thumbnails: ThumbnailsConfig,
     pub images: ImagesConfig,
     pub theme: ThemeConfig,
+    pub processing: ProcessingConfig,
 }
 
 fn default_content_root() -> String {
@@ -106,8 +110,30 @@ impl Default for SiteConfig {
             thumbnails: ThumbnailsConfig::default(),
             images: ImagesConfig::default(),
             theme: ThemeConfig::default(),
+            processing: ProcessingConfig::default(),
         }
     }
+}
+
+/// Parallel processing settings
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProcessingConfig {
+    /// Maximum number of parallel image processing workers.
+    /// When absent or null, defaults to the number of CPU cores.
+    /// Values larger than the core count are clamped down.
+    pub max_processes: Option<usize>,
+}
+
+/// Resolve the effective thread count from config.
+///
+/// - `None` → use all available cores
+/// - `Some(n)` → use `min(n, cores)` (user can constrain down, not up)
+pub fn effective_threads(config: &ProcessingConfig) -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    config.max_processes.map(|n| n.min(cores)).unwrap_or(cores)
 }
 
 /// Thumbnail generation settings
@@ -526,5 +552,67 @@ link_hover = "#f88"
         let css = generate_theme_css(&theme);
         assert!(css.contains("--frame-width-x: clamp(1rem, 3vw, 2.5rem)"));
         assert!(css.contains("--frame-width-y: clamp(2rem, 6vw, 5rem)"));
+    }
+
+    // =========================================================================
+    // Processing config tests
+    // =========================================================================
+
+    #[test]
+    fn default_processing_config() {
+        let config = ProcessingConfig::default();
+        assert_eq!(config.max_processes, None);
+    }
+
+    #[test]
+    fn effective_threads_auto() {
+        let config = ProcessingConfig {
+            max_processes: None,
+        };
+        let threads = effective_threads(&config);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        assert_eq!(threads, cores);
+    }
+
+    #[test]
+    fn effective_threads_clamped_to_cores() {
+        let config = ProcessingConfig {
+            max_processes: Some(99999),
+        };
+        let threads = effective_threads(&config);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        assert_eq!(threads, cores);
+    }
+
+    #[test]
+    fn effective_threads_user_constrains_down() {
+        let config = ProcessingConfig {
+            max_processes: Some(1),
+        };
+        assert_eq!(effective_threads(&config), 1);
+    }
+
+    #[test]
+    fn parse_processing_config() {
+        let toml = r#"
+[processing]
+max_processes = 4
+"#;
+        let config: SiteConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.processing.max_processes, Some(4));
+    }
+
+    #[test]
+    fn parse_config_without_processing_uses_default() {
+        let toml = r##"
+[colors.light]
+background = "#fafafa"
+"##;
+        let config: SiteConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.processing.max_processes, None);
     }
 }
