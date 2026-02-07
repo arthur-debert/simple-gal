@@ -11,10 +11,10 @@ mod calculations;
 pub(crate) mod iptc_parser;
 pub mod operations;
 mod params;
-#[allow(dead_code)]
 pub mod rust_backend;
 
 pub use backend::{BackendError, ImageBackend, ImageMagickBackend};
+pub use rust_backend::RustBackend;
 // Re-exported for tests (process.rs, operations.rs tests use this)
 #[cfg(test)]
 pub use backend::Dimensions;
