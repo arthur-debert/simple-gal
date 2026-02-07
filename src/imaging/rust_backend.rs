@@ -123,19 +123,30 @@ impl ImageBackend for RustBackend {
 mod tests {
     use super::*;
     use crate::imaging::params::{Quality, Sharpening};
-    use std::path::PathBuf;
+    use image::{ImageEncoder, RgbImage};
+
+    /// Create a small valid JPEG file with the given dimensions.
+    fn create_test_jpeg(path: &Path, width: u32, height: u32) {
+        let img = RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        let file = std::fs::File::create(path).unwrap();
+        let writer = std::io::BufWriter::new(file);
+        image::codecs::jpeg::JpegEncoder::new(writer)
+            .write_image(img.as_raw(), width, height, image::ExtendedColorType::Rgb8)
+            .unwrap();
+    }
 
     #[test]
-    fn identify_reads_jpeg_dimensions() {
+    fn identify_synthetic_jpeg() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("test.jpg");
+        create_test_jpeg(&path, 200, 150);
+
         let backend = RustBackend::new();
-        // Use a real test image from the content directory
-        let path = PathBuf::from("content/001-NY/Q1020899.jpg");
-        if !path.exists() {
-            return; // Skip if content not available
-        }
         let dims = backend.identify(&path).unwrap();
-        assert!(dims.width > 0);
-        assert!(dims.height > 0);
+        assert_eq!(dims.width, 200);
+        assert_eq!(dims.height, 150);
     }
 
     #[test]
@@ -146,69 +157,96 @@ mod tests {
     }
 
     #[test]
-    fn read_metadata_returns_default_for_non_jpeg() {
+    fn read_metadata_synthetic_returns_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("test.jpg");
+        create_test_jpeg(&path, 100, 100);
+
         let backend = RustBackend::new();
-        // Non-existent file should return default metadata (not error)
-        let result = backend.read_metadata(Path::new("/nonexistent/image.jpg"));
-        assert!(result.is_ok());
-        let meta = result.unwrap();
+        let meta = backend.read_metadata(&path).unwrap();
         assert_eq!(meta, ImageMetadata::default());
     }
 
     #[test]
-    fn resize_produces_webp_output() {
-        let source = PathBuf::from("content/001-NY/Q1020899.jpg");
-        if !source.exists() {
-            return;
-        }
+    fn read_metadata_nonexistent_returns_default() {
         let backend = RustBackend::new();
-        let output = PathBuf::from("/tmp/simple-gal-test-resize.webp");
-        backend
-            .resize(&ResizeParams {
-                source,
-                output: output.clone(),
-                width: 800,
-                height: 600,
-                quality: Quality::new(85),
-            })
+        let meta = backend
+            .read_metadata(Path::new("/nonexistent/image.jpg"))
             .unwrap();
-        assert!(output.exists());
-        let dims = backend.identify(&output).unwrap();
-        // resize() preserves aspect ratio, so at least one dimension should be <= target
-        assert!(dims.width <= 800 && dims.height <= 600);
-        std::fs::remove_file(&output).ok();
+        assert_eq!(meta, ImageMetadata::default());
     }
 
     #[test]
-    fn resize_produces_avif_output() {
-        let source = PathBuf::from("content/001-NY/Q1020899.jpg");
-        if !source.exists() {
-            return;
-        }
+    fn resize_synthetic_to_webp() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source.jpg");
+        create_test_jpeg(&source, 400, 300);
+
+        let output = tmp.path().join("resized.webp");
         let backend = RustBackend::new();
-        let output = PathBuf::from("/tmp/simple-gal-test-resize.avif");
         backend
             .resize(&ResizeParams {
                 source,
                 output: output.clone(),
-                width: 800,
-                height: 600,
+                width: 200,
+                height: 150,
                 quality: Quality::new(85),
             })
             .unwrap();
+
+        let dims = backend.identify(&output).unwrap();
+        assert_eq!(dims.width, 200);
+        assert_eq!(dims.height, 150);
+    }
+
+    #[test]
+    fn resize_synthetic_to_avif() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source.jpg");
+        create_test_jpeg(&source, 400, 300);
+
+        let output = tmp.path().join("resized.avif");
+        let backend = RustBackend::new();
+        backend
+            .resize(&ResizeParams {
+                source,
+                output: output.clone(),
+                width: 200,
+                height: 150,
+                quality: Quality::new(85),
+            })
+            .unwrap();
+
         assert!(output.exists());
         assert!(std::fs::metadata(&output).unwrap().len() > 0);
-        std::fs::remove_file(&output).ok();
     }
 
     #[test]
-    fn thumbnail_produces_cropped_webp() {
-        let source = PathBuf::from("content/001-NY/Q1020899.jpg");
-        if !source.exists() {
-            return;
-        }
+    fn resize_unsupported_format_errors() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source.jpg");
+        create_test_jpeg(&source, 100, 100);
+
+        let output = tmp.path().join("output.png");
         let backend = RustBackend::new();
-        let output = PathBuf::from("/tmp/simple-gal-test-thumb.webp");
+        let result = backend.resize(&ResizeParams {
+            source,
+            output,
+            width: 50,
+            height: 50,
+            quality: Quality::new(85),
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn thumbnail_synthetic_exact_dimensions() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source.jpg");
+        create_test_jpeg(&source, 800, 600);
+
+        let output = tmp.path().join("thumb.webp");
+        let backend = RustBackend::new();
         backend
             .thumbnail(&ThumbnailParams {
                 source,
@@ -219,10 +257,57 @@ mod tests {
                 sharpening: Some(Sharpening::light()),
             })
             .unwrap();
-        assert!(output.exists());
+
         let dims = backend.identify(&output).unwrap();
         assert_eq!(dims.width, 400);
         assert_eq!(dims.height, 500);
-        std::fs::remove_file(&output).ok();
+    }
+
+    #[test]
+    fn thumbnail_synthetic_portrait_source() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source.jpg");
+        create_test_jpeg(&source, 600, 800);
+
+        let output = tmp.path().join("thumb.webp");
+        let backend = RustBackend::new();
+        backend
+            .thumbnail(&ThumbnailParams {
+                source,
+                output: output.clone(),
+                crop_width: 400,
+                crop_height: 500,
+                quality: Quality::new(85),
+                sharpening: Some(Sharpening::light()),
+            })
+            .unwrap();
+
+        let dims = backend.identify(&output).unwrap();
+        assert_eq!(dims.width, 400);
+        assert_eq!(dims.height, 500);
+    }
+
+    #[test]
+    fn thumbnail_synthetic_without_sharpening() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let source = tmp.path().join("source.jpg");
+        create_test_jpeg(&source, 400, 300);
+
+        let output = tmp.path().join("thumb.webp");
+        let backend = RustBackend::new();
+        backend
+            .thumbnail(&ThumbnailParams {
+                source,
+                output: output.clone(),
+                crop_width: 200,
+                crop_height: 200,
+                quality: Quality::new(85),
+                sharpening: None,
+            })
+            .unwrap();
+
+        let dims = backend.identify(&output).unwrap();
+        assert_eq!(dims.width, 200);
+        assert_eq!(dims.height, 200);
     }
 }
