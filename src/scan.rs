@@ -128,14 +128,14 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     let mut nav_items = Vec::new();
 
     // Build the config chain: stock defaults → root config.toml
-    let base = config::stock_defaults_value();
-    let root_raw = config::load_raw_config(root)?;
-    let root_config_value = match root_raw {
-        Some(overlay) => config::merge_toml(base, overlay),
+    let base = SiteConfig::default();
+    let root_partial = config::load_partial_config(root)?;
+    let root_config = match root_partial {
+        Some(partial) => base.merge(partial),
         None => base,
     };
 
-    scan_directory(root, root, &mut albums, &mut nav_items, &root_config_value)?;
+    scan_directory(root, root, &mut albums, &mut nav_items, &root_config)?;
 
     // Strip number prefixes from output paths (used for URLs and output dirs).
     // Sorting has already happened with original paths, so this is safe.
@@ -147,7 +147,7 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     let pages = parse_pages(root)?;
 
     // Root-level resolved config for CSS generation
-    let config = config::resolve_config(root_config_value, None)?;
+    let config = root_config;
 
     Ok(Manifest {
         navigation: nav_items,
@@ -251,7 +251,7 @@ fn scan_directory(
     root: &Path,
     albums: &mut Vec<Album>,
     nav_items: &mut Vec<NavItem>,
-    inherited_config: &toml::Value,
+    inherited_config: &SiteConfig,
 ) -> Result<(), ScanError> {
     let entries = collect_entries(path)?;
 
@@ -266,8 +266,8 @@ fn scan_directory(
 
     // Merge any local config.toml onto the inherited config (skip root — already handled)
     let effective_config = if path != root {
-        match config::load_raw_config(path)? {
-            Some(overlay) => config::merge_toml(inherited_config.clone(), overlay),
+        match config::load_partial_config(path)? {
+            Some(partial) => inherited_config.clone().merge(partial),
             None => inherited_config.clone(),
         }
     } else {
@@ -275,9 +275,9 @@ fn scan_directory(
     };
 
     if !images.is_empty() {
-        // This is an album — resolve the accumulated config
-        let resolved = config::resolve_config(effective_config, None)?;
-        let album = build_album(path, root, &images, resolved)?;
+        // This is an album
+        effective_config.validate()?;
+        let album = build_album(path, root, &images, effective_config)?;
         let in_nav = album.in_nav;
         let title = album.title.clone();
         let album_path = album.path.clone();
