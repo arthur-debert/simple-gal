@@ -22,7 +22,7 @@ if [ "$1" = "up" ]; then
 
     # Start server only if not already running
     if ! lsof -i :8000 -sTCP:LISTEN >/dev/null 2>&1; then
-        python3 -m http.server 8000 -d dist &
+        python3 -m http.server 8000 -d dist > /dev/null 2>&1 &
         sleep 1  # Give server time to start
     fi
 

@@ -1,48 +1,112 @@
 # Simple Gal Configuration
-# Place this file in your content root directory
-# All options are optional - defaults will be used for any missing values
+# ========================
+# All settings are optional. Remove or comment out any you don't need.
+# Values shown below are the defaults.
+#
+# Config files can be placed at any level of the directory tree:
+#   content/config.toml          -> root (overrides stock defaults)
+#   content/020-Travel/config.toml -> group (overrides root)
+#   content/020-Travel/010-Japan/config.toml -> gallery (overrides group)
+#
+# Each level only needs the keys it wants to override.
+# Unknown keys will cause an error.
 
-# The path to where albums, config and pages are
+# Path to content directory (only meaningful at root level)
 content_root = "content"
 
+# ---------------------------------------------------------------------------
+# Thumbnail generation
+# ---------------------------------------------------------------------------
 [thumbnails]
-# Aspect ratio for thumbnails (width:height)
-# Common choices: [1, 1] for square, [4, 5] for portrait
+# Aspect ratio as [width, height] for thumbnail crops.
+# Common choices: [1, 1] for square, [4, 5] for portrait, [3, 2] for landscape.
 aspect_ratio = [4, 5]
 
+# Short-edge size in pixels for generated thumbnails.
+size = 400
+
+# ---------------------------------------------------------------------------
+# Responsive image generation
+# ---------------------------------------------------------------------------
 [images]
-# Responsive sizes to generate
+# Pixel widths (longer edge) to generate for responsive <picture> elements.
 sizes = [800, 1400, 2080]
-# AVIF/WebP quality (0-100)
+
+# AVIF/WebP encoding quality (0 = worst, 100 = best).
 quality = 90
 
+# ---------------------------------------------------------------------------
+# Theme / layout
+# ---------------------------------------------------------------------------
+[theme]
+# Gap between thumbnails in album and image grids (CSS value).
+thumbnail_gap = "1rem"
+
+# Padding around the thumbnail grid container (CSS value).
+grid_padding = "2rem"
+
+# Horizontal frame padding around images, as CSS clamp(min, size, max).
 [theme.frame_x]
-# Horizontal frame padding (left/right) around images
-size = "3px"
-min = "3px"
-max = "8px"
+size = "3vw"
+min = "1rem"
+max = "2.5rem"
 
+# Vertical frame padding around images, as CSS clamp(min, size, max).
 [theme.frame_y]
-size = "2vw"
-min = "0.5rem"
-max = "2rem"
+size = "6vw"
+min = "2rem"
+max = "5rem"
 
-# Color scheme configuration
-
+# ---------------------------------------------------------------------------
+# Colors - Light mode (prefers-color-scheme: light)
+# ---------------------------------------------------------------------------
 [colors.light]
-# Light mode colors (when prefers-color-scheme: light or no preference)
 background = "#ffffff"
 text = "#111111"
-text_muted = "#666666" # Used for nav menu, breadcrumbs, captions
+text_muted = "#666666" # Nav, breadcrumbs, captions
 border = "#e0e0e0"
 link = "#333333"
 link_hover = "#000000"
 
+# ---------------------------------------------------------------------------
+# Colors - Dark mode (prefers-color-scheme: dark)
+# ---------------------------------------------------------------------------
 [colors.dark]
-# Dark mode colors (when prefers-color-scheme: dark)
-background = "#0a0a0a"
-text = "#eeeeee"
-text_muted = "#999999" # Used for nav menu, breadcrumbs, captions
+background = "#000000"
+text = "#fafafa"
+text_muted = "#999999"
 border = "#333333"
 link = "#cccccc"
 link_hover = "#ffffff"
+
+# ---------------------------------------------------------------------------
+# Font
+# ---------------------------------------------------------------------------
+[font]
+# Google Fonts family name.
+font = "Noto Sants"
+
+# Font weight to load from Google Fonts.
+weight = "400"
+
+# Font category: "sans" or "serif". Determines fallback fonts in the CSS stack.
+# sans  -> Helvetica, Verdana, sans-serif
+# serif -> Georgia, "Times New Roman", serif
+font_type = "sans"
+
+# ---------------------------------------------------------------------------
+# Processing
+# ---------------------------------------------------------------------------
+[processing]
+# Maximum parallel image-processing workers.
+# Omit or comment out to auto-detect (= number of CPU cores).
+# max_processes = 4
+
+# ---------------------------------------------------------------------------
+# Backend
+# ---------------------------------------------------------------------------
+[backend]
+# Image processing backend: "imagemagick" (default) or "rust".
+# "imagemagick" shells out to ImageMagick's convert/identify commands.
+# "rust" uses pure Rust libraries (no external dependencies).
+name = "imagemagick"

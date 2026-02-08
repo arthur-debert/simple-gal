@@ -40,3 +40,4 @@ dist/
 processed/
 manifest.json
 .simple-gal-temp/
+.todos.db
