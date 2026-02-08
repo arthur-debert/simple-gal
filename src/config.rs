@@ -59,12 +59,17 @@
 //! link_hover = "#000000"
 //!
 //! [colors.dark]
-//! background = "#0a0a0a"
-//! text = "#eeeeee"
+//! background = "#000000"
+//! text = "#fafafa"
 //! text_muted = "#999999"
 //! border = "#333333"
 //! link = "#cccccc"
 //! link_hover = "#ffffff"
+//!
+//! [font]
+//! font = "Space Grotesk"    # Google Fonts family name
+//! weight = "600"            # Font weight to load
+//! font_type = "sans"        # "sans" or "serif" (determines fallbacks)
 //!
 //! [processing]
 //! max_processes = 4         # Max parallel workers (omit for auto = CPU cores)
@@ -118,6 +123,8 @@ pub struct SiteConfig {
     pub images: ImagesConfig,
     /// Theme/layout settings (frame padding, grid spacing).
     pub theme: ThemeConfig,
+    /// Font configuration (Google Fonts family, weight, type).
+    pub font: FontConfig,
     /// Parallel processing settings.
     pub processing: ProcessingConfig,
     /// Image processing backend selection.
@@ -133,6 +140,7 @@ pub struct PartialSiteConfig {
     pub thumbnails: Option<PartialThumbnailsConfig>,
     pub images: Option<PartialImagesConfig>,
     pub theme: Option<PartialThemeConfig>,
+    pub font: Option<PartialFontConfig>,
     pub processing: Option<PartialProcessingConfig>,
     pub backend: Option<PartialBackendConfig>,
 }
@@ -149,6 +157,7 @@ impl Default for SiteConfig {
             thumbnails: ThumbnailsConfig::default(),
             images: ImagesConfig::default(),
             theme: ThemeConfig::default(),
+            font: FontConfig::default(),
             processing: ProcessingConfig::default(),
             backend: BackendConfig::default(),
         }
@@ -192,6 +201,9 @@ impl SiteConfig {
         }
         if let Some(t) = other.theme {
             self.theme = self.theme.merge(t);
+        }
+        if let Some(f) = other.font {
+            self.font = self.font.merge(f);
         }
         if let Some(p) = other.processing {
             self.processing = self.processing.merge(p);
@@ -275,6 +287,89 @@ impl BackendConfig {
             self.name = n;
         }
         self
+    }
+}
+
+/// Font category — determines fallback fonts in the CSS font stack.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum FontType {
+    #[default]
+    Sans,
+    Serif,
+}
+
+/// Font configuration for the site.
+///
+/// The `font` field should be a Google Fonts family name. The generated CSS
+/// loads it via `@import` and builds a font stack with appropriate fallbacks
+/// based on `font_type`.
+///
+/// ```toml
+/// [font]
+/// font = "Space Grotesk"
+/// weight = "600"
+/// font_type = "sans"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct FontConfig {
+    /// Google Fonts family name (e.g. `"Space Grotesk"`).
+    pub font: String,
+    /// Font weight to load (e.g. `"600"`).
+    pub weight: String,
+    /// Font category: `"sans"` or `"serif"` — determines fallback fonts.
+    pub font_type: FontType,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialFontConfig {
+    pub font: Option<String>,
+    pub weight: Option<String>,
+    pub font_type: Option<FontType>,
+}
+
+impl Default for FontConfig {
+    fn default() -> Self {
+        Self {
+            font: "Space Grotesk".to_string(),
+            weight: "600".to_string(),
+            font_type: FontType::Sans,
+        }
+    }
+}
+
+impl FontConfig {
+    pub fn merge(mut self, other: PartialFontConfig) -> Self {
+        if let Some(f) = other.font {
+            self.font = f;
+        }
+        if let Some(w) = other.weight {
+            self.weight = w;
+        }
+        if let Some(t) = other.font_type {
+            self.font_type = t;
+        }
+        self
+    }
+
+    /// Google Fonts stylesheet URL for use in a `<link>` element.
+    pub fn stylesheet_url(&self) -> String {
+        let family = self.font.replace(' ', "+");
+        format!(
+            "https://fonts.googleapis.com/css2?family={}:wght@{}&display=swap",
+            family, self.weight
+        )
+    }
+
+    /// CSS `font-family` value with fallbacks based on `font_type`.
+    pub fn font_family_css(&self) -> String {
+        let fallbacks = match self.font_type {
+            FontType::Serif => r#"Georgia, "Times New Roman", serif"#,
+            FontType::Sans => "Helvetica, Verdana, sans-serif",
+        };
+        format!(r#""{}", {}"#, self.font, fallbacks)
     }
 }
 
@@ -578,8 +673,8 @@ impl ColorScheme {
 
     pub fn default_dark() -> Self {
         Self {
-            background: "#0a0a0a".to_string(),
-            text: "#eeeeee".to_string(),
+            background: "#000000".to_string(),
+            text: "#fafafa".to_string(),
             text_muted: "#999999".to_string(),
             border: "#333333".to_string(),
             link: "#cccccc".to_string(),
@@ -703,12 +798,27 @@ link_hover = "#000000"
 # Colors - Dark mode (prefers-color-scheme: dark)
 # ---------------------------------------------------------------------------
 [colors.dark]
-background = "#0a0a0a"
-text = "#eeeeee"
+background = "#000000"
+text = "#fafafa"
 text_muted = "#999999"
 border = "#333333"
 link = "#cccccc"
 link_hover = "#ffffff"
+
+# ---------------------------------------------------------------------------
+# Font
+# ---------------------------------------------------------------------------
+[font]
+# Google Fonts family name.
+font = "Space Grotesk"
+
+# Font weight to load from Google Fonts.
+weight = "600"
+
+# Font category: "sans" or "serif". Determines fallback fonts in the CSS stack.
+# sans  -> Helvetica, Verdana, sans-serif
+# serif -> Georgia, "Times New Roman", serif
+font_type = "sans"
 
 # ---------------------------------------------------------------------------
 # Processing
@@ -730,6 +840,12 @@ name = "imagemagick"
 }
 
 /// Generate CSS custom properties from color config.
+///
+/// These `generate_*_css()` functions produce `:root { … }` blocks that are
+/// prepended to the inline `<style>` in every page. The Google Font is loaded
+/// separately via a `<link>` tag (see `FontConfig::stylesheet_url` and
+/// `base_document` in generate.rs). Variables defined here are consumed by
+/// `static/style.css`; do not redefine them there.
 pub fn generate_color_css(colors: &ColorConfig) -> String {
     format!(
         r#":root {{
@@ -739,6 +855,7 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
     --color-border: {light_border};
     --color-link: {light_link};
     --color-link-hover: {light_link_hover};
+    --color-separator: #000000;
 }}
 
 @media (prefers-color-scheme: dark) {{
@@ -749,6 +866,7 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
         --color-border: {dark_border};
         --color-link: {dark_link};
         --color-link-hover: {dark_link_hover};
+        --color-separator: #ffffff;
     }}
 }}"#,
         light_bg = colors.light.background,
@@ -782,6 +900,18 @@ pub fn generate_theme_css(theme: &ThemeConfig) -> String {
     )
 }
 
+/// Generate CSS custom properties from font config.
+pub fn generate_font_css(font: &FontConfig) -> String {
+    format!(
+        r#":root {{
+    --font-family: {family};
+    --font-weight: {weight};
+}}"#,
+        family = font.font_family_css(),
+        weight = font.weight,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -791,7 +921,7 @@ mod tests {
     fn default_config_has_colors() {
         let config = SiteConfig::default();
         assert_eq!(config.colors.light.background, "#ffffff");
-        assert_eq!(config.colors.dark.background, "#0a0a0a");
+        assert_eq!(config.colors.dark.background, "#000000");
     }
 
     #[test]
@@ -823,7 +953,7 @@ background = "#fafafa"
         assert_eq!(config.colors.light.background, "#fafafa");
         // Default values preserved
         assert_eq!(config.colors.light.text, "#111111");
-        assert_eq!(config.colors.dark.background, "#0a0a0a");
+        assert_eq!(config.colors.dark.background, "#000000");
         // Image settings should be defaults
         assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
     }
@@ -869,7 +999,7 @@ quality = 85
         let config = load_config(tmp.path()).unwrap();
 
         assert_eq!(config.colors.light.background, "#ffffff");
-        assert_eq!(config.colors.dark.background, "#0a0a0a");
+        assert_eq!(config.colors.dark.background, "#000000");
     }
 
     #[test]
@@ -891,7 +1021,7 @@ text = "#abcdef"
         assert_eq!(config.colors.light.background, "#123456");
         assert_eq!(config.colors.light.text, "#abcdef");
         // Unspecified values should be defaults
-        assert_eq!(config.colors.dark.background, "#0a0a0a");
+        assert_eq!(config.colors.dark.background, "#000000");
     }
 
     #[test]
@@ -1301,7 +1431,7 @@ quality = 200
         assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
         assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
         assert_eq!(config.colors.light.background, "#ffffff");
-        assert_eq!(config.colors.dark.background, "#0a0a0a");
+        assert_eq!(config.colors.dark.background, "#000000");
         assert_eq!(config.theme.thumbnail_gap, "1rem");
         assert_eq!(config.backend.name, BackendName::ImageMagick);
     }

@@ -45,24 +45,25 @@
 }
 
 /* ===== CSS Custom Properties ===== */
-/* Note: Color variables (--color-*) are generated from config.toml */
-/* Note: --frame-width-x and --frame-width-y are generated from config.toml */
+/*
+ * GENERATED VARIABLES — defined in config.rs, injected before this file:
+ *   --color-bg, --color-text, --color-text-muted, --color-border,
+ *   --color-link, --color-link-hover, --color-separator
+ *   --frame-width-x, --frame-width-y, --thumbnail-gap, --grid-padding
+ *   --font-family, --font-weight
+ *
+ * The Google Font itself is loaded via a <link> tag in <head>, NOT here.
+ * DO NOT add @import or redefine generated vars in this file.
+ * See generate() in generate.rs for the full CSS assembly pipeline.
+ */
 :root {
     --header-height: 3rem;
 
-    /* Typography */
-    --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    --font-size-base: 14px;
-    --font-size-small: 12px;
+    /* Typography (only static sizes live here; font-family/weight are generated) */
+    --font-size-base: 18px;
+    --font-size-small: 14px;
     --font-size-heading: 1.5rem;
 
-    /* Header typography (separate for breadcrumb and menu) */
-    --font-family-breadcrumb: "Libre Franklin", -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-weight-breadcrumb: 500;
-    --font-family-menu: "Libre Franklin", -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-weight-menu: 500;
-
-    /* Note: --thumbnail-gap and --grid-padding are generated from config.toml */
     --transition-speed: 0.2s;
 }
 
@@ -74,6 +75,7 @@ html {
 
 body {
     font-family: var(--font-family);
+    font-weight: var(--font-weight);
     background-color: var(--color-bg);
     color: var(--color-text);
     min-height: 100dvh;
@@ -114,13 +116,11 @@ img {
 
 /* ===== Breadcrumb ===== */
 .breadcrumb {
-    font-family: var(--font-family-breadcrumb);
-    font-weight: var(--font-weight-breadcrumb);
-    color: var(--color-text-muted);
+    color: var(--color-text);
 }
 
 .breadcrumb a {
-    color: var(--color-text-muted);
+    color: var(--color-text);
 }
 
 .breadcrumb a:hover {
@@ -129,8 +129,6 @@ img {
 
 /* ===== Navigation ===== */
 .site-nav {
-    font-family: var(--font-family-menu);
-    font-weight: var(--font-weight-menu);
 }
 
 /* Hidden checkbox controls the menu state */
@@ -243,9 +241,9 @@ img {
     margin-top: 0.25rem;
 }
 
-.nav-separator {
+.site-nav .nav-separator {
     height: 1px;
-    background: var(--color-border);
+    background: var(--color-separator);
     margin: 0.75rem 1.5rem;
     padding: 0;
 }
@@ -290,7 +288,7 @@ main {
     display: block;
     margin-top: 0.75rem;
     font-size: var(--font-size-small);
-    color: var(--color-text-muted);
+    color: var(--color-text);
 }
 
 /* ===== Album Page ===== */
@@ -309,7 +307,7 @@ main {
 }
 
 .album-description {
-    color: var(--color-text-muted);
+    color: var(--color-text);
     max-width: 600px;
 }
 

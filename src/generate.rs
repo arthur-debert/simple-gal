@@ -113,6 +113,7 @@ pub struct GeneratedVariant {
 
 const CSS_STATIC: &str = include_str!("../static/style.css");
 const JS: &str = include_str!("../static/nav.js");
+const IMAGE_SIZES: &str = "(max-width: 800px) 100vw, 80vw";
 
 /// Zero-padding width for image indices, based on album size.
 fn index_width(total: usize) -> usize {
@@ -182,13 +183,31 @@ pub fn generate(
     let manifest_content = fs::read_to_string(manifest_path)?;
     let manifest: Manifest = serde_json::from_str(&manifest_content)?;
 
-    // Generate CSS: @import must come first, then config variables, then static rules
-    let font_import = "@import url('https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@500&display=swap');";
+    // ── CSS assembly ──────────────────────────────────────────────────
+    // The final CSS is built from THREE sources, injected in two places:
+    //
+    //   1. Google Font <link>  → emitted in <head> BEFORE <style>
+    //      (see base_document() — font_url becomes a <link rel="stylesheet">)
+    //      DO NOT use @import inside <style>; browsers ignore/delay it.
+    //
+    //   2. Generated CSS vars  → config::generate_{color,theme,font}_css()
+    //      Produces :root { --color-*, --frame-*, --font-*, … }
+    //      Prepended to the <style> block so vars are defined before use.
+    //
+    //   3. Static CSS rules    → static/style.css (compiled in via include_str!)
+    //      References the vars above. MUST NOT redefine them — if a var
+    //      needs to come from config, generate it in (2) and consume it here.
+    //
+    // When adding new config-driven CSS: generate the variable in config.rs,
+    // wire it into this assembly, and reference it in static/style.css.
+    // ────────────────────────────────────────────────────────────────────
+    let font_url = manifest.config.font.stylesheet_url();
     let color_css = config::generate_color_css(&manifest.config.colors);
     let theme_css = config::generate_theme_css(&manifest.config.theme);
+    let font_css = config::generate_font_css(&manifest.config.font);
     let css = format!(
         "{}\n\n{}\n\n{}\n\n{}",
-        font_import, color_css, theme_css, CSS_STATIC
+        color_css, theme_css, font_css, CSS_STATIC
     );
 
     fs::create_dir_all(output_dir)?;
@@ -197,13 +216,13 @@ pub fn generate(
     copy_dir_recursive(processed_dir, output_dir)?;
 
     // Generate index page
-    let index_html = render_index(&manifest, &css);
+    let index_html = render_index(&manifest, &css, &font_url);
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
     println!("Generated index.html");
 
     // Generate pages (content pages only, not link pages)
     for page in manifest.pages.iter().filter(|p| !p.is_link) {
-        let page_html = render_page(page, &manifest.navigation, &manifest.pages, &css);
+        let page_html = render_page(page, &manifest.navigation, &manifest.pages, &css, &font_url);
         let filename = format!("{}.html", page.slug);
         fs::write(output_dir.join(&filename), page_html.into_string())?;
         println!("Generated {}", filename);
@@ -214,7 +233,13 @@ pub fn generate(
         let album_dir = output_dir.join(&album.path);
         fs::create_dir_all(&album_dir)?;
 
-        let album_html = render_album_page(album, &manifest.navigation, &manifest.pages, &css);
+        let album_html = render_album_page(
+            album,
+            &manifest.navigation,
+            &manifest.pages,
+            &css,
+            &font_url,
+        );
         fs::write(album_dir.join("index.html"), album_html.into_string())?;
         println!("Generated {}/index.html", album.path);
 
@@ -235,6 +260,7 @@ pub fn generate(
                 &manifest.navigation,
                 &manifest.pages,
                 &css,
+                &font_url,
             );
             let image_dir_name =
                 image_page_url(idx + 1, album.images.len(), image.title.as_deref());
@@ -274,8 +300,19 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 // HTML Components
 // ============================================================================
 
-/// Renders the base HTML document structure
-fn base_document(title: &str, css: &str, body_class: Option<&str>, content: Markup) -> Markup {
+/// Renders the base HTML document structure.
+///
+/// Font loading: the Google Font is loaded via a `<link>` tag, NOT via
+/// `@import` inside `<style>`. Browsers ignore or delay `@import` in
+/// inline `<style>` blocks. See the CSS assembly comment in `generate()`.
+fn base_document(
+    title: &str,
+    css: &str,
+    font_url: Option<&str>,
+    body_class: Option<&str>,
+    head_extra: Option<Markup>,
+    content: Markup,
+) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -283,7 +320,16 @@ fn base_document(title: &str, css: &str, body_class: Option<&str>, content: Mark
                 meta charset="UTF-8";
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { (title) }
+                // Google Font loaded as <link>, not @import — see generate().
+                @if let Some(url) = font_url {
+                    link rel="preconnect" href="https://fonts.googleapis.com";
+                    link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="";
+                    link rel="stylesheet" href=(url);
+                }
                 style { (PreEscaped(css)) }
+                @if let Some(extra) = head_extra {
+                    (extra)
+                }
             }
             body class=[body_class] {
                 (content)
@@ -374,7 +420,7 @@ fn render_nav_item(item: &NavItem, current_path: &str) -> Markup {
 // ============================================================================
 
 /// Renders the index/home page with album grid
-fn render_index(manifest: &Manifest, css: &str) -> Markup {
+fn render_index(manifest: &Manifest, css: &str, font_url: &str) -> Markup {
     let nav = render_nav(&manifest.navigation, "", &manifest.pages);
 
     let breadcrumb = html! {
@@ -395,11 +441,17 @@ fn render_index(manifest: &Manifest, css: &str) -> Markup {
         }
     };
 
-    base_document("Gallery", css, None, content)
+    base_document("Gallery", css, Some(font_url), None, None, content)
 }
 
 /// Renders an album page with thumbnail grid
-fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css: &str) -> Markup {
+fn render_album_page(
+    album: &Album,
+    navigation: &[NavItem],
+    pages: &[Page],
+    css: &str,
+    font_url: &str,
+) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
     let breadcrumb = html! {
@@ -435,7 +487,7 @@ fn render_album_page(album: &Album, navigation: &[NavItem], pages: &[Page], css:
         }
     };
 
-    base_document(&album.title, css, None, content)
+    base_document(&album.title, css, Some(font_url), None, None, content)
 }
 
 /// Format an image's display label for breadcrumbs and page titles.
@@ -460,6 +512,7 @@ fn format_image_label(position: usize, total: usize, title: Option<&str>) -> Str
 }
 
 /// Renders an image viewer page
+#[allow(clippy::too_many_arguments)]
 fn render_image_page(
     album: &Album,
     image: &Image,
@@ -468,6 +521,7 @@ fn render_image_page(
     navigation: &[NavItem],
     pages: &[Page],
     css: &str,
+    font_url: &str,
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
@@ -480,14 +534,19 @@ fn render_image_page(
         format!("../{}", relative)
     };
 
+    // Build srcset for a given image's avif variants
+    let avif_srcset_for = |img: &Image| -> String {
+        img.generated
+            .iter()
+            .map(|(size, variant)| format!("{} {}w", strip_prefix(&variant.avif), size))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
     // Build srcsets
     let sizes: Vec<_> = image.generated.iter().collect();
 
-    let srcset_avif: String = sizes
-        .iter()
-        .map(|(size, variant)| format!("{} {}w", strip_prefix(&variant.avif), size))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let srcset_avif: String = avif_srcset_for(image);
 
     let srcset_webp: String = sizes
         .iter()
@@ -500,6 +559,10 @@ fn render_image_page(
         .get(sizes.len() / 2)
         .map(|(_, v)| strip_prefix(&v.webp))
         .unwrap_or_default();
+
+    // Build preload srcsets for adjacent images
+    let prev_avif_srcset = prev.map(&avif_srcset_for);
+    let next_avif_srcset = next.map(&avif_srcset_for);
 
     // Calculate aspect ratio
     let (width, height) = image.dimensions;
@@ -557,15 +620,26 @@ fn render_image_page(
         None => "image-view",
     };
 
+    // Build <head> extras: render-blocking link + adjacent image preloads
+    let head_extra = html! {
+        link rel="expect" href="#main-image" blocking="render";
+        @if let Some(ref srcset) = prev_avif_srcset {
+            link rel="preload" as="image" imagesrcset=(srcset) imagesizes=(IMAGE_SIZES) fetchpriority="low";
+        }
+        @if let Some(ref srcset) = next_avif_srcset {
+            link rel="preload" as="image" imagesrcset=(srcset) imagesizes=(IMAGE_SIZES) fetchpriority="low";
+        }
+    };
+
     let content = html! {
         (site_header(breadcrumb, nav))
         main style=(aspect_style) {
             div.image-page {
                 figure.image-frame {
                     picture {
-                        source type="image/avif" srcset=(srcset_avif) sizes="(max-width: 800px) 100vw, 80vw";
-                        source type="image/webp" srcset=(srcset_webp) sizes="(max-width: 800px) 100vw, 80vw";
-                        img src=(default_src) alt=(alt_text);
+                        source type="image/avif" srcset=(srcset_avif) sizes=(IMAGE_SIZES);
+                        source type="image/webp" srcset=(srcset_webp) sizes=(IMAGE_SIZES);
+                        img #main-image src=(default_src) alt=(alt_text);
                     }
                 }
                 @if let Some(text) = caption_text {
@@ -582,11 +656,24 @@ fn render_image_page(
         script { (PreEscaped(JS)) }
     };
 
-    base_document(&page_title, css, Some(body_class), content)
+    base_document(
+        &page_title,
+        css,
+        Some(font_url),
+        Some(body_class),
+        Some(head_extra),
+        content,
+    )
 }
 
 /// Renders a content page from markdown
-fn render_page(page: &Page, navigation: &[NavItem], pages: &[Page], css: &str) -> Markup {
+fn render_page(
+    page: &Page,
+    navigation: &[NavItem],
+    pages: &[Page],
+    css: &str,
+    font_url: &str,
+) -> Markup {
     let nav = render_nav(navigation, &page.slug, pages);
 
     // Convert markdown to HTML
@@ -609,7 +696,7 @@ fn render_page(page: &Page, navigation: &[NavItem], pages: &[Page], css: &str) -
         }
     };
 
-    base_document(&page.title, css, None, content)
+    base_document(&page.title, css, Some(font_url), None, None, content)
 }
 
 // ============================================================================
@@ -732,14 +819,14 @@ mod tests {
     #[test]
     fn base_document_includes_doctype() {
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "body {}", None, content).into_string();
+        let doc = base_document("Test", "body {}", None, None, None, content).into_string();
         assert!(doc.starts_with("<!DOCTYPE html>"));
     }
 
     #[test]
     fn base_document_applies_body_class() {
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "", Some("image-view"), content).into_string();
+        let doc = base_document("Test", "", None, Some("image-view"), None, content).into_string();
         assert!(html_contains_body_class(&doc, "image-view"));
     }
 
@@ -833,7 +920,7 @@ mod tests {
     fn render_album_page_includes_title() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "").into_string();
+        let html = render_album_page(&album, &nav, &[], "", "").into_string();
 
         assert!(html.contains("Test Album"));
         assert!(html.contains("<h1>"));
@@ -843,7 +930,7 @@ mod tests {
     fn render_album_page_includes_description() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "").into_string();
+        let html = render_album_page(&album, &nav, &[], "", "").into_string();
 
         assert!(html.contains("A test album description"));
         assert!(html.contains("album-description"));
@@ -853,7 +940,7 @@ mod tests {
     fn render_album_page_thumbnail_links() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "").into_string();
+        let html = render_album_page(&album, &nav, &[], "", "").into_string();
 
         // Should have links to image pages (1-Dawn/, 2/)
         assert!(html.contains("1-Dawn/"));
@@ -866,7 +953,7 @@ mod tests {
     fn render_album_page_breadcrumb() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "").into_string();
+        let html = render_album_page(&album, &nav, &[], "", "").into_string();
 
         // Breadcrumb should link to gallery root
         assert!(html.contains(r#"href="/""#));
@@ -878,8 +965,17 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &nav,
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(html.contains("<picture>"));
         assert!(html.contains("image/avif"));
@@ -891,8 +987,17 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &nav,
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         // Should have srcset with sizes
         assert!(html.contains("srcset="));
@@ -905,8 +1010,17 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &nav,
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(html.contains("nav-zones"));
         assert!(html.contains("data-prev="));
@@ -927,6 +1041,7 @@ mod tests {
             &nav,
             &[],
             "",
+            "",
         )
         .into_string();
         assert!(html1.contains(r#"data-prev="../""#));
@@ -941,6 +1056,7 @@ mod tests {
             &nav,
             &[],
             "",
+            "",
         )
         .into_string();
         assert!(html2.contains(r#"data-prev="../1-Dawn/""#));
@@ -952,7 +1068,7 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0]; // 1600x1200 = 1.333...
         let nav = vec![];
-        let html = render_image_page(&album, image, None, None, &nav, &[], "").into_string();
+        let html = render_image_page(&album, image, None, None, &nav, &[], "", "").into_string();
 
         // Should have aspect ratio CSS variable
         assert!(html.contains("--aspect-ratio:"));
@@ -969,7 +1085,7 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "").into_string();
+        let html = render_page(&page, &[], &[], "", "").into_string();
 
         // Markdown should be converted to HTML
         assert!(html.contains("<strong>bold</strong>"));
@@ -987,7 +1103,7 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "").into_string();
+        let html = render_page(&page, &[], &[], "", "").into_string();
 
         assert!(html.contains("<title>About Me</title>"));
         assert!(html.contains("class=\"page\""));
@@ -1029,8 +1145,17 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0]; // has title "Dawn"
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &nav,
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         // Breadcrumb: Gallery › Test Album › 1. Dawn
         assert!(html.contains("1. Dawn"));
@@ -1042,8 +1167,17 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[1]; // no title
         let nav = vec![];
-        let html = render_image_page(&album, image, Some(&album.images[0]), None, &nav, &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            Some(&album.images[0]),
+            None,
+            &nav,
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         // Breadcrumb: Gallery › Test Album › 2
         assert!(html.contains("Test Album"));
@@ -1056,8 +1190,17 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &nav,
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(html.contains("<title>Test Album - 1. Dawn</title>"));
     }
@@ -1067,8 +1210,17 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0]; // has title "Dawn"
         let nav = vec![];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &nav, &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &nav,
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(html.contains("Test Album - Dawn"));
     }
@@ -1109,8 +1261,17 @@ mod tests {
         let mut album = create_test_album();
         album.images[0].description = Some("A beautiful sunrise over the mountains".to_string());
         let image = &album.images[0];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(html.contains("image-caption"));
         assert!(html.contains("A beautiful sunrise over the mountains"));
@@ -1123,8 +1284,17 @@ mod tests {
         let long_text = "a".repeat(200);
         album.images[0].description = Some(long_text.clone());
         let image = &album.images[0];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(html.contains("image-description"));
         assert!(!html.contains("image-caption"));
@@ -1139,8 +1309,17 @@ mod tests {
         let mut album = create_test_album();
         album.images[0].description = Some("Line one\nLine two".to_string());
         let image = &album.images[0];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(html.contains("image-description"));
         assert!(!html.contains("image-caption"));
@@ -1154,8 +1333,17 @@ mod tests {
     fn render_image_page_no_description_no_caption() {
         let album = create_test_album();
         let image = &album.images[1]; // description: None
-        let html = render_image_page(&album, image, Some(&album.images[0]), None, &[], &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            Some(&album.images[0]),
+            None,
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         assert!(!html.contains("image-caption"));
         assert!(!html.contains("image-description"));
@@ -1167,8 +1355,17 @@ mod tests {
         let mut album = create_test_album();
         album.images[0].description = Some("Short caption".to_string());
         let image = &album.images[0];
-        let html = render_image_page(&album, image, None, Some(&album.images[1]), &[], &[], "")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
 
         // Caption should be a sibling of image-frame inside image-page
         assert!(html.contains("image-frame"));
@@ -1239,5 +1436,107 @@ mod tests {
     #[test]
     fn image_page_url_title_with_dot() {
         assert_eq!(image_page_url(1, 5, Some("St. Louis")), "1-St-Louis/");
+    }
+
+    // =========================================================================
+    // View transition: render-blocking and image preload tests
+    // =========================================================================
+
+    #[test]
+    fn render_image_page_has_main_image_id() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
+
+        assert!(html.contains(r#"id="main-image""#));
+    }
+
+    #[test]
+    fn render_image_page_has_render_blocking_link() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
+
+        assert!(html.contains(r#"rel="expect""#));
+        assert!(html.contains(r##"href="#main-image""##));
+        assert!(html.contains(r#"blocking="render""#));
+    }
+
+    #[test]
+    fn render_image_page_preloads_next_image() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
+
+        // Should have a preload link with the next image's avif srcset
+        assert!(html.contains(r#"rel="preload""#));
+        assert!(html.contains(r#"as="image""#));
+        assert!(html.contains("002-night-800.avif"));
+        assert!(html.contains(r#"fetchpriority="low""#));
+    }
+
+    #[test]
+    fn render_image_page_preloads_prev_image() {
+        let album = create_test_album();
+        let image = &album.images[1];
+        let html = render_image_page(
+            &album,
+            image,
+            Some(&album.images[0]),
+            None,
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
+
+        // Should have a preload link with the prev image's avif srcset
+        assert!(html.contains(r#"rel="preload""#));
+        assert!(html.contains("001-dawn-800.avif"));
+        assert!(html.contains("001-dawn-1400.avif"));
+    }
+
+    #[test]
+    fn render_image_page_no_preload_without_adjacent() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        // No prev, no next
+        let html = render_image_page(&album, image, None, None, &[], &[], "", "").into_string();
+
+        // Should still have the render-blocking link
+        assert!(html.contains(r#"rel="expect""#));
+        // Should NOT have any preload links
+        assert!(!html.contains(r#"rel="preload""#));
     }
 }

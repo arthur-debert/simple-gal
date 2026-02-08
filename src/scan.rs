@@ -1004,7 +1004,7 @@ mod tests {
 
         // Should have default config values
         assert_eq!(manifest.config.colors.light.background, "#ffffff");
-        assert_eq!(manifest.config.colors.dark.background, "#0a0a0a");
+        assert_eq!(manifest.config.colors.dark.background, "#000000");
     }
 
     // =========================================================================
