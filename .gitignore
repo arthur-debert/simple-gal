@@ -40,4 +40,6 @@ dist/
 processed/
 manifest.json
 .simple-gal-temp/
+.simple-gal-browser-temp/
+tests/browser/generated/
 .todos.db
