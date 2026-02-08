@@ -1,7 +1,16 @@
-//! Image processing backend trait and implementations.
+//! Image processing backend trait and ImageMagick implementation.
 //!
-//! The `ImageBackend` trait abstracts the actual image processing,
-//! allowing for different implementations (ImageMagick, pure Rust, mock).
+//! The [`ImageBackend`] trait defines the four operations every backend must
+//! support: identify, read_metadata, resize, and thumbnail. Two production
+//! implementations exist:
+//!
+//! - [`ImageMagickBackend`] (this module) — shells out to `convert`/`identify`.
+//!   Requires ImageMagick installed on the system.
+//! - [`RustBackend`](super::rust_backend::RustBackend) — pure Rust, zero
+//!   external dependencies. See the [`rust_backend`](super::rust_backend) module.
+//!
+//! Both backends have full operation parity. The active backend is chosen at
+//! runtime via [`BackendName`](crate::config::BackendName) in `config.toml`.
 
 use super::params::{ResizeParams, ThumbnailParams};
 use std::path::Path;
@@ -12,8 +21,8 @@ use thiserror::Error;
 pub enum BackendError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Command failed: {0}")]
-    CommandFailed(String),
+    #[error("Processing failed: {0}")]
+    ProcessingFailed(String),
     #[error("Invalid output: {0}")]
     InvalidOutput(String),
 }
@@ -25,23 +34,24 @@ pub struct Dimensions {
     pub height: u32,
 }
 
-/// Embedded image metadata extracted from IPTC/EXIF fields.
+/// Embedded image metadata extracted from IPTC fields.
 ///
 /// Field mapping:
-/// - `title`: IPTC Object Name (`IPTC:2:05`) — the "Title" field in Lightroom/Capture One
-/// - `description`: IPTC Caption-Abstract (`IPTC:2:120`) — the "Caption" field in Lightroom
+/// - `title`: IPTC Object Name (`2:05`) — the "Title" field in Lightroom/Capture One
+/// - `description`: IPTC Caption-Abstract (`2:120`) — the "Caption" field in Lightroom
+/// - `keywords`: IPTC Keywords (`2:25`) — repeatable field, one entry per keyword
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImageMetadata {
     pub title: Option<String>,
     pub description: Option<String>,
+    pub keywords: Vec<String>,
 }
 
 /// Trait for image processing backends.
 ///
-/// Implementations execute the actual image operations.
-/// This allows for:
-/// - Different backends (ImageMagick, pure Rust)
-/// - Mock backends for testing
+/// Every backend must implement all four operations — identify, read_metadata,
+/// resize, and thumbnail — so the rest of the codebase is backend-agnostic.
+/// See the [module docs](self) for the parity table.
 pub trait ImageBackend: Sync {
     /// Get image dimensions.
     fn identify(&self, path: &Path) -> Result<Dimensions, BackendError>;
@@ -56,10 +66,13 @@ pub trait ImageBackend: Sync {
     fn thumbnail(&self, params: &ThumbnailParams) -> Result<(), BackendError>;
 }
 
-/// ImageMagick backend using the `convert` command.
+/// ImageMagick backend — shells out to `convert` and `identify`.
 ///
-/// Uses ImageMagick 6's `convert` and `identify` commands.
-/// This is the standard on Ubuntu/Debian and CI environments.
+/// Requires ImageMagick 6+ installed on the system (`convert`, `identify` on
+/// `$PATH`). This is the default backend and the proven production path.
+///
+/// For a zero-dependency alternative, see
+/// [`RustBackend`](super::rust_backend::RustBackend).
 pub struct ImageMagickBackend;
 
 impl ImageMagickBackend {
@@ -71,7 +84,7 @@ impl ImageMagickBackend {
         let output = Command::new("convert").args(args).output()?;
 
         if !output.status.success() {
-            return Err(BackendError::CommandFailed(
+            return Err(BackendError::ProcessingFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
         }
@@ -93,7 +106,7 @@ impl ImageBackend for ImageMagickBackend {
             .output()?;
 
         if !output.status.success() {
-            return Err(BackendError::CommandFailed(
+            return Err(BackendError::ProcessingFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
         }
@@ -122,19 +135,19 @@ impl ImageBackend for ImageMagickBackend {
         let output = Command::new("identify")
             .args([
                 "-format",
-                "%[IPTC:2:05]\t%[IPTC:2:120]",
+                "%[IPTC:2:05]\t%[IPTC:2:120]\t%[IPTC:2:25]",
                 path.to_str().unwrap(),
             ])
             .output()?;
 
         if !output.status.success() {
-            return Err(BackendError::CommandFailed(
+            return Err(BackendError::ProcessingFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
         }
 
         let raw = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = raw.splitn(2, '\t').collect();
+        let parts: Vec<&str> = raw.splitn(3, '\t').collect();
 
         let to_opt = |s: &str| {
             let trimmed = s.trim();
@@ -145,9 +158,17 @@ impl ImageBackend for ImageMagickBackend {
             }
         };
 
+        let keywords: Vec<String> = parts
+            .get(2)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.split(';').map(|k| k.trim().to_string()).collect())
+            .unwrap_or_default();
+
         Ok(ImageMetadata {
             title: parts.first().and_then(|s| to_opt(s)),
             description: parts.get(1).and_then(|s| to_opt(s)),
+            keywords,
         })
     }
 
@@ -181,7 +202,8 @@ impl ImageBackend for ImageMagickBackend {
     }
 
     fn thumbnail(&self, params: &ThumbnailParams) -> Result<(), BackendError> {
-        let fill_size = format!("{}x{}^", params.fill_width, params.fill_height);
+        // The ^ modifier does minimum-fit resize: the image covers the target area
+        let fill_size = format!("{}x{}^", params.crop_width, params.crop_height);
         let crop_size = format!("{}x{}", params.crop_width, params.crop_height);
         let quality = params.quality.value().to_string();
 
@@ -197,10 +219,10 @@ impl ImageBackend for ImageMagickBackend {
             &quality,
         ];
 
-        // Optional sharpening
+        // Optional sharpening (radius=0 means auto-select from sigma)
         let sharpen_str;
         if let Some(sharpening) = params.sharpening {
-            sharpen_str = format!("{}x{}", sharpening.radius, sharpening.sigma);
+            sharpen_str = format!("0x{}", sharpening.sigma);
             args.push("-sharpen");
             args.push(&sharpen_str);
         }
@@ -240,12 +262,10 @@ pub mod tests {
         Thumbnail {
             source: String,
             output: String,
-            fill_width: u32,
-            fill_height: u32,
             crop_width: u32,
             crop_height: u32,
             quality: u32,
-            sharpening: Option<(f32, f32)>,
+            sharpening: Option<(f32, i32)>,
         },
     }
 
@@ -318,12 +338,10 @@ pub mod tests {
             self.operations.lock().unwrap().push(RecordedOp::Thumbnail {
                 source: params.source.to_string_lossy().to_string(),
                 output: params.output.to_string_lossy().to_string(),
-                fill_width: params.fill_width,
-                fill_height: params.fill_height,
                 crop_width: params.crop_width,
                 crop_height: params.crop_height,
                 quality: params.quality.value(),
-                sharpening: params.sharpening.map(|s| (s.radius, s.sigma)),
+                sharpening: params.sharpening.map(|s| (s.sigma, s.threshold)),
             });
             Ok(())
         }
@@ -380,8 +398,6 @@ pub mod tests {
             .thumbnail(&ThumbnailParams {
                 source: "/source.jpg".into(),
                 output: "/thumb.webp".into(),
-                fill_width: 500,
-                fill_height: 625,
                 crop_width: 400,
                 crop_height: 500,
                 quality: super::super::params::Quality::new(85),
@@ -396,7 +412,7 @@ pub mod tests {
             RecordedOp::Thumbnail {
                 crop_width: 400,
                 crop_height: 500,
-                sharpening: Some((0.0, 0.5)),
+                sharpening: Some((0.5, 0)),
                 ..
             }
         ));

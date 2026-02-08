@@ -38,10 +38,10 @@
 //! └── ...
 //! ```
 //!
-use crate::config::SiteConfig;
+use crate::config::{BackendName, SiteConfig};
 use crate::imaging::{
-    BackendError, ImageBackend, ImageMagickBackend, Quality, ResponsiveConfig, Sharpening,
-    ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
+    BackendError, ImageBackend, ImageMagickBackend, Quality, ResponsiveConfig, RustBackend,
+    Sharpening, ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
 use crate::metadata;
 use crate::types::{NavItem, Page};
@@ -177,8 +177,19 @@ pub fn process(
     source_root: &Path,
     output_dir: &Path,
 ) -> Result<OutputManifest, ProcessError> {
-    let backend = ImageMagickBackend::new();
-    process_with_backend(&backend, manifest_path, source_root, output_dir)
+    let manifest_content = std::fs::read_to_string(manifest_path)?;
+    let input: InputManifest = serde_json::from_str(&manifest_content)?;
+
+    match input.config.backend.name {
+        BackendName::ImageMagick => {
+            let backend = ImageMagickBackend::new();
+            process_with_backend(&backend, manifest_path, source_root, output_dir)
+        }
+        BackendName::Rust => {
+            let backend = RustBackend::new();
+            process_with_backend(&backend, manifest_path, source_root, output_dir)
+        }
+    }
 }
 
 /// Process images using a specific backend (allows testing with mock).
@@ -261,7 +272,6 @@ pub fn process_with_backend(
                     &source_path,
                     &album_output_dir,
                     stem,
-                    dimensions,
                     &thumbnail_config,
                 )?;
 

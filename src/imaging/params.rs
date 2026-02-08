@@ -25,19 +25,22 @@ impl Default for Quality {
     }
 }
 
-/// Sharpening parameters (radius, sigma).
+/// Sharpening parameters for unsharp mask.
+///
+/// - `sigma`: Standard deviation of the Gaussian blur (higher = more sharpening)
+/// - `threshold`: Minimum brightness difference to sharpen (0 = sharpen all pixels)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sharpening {
-    pub radius: f32,
     pub sigma: f32,
+    pub threshold: i32,
 }
 
 impl Sharpening {
     /// Light sharpening suitable for thumbnails.
     pub fn light() -> Self {
         Self {
-            radius: 0.0,
             sigma: 0.5,
+            threshold: 0,
         }
     }
 }
@@ -57,9 +60,6 @@ pub struct ResizeParams {
 pub struct ThumbnailParams {
     pub source: PathBuf,
     pub output: PathBuf,
-    /// Fill dimensions (may exceed final size).
-    pub fill_width: u32,
-    pub fill_height: u32,
     /// Final crop dimensions.
     pub crop_width: u32,
     pub crop_height: u32,
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn sharpening_light_values() {
         let s = Sharpening::light();
-        assert_eq!(s.radius, 0.0);
         assert_eq!(s.sigma, 0.5);
+        assert_eq!(s.threshold, 0);
     }
 }

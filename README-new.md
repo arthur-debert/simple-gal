@@ -1,6 +1,6 @@
-# Simple Gal: In It For The Long Run
+ Simple Gal: In It For The Long Run
 
-**Simple Gal** is a generator for web image galleries, built on a single core principle: **software should last**.
+**Simple Gal** is a generator for web image galleries, built for photographers and enthusiast who want a simple, focused, photo driven way to showcase galleries with clinical control that will stay with you for decades.
 
 <p align="center">
   <img src="static/preview.png" alt="Simple Gal Preview" width="600">
@@ -14,14 +14,20 @@ There are a million web image generators and platforms. We have all been burned 
 *   **Complex tools break.** Self-hosted solutions often require databases, specific PHP versions, or Docker containers that become security liabilities or maintenance nightmares.
 *   **Data gets locked in.** Custom formats, databases, and "cloud" storage make it hard to leave.
 
+And most photographers do not care about social graphs, login, likes , videos.
+But they do care about a crafter experience , with fine grained control over galleries, images . They care about not redoing all that work every couple of years. 
+They care about not having to pay subscriptions, changing prices, breaking changes. 
+
+They want to curate their galleries , have it seen easily . Beyond that, they care about no maintenance, no migration, no locked-in no, no data capture. 
+  
 **Simple Gal is designed to work 30 years from now.**
 
-If you save the binary today, in 2056 it will still generate your site, provided:
+The released binary of today, in 2056,  it will still generate your site, provided:
 1.  **x86/ARM processors** still exist (or can be emulated).
 2.  **Browsers** still support HTML and CSS.
-3.  **ImageMagick** (or a compatible binary) exists.
 
 That's it. No databases. No migrations. No "cloud".
+
 
 ## Core Philosophy
 
@@ -54,8 +60,7 @@ Designed for photographers, not bloggers.
 
 ### Option B: Run Locally
 1.  **Download** the latest binary for your OS from [Releases](#).
-2.  **Install Dependencies**: You need `ImageMagick` (see [DEPENDENCIES.md](DEPENDENCIES.md)).
-3.  **Run**:
+2.  **Run**:
     ```bash
     # Generate site from 'content' folder to 'dist' folder
     simple-gal build
@@ -107,20 +112,22 @@ frame_x = { size = "3vw", min = "1rem", max = "2.5rem" }
 
 ## Tech Stack (The "Forever" Stack)
 
-*   **Generator**: A single Rust binary. fast, safe, and portable.
-*   **Image Processing**: ImageMagick. The industry standard.
+*   **Generator**: A single Rust binary. Fast, safe, and portable.
+*   **Image Processing**: Two backends, selectable via `config.toml`:
+    *   **Pure Rust** (`name = "rust"`) — zero external dependencies; the entire encoder (WebP, AVIF, IPTC parser) is compiled into the binary.
+    *   **ImageMagick** (`name = "imagemagick"`, current default) — shells out to `convert`/`identify`. Requires ImageMagick on the system.
+    Both backends produce identical output dimensions and support the same quality/sharpening parameters.
 *   **Frontend**: Pure HTML5 and CSS. No React, no Vue, no bundlers.
     *   < 100 lines of vanilla JavaScript for navigation.
     *   Dark/Light mode support via CSS variables.
 
 ## Future Proofing
 
-In order for Simple Gal to stop working, one of the following must happen:
-1.  **Unix-like systems** cease to exist.
+With the pure Rust backend, the binary is fully self-contained — no runtime dependencies beyond a working OS and filesystem. In order for Simple Gal to stop working, one of the following must happen:
+1.  **x86/ARM processors** cease to exist (or be emulatable).
 2.  **Browsers** drop support for standard HTML/CSS.
-3.  **JPEG/WebP** formats are deprecated.
 
-We are betting against all three.
+We are betting against both.
 
 ---
 *Built for the long haul.*

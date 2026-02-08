@@ -36,37 +36,6 @@ pub fn calculate_thumbnail_dimensions(aspect: (u32, u32), short_edge: u32) -> (u
     }
 }
 
-/// Calculate dimensions needed to fill a target area (resize before crop).
-///
-/// Returns dimensions that completely cover the target area while maintaining
-/// the source aspect ratio. One dimension will match exactly, the other may exceed.
-///
-/// # Arguments
-/// * `source` - Original image dimensions (width, height)
-/// * `target` - Target area dimensions (width, height)
-///
-/// # Returns
-/// * `(width, height)` - Fill dimensions (at least one matches target)
-pub fn calculate_fill_dimensions(source: (u32, u32), target: (u32, u32)) -> (u32, u32) {
-    let (src_w, src_h) = source;
-    let (tgt_w, tgt_h) = target;
-
-    let src_aspect = src_w as f64 / src_h as f64;
-    let tgt_aspect = tgt_w as f64 / tgt_h as f64;
-
-    if src_aspect > tgt_aspect {
-        // Source is wider: height will match, width will exceed
-        let h = tgt_h;
-        let w = (h as f64 * src_aspect).round() as u32;
-        (w, h)
-    } else {
-        // Source is taller: width will match, height will exceed
-        let w = tgt_w;
-        let h = (w as f64 / src_aspect).round() as u32;
-        (w, h)
-    }
-}
-
 /// Represents a single responsive size to generate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponsiveSize {
@@ -164,50 +133,6 @@ mod tests {
     fn thumbnail_extreme_landscape() {
         // 3:1 with short edge 100 → 300x100
         assert_eq!(calculate_thumbnail_dimensions((3, 1), 100), (300, 100));
-    }
-
-    // =========================================================================
-    // calculate_fill_dimensions tests
-    // =========================================================================
-
-    #[test]
-    fn fill_wider_source_to_portrait_target() {
-        // 800x600 (4:3) → 400x500 target
-        // Source is wider, so height matches: 500, width = 500 * (4/3) = 667
-        assert_eq!(
-            calculate_fill_dimensions((800, 600), (400, 500)),
-            (667, 500)
-        );
-    }
-
-    #[test]
-    fn fill_taller_source_to_landscape_target() {
-        // 600x800 (3:4) → 500x400 target
-        // Source is taller, so width matches: 500, height = 500 * (4/3) = 667
-        assert_eq!(
-            calculate_fill_dimensions((600, 800), (500, 400)),
-            (500, 667)
-        );
-    }
-
-    #[test]
-    fn fill_same_aspect_ratio() {
-        // 800x600 (4:3) → 400x300 target (also 4:3)
-        // Perfect match
-        assert_eq!(
-            calculate_fill_dimensions((800, 600), (400, 300)),
-            (400, 300)
-        );
-    }
-
-    #[test]
-    fn fill_square_source_to_portrait() {
-        // 400x400 (1:1) → 200x300 target
-        // Source is wider (1:1 > 2:3), height matches: 300, width = 300
-        assert_eq!(
-            calculate_fill_dimensions((400, 400), (200, 300)),
-            (300, 300)
-        );
     }
 
     // =========================================================================

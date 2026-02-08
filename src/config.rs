@@ -68,6 +68,9 @@
 //!
 //! [processing]
 //! max_processes = 4         # Max parallel workers (omit for auto = CPU cores)
+//!
+//! [backend]
+//! name = "imagemagick"      # "imagemagick" (default) or "rust" (pure Rust, no deps)
 //! ```
 //!
 //! ## Partial Configuration
@@ -117,6 +120,8 @@ pub struct SiteConfig {
     pub theme: ThemeConfig,
     /// Parallel processing settings.
     pub processing: ProcessingConfig,
+    /// Image processing backend selection.
+    pub backend: BackendConfig,
 }
 
 /// Partial site configuration for sparse loading and strict validation.
@@ -129,6 +134,7 @@ pub struct PartialSiteConfig {
     pub images: Option<PartialImagesConfig>,
     pub theme: Option<PartialThemeConfig>,
     pub processing: Option<PartialProcessingConfig>,
+    pub backend: Option<PartialBackendConfig>,
 }
 
 fn default_content_root() -> String {
@@ -144,6 +150,7 @@ impl Default for SiteConfig {
             images: ImagesConfig::default(),
             theme: ThemeConfig::default(),
             processing: ProcessingConfig::default(),
+            backend: BackendConfig::default(),
         }
     }
 }
@@ -189,6 +196,9 @@ impl SiteConfig {
         if let Some(p) = other.processing {
             self.processing = self.processing.merge(p);
         }
+        if let Some(b) = other.backend {
+            self.backend = self.backend.merge(b);
+        }
         self
     }
 }
@@ -213,6 +223,56 @@ impl ProcessingConfig {
     pub fn merge(mut self, other: PartialProcessingConfig) -> Self {
         if other.max_processes.is_some() {
             self.max_processes = other.max_processes;
+        }
+        self
+    }
+}
+
+/// Which image processing backend to use.
+///
+/// Both backends support the same operations (identify, metadata, resize, thumbnail)
+/// with full output-dimension parity. They differ only in how they execute:
+///
+/// - **`ImageMagick`** — shells out to `convert`/`identify`. Requires ImageMagick
+///   installed on the system. Default today for proven production quality.
+/// - **`Rust`** — pure Rust (`image` + `webp` + rav1e crates). Zero runtime
+///   dependencies — the entire encoder is compiled into the binary.
+///
+/// To switch to pure Rust, set `name = "rust"` in `[backend]`. When the Rust
+/// backend becomes the default, `ImageMagick` will be removed entirely.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendName {
+    #[default]
+    ImageMagick,
+    Rust,
+}
+
+/// Image processing backend selection.
+///
+/// ```toml
+/// [backend]
+/// name = "rust"   # or "imagemagick" (default)
+/// ```
+///
+/// See [`BackendName`] for what each option does.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct BackendConfig {
+    /// Backend to use: `"imagemagick"` (default) or `"rust"` (pure Rust, no external deps).
+    pub name: BackendName,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialBackendConfig {
+    pub name: Option<BackendName>,
+}
+
+impl BackendConfig {
+    pub fn merge(mut self, other: PartialBackendConfig) -> Self {
+        if let Some(n) = other.name {
+            self.name = n;
         }
         self
     }
@@ -657,6 +717,15 @@ link_hover = "#ffffff"
 # Maximum parallel image-processing workers.
 # Omit or comment out to auto-detect (= number of CPU cores).
 # max_processes = 4
+
+# ---------------------------------------------------------------------------
+# Backend
+# ---------------------------------------------------------------------------
+[backend]
+# Image processing backend: "imagemagick" (default) or "rust".
+# "imagemagick" shells out to ImageMagick's convert/identify commands.
+# "rust" uses pure Rust libraries (no external dependencies).
+name = "imagemagick"
 "##
 }
 
@@ -1234,6 +1303,7 @@ quality = 200
         assert_eq!(config.colors.light.background, "#ffffff");
         assert_eq!(config.colors.dark.background, "#0a0a0a");
         assert_eq!(config.theme.thumbnail_gap, "1rem");
+        assert_eq!(config.backend.name, BackendName::ImageMagick);
     }
 
     #[test]
@@ -1247,6 +1317,7 @@ quality = 200
         assert!(content.contains("[colors.light]"));
         assert!(content.contains("[colors.dark]"));
         assert!(content.contains("[processing]"));
+        assert!(content.contains("[backend]"));
     }
 
     #[test]
@@ -1254,5 +1325,66 @@ quality = 200
         // We removed stock_defaults_value, but we can test that Default trait works
         let config = SiteConfig::default();
         assert_eq!(config.images.quality, 90);
+    }
+
+    // =========================================================================
+    // BackendConfig tests
+    // =========================================================================
+
+    #[test]
+    fn default_backend_is_imagemagick() {
+        let config = SiteConfig::default();
+        assert_eq!(config.backend.name, BackendName::ImageMagick);
+    }
+
+    #[test]
+    fn parse_backend_rust() {
+        let toml = r#"
+            [backend]
+            name = "rust"
+        "#;
+        let config: SiteConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.backend.name, BackendName::Rust);
+    }
+
+    #[test]
+    fn parse_backend_imagemagick() {
+        let toml = r#"
+            [backend]
+            name = "imagemagick"
+        "#;
+        let config: SiteConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.backend.name, BackendName::ImageMagick);
+    }
+
+    #[test]
+    fn parse_config_without_backend_uses_default() {
+        let toml = "";
+        let config: SiteConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.backend.name, BackendName::ImageMagick);
+    }
+
+    #[test]
+    fn unknown_backend_name_rejected() {
+        let toml = r#"
+            [backend]
+            name = "foo"
+        "#;
+        let result: Result<SiteConfig, _> = toml::from_str(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn merge_backend_config() {
+        let base = SiteConfig::default();
+        let overlay: PartialSiteConfig = toml::from_str(
+            r#"
+            [backend]
+            name = "rust"
+        "#,
+        )
+        .unwrap();
+        let merged = base.merge(overlay);
+        assert_eq!(merged.backend.name, BackendName::Rust);
     }
 }
