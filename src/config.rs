@@ -68,6 +68,9 @@
 //!
 //! [processing]
 //! max_processes = 4         # Max parallel workers (omit for auto = CPU cores)
+//!
+//! [backend]
+//! name = "imagemagick"      # "imagemagick" (default) or "rust" (pure Rust, no deps)
 //! ```
 //!
 //! ## Partial Configuration
@@ -226,6 +229,17 @@ impl ProcessingConfig {
 }
 
 /// Which image processing backend to use.
+///
+/// Both backends support the same operations (identify, metadata, resize, thumbnail)
+/// with full output-dimension parity. They differ only in how they execute:
+///
+/// - **`ImageMagick`** — shells out to `convert`/`identify`. Requires ImageMagick
+///   installed on the system. Default today for proven production quality.
+/// - **`Rust`** — pure Rust (`image` + `webp` + rav1e crates). Zero runtime
+///   dependencies — the entire encoder is compiled into the binary.
+///
+/// To switch to pure Rust, set `name = "rust"` in `[backend]`. When the Rust
+/// backend becomes the default, `ImageMagick` will be removed entirely.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendName {
@@ -240,10 +254,17 @@ impl Default for BackendName {
 }
 
 /// Image processing backend selection.
+///
+/// ```toml
+/// [backend]
+/// name = "rust"   # or "imagemagick" (default)
+/// ```
+///
+/// See [`BackendName`] for what each option does.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct BackendConfig {
-    /// Backend to use: "imagemagick" (default) or "rust" (pure Rust, no external deps).
+    /// Backend to use: `"imagemagick"` (default) or `"rust"` (pure Rust, no external deps).
     pub name: BackendName,
 }
 

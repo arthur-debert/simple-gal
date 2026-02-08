@@ -1,7 +1,27 @@
-//! Pure Rust image processing backend using the `image` crate.
+//! Pure Rust image processing backend — zero external dependencies.
 //!
-//! Replaces ImageMagick shell-outs with compiled-in Rust equivalents.
-//! Zero runtime dependencies — everything is statically linked.
+//! Drop-in replacement for [`ImageMagickBackend`](super::backend::ImageMagickBackend)
+//! using compiled-in Rust libraries instead of shell-outs. Everything is
+//! statically linked into the binary.
+//!
+//! ## Crate mapping
+//!
+//! | Operation | Crate / function |
+//! |---|---|
+//! | Decode (JPEG, PNG, WebP, TIFF) | `image` crate (pure Rust decoders) |
+//! | Resize | `image::imageops::resize` with `Lanczos3` filter |
+//! | Encode → WebP | `webp` crate (vendored libwebp) |
+//! | Encode → AVIF | `image::codecs::avif::AvifEncoder` (rav1e, speed 6) |
+//! | Thumbnail crop | `image::DynamicImage::resize_to_fill` |
+//! | Sharpening | `image::imageops::unsharpen` |
+//! | IPTC metadata | custom [`iptc_parser`](super::iptc_parser) (JPEG APP13 + TIFF IFD) |
+//!
+//! ## Switching to this backend
+//!
+//! ```toml
+//! [backend]
+//! name = "rust"
+//! ```
 
 use super::backend::{BackendError, Dimensions, ImageBackend, ImageMetadata};
 use super::params::{ResizeParams, ThumbnailParams};
@@ -11,9 +31,8 @@ use std::path::Path;
 
 /// Pure Rust backend using the `image` crate ecosystem.
 ///
-/// - Decoding: JPEG, PNG, WebP (pure Rust)
-/// - Encoding: WebP lossy (vendored libwebp via `webp` crate), AVIF (rav1e)
-/// - Operations: Lanczos3 resize, center-crop, unsharpen
+/// Has full operation parity with [`ImageMagickBackend`](super::backend::ImageMagickBackend).
+/// See the [module docs](self) for the crate-to-operation mapping.
 pub struct RustBackend;
 
 impl RustBackend {

@@ -1,7 +1,16 @@
-//! Image processing backend trait and implementations.
+//! Image processing backend trait and ImageMagick implementation.
 //!
-//! The `ImageBackend` trait abstracts the actual image processing,
-//! allowing for different implementations (ImageMagick, pure Rust, mock).
+//! The [`ImageBackend`] trait defines the four operations every backend must
+//! support: identify, read_metadata, resize, and thumbnail. Two production
+//! implementations exist:
+//!
+//! - [`ImageMagickBackend`] (this module) — shells out to `convert`/`identify`.
+//!   Requires ImageMagick installed on the system.
+//! - [`RustBackend`](super::rust_backend::RustBackend) — pure Rust, zero
+//!   external dependencies. See the [`rust_backend`](super::rust_backend) module.
+//!
+//! Both backends have full operation parity. The active backend is chosen at
+//! runtime via [`BackendName`](crate::config::BackendName) in `config.toml`.
 
 use super::params::{ResizeParams, ThumbnailParams};
 use std::path::Path;
@@ -40,10 +49,9 @@ pub struct ImageMetadata {
 
 /// Trait for image processing backends.
 ///
-/// Implementations execute the actual image operations.
-/// This allows for:
-/// - Different backends (ImageMagick, pure Rust)
-/// - Mock backends for testing
+/// Every backend must implement all four operations — identify, read_metadata,
+/// resize, and thumbnail — so the rest of the codebase is backend-agnostic.
+/// See the [module docs](self) for the parity table.
 pub trait ImageBackend: Sync {
     /// Get image dimensions.
     fn identify(&self, path: &Path) -> Result<Dimensions, BackendError>;
@@ -58,10 +66,13 @@ pub trait ImageBackend: Sync {
     fn thumbnail(&self, params: &ThumbnailParams) -> Result<(), BackendError>;
 }
 
-/// ImageMagick backend using the `convert` command.
+/// ImageMagick backend — shells out to `convert` and `identify`.
 ///
-/// Uses ImageMagick 6's `convert` and `identify` commands.
-/// This is the standard on Ubuntu/Debian and CI environments.
+/// Requires ImageMagick 6+ installed on the system (`convert`, `identify` on
+/// `$PATH`). This is the default backend and the proven production path.
+///
+/// For a zero-dependency alternative, see
+/// [`RustBackend`](super::rust_backend::RustBackend).
 pub struct ImageMagickBackend;
 
 impl ImageMagickBackend {
