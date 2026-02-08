@@ -240,17 +240,12 @@ impl ProcessingConfig {
 ///
 /// To switch to pure Rust, set `name = "rust"` in `[backend]`. When the Rust
 /// backend becomes the default, `ImageMagick` will be removed entirely.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendName {
+    #[default]
     ImageMagick,
     Rust,
-}
-
-impl Default for BackendName {
-    fn default() -> Self {
-        Self::ImageMagick
-    }
 }
 
 /// Image processing backend selection.
