@@ -30,14 +30,11 @@ specs/**/*.treeviz
 specs/**/*.treeviz.*
 .padz
 
-# Node (Playwright browser tests)
-node_modules/
-test-results/
-playwright-report/
-
 # Simple Gal build outputs
 dist/
 processed/
 manifest.json
 .simple-gal-temp/
+.simple-gal-browser-temp/
+tests/browser/generated/
 .todos.db
