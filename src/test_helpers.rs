@@ -1,26 +1,52 @@
 //! Shared test utilities for the simple-gal test suite.
 //!
-//! Provides lookup helpers, bulk extractors, and navigation tree assertions
-//! that work with scan-phase data structures (`Manifest`, `Album`, `Image`).
+//! All scan/config/generate tests should use these helpers rather than
+//! building ad-hoc fixtures or writing manual lookup loops. This keeps
+//! tests short, consistent, and easy to maintain.
 //!
-//! # Usage
+//! # Quick reference
 //!
-//! ```rust
+//! | Helper | Purpose |
+//! |--------|---------|
+//! | [`setup_fixtures`] | Copy `fixtures/content/` to a temp dir for isolated testing |
+//! | [`find_album`] | Look up an album by title (panics with available titles on miss) |
+//! | [`find_image`] | Look up an image by slug within an album |
+//! | [`find_page`] | Look up a page by slug |
+//! | [`album_titles`] | All album titles in manifest order |
+//! | [`image_titles`] | All image titles within an album |
+//! | [`image_descriptions`] | All image descriptions within an album |
+//! | [`nav_titles`] | Top-level navigation titles |
+//! | [`nav_children_titles`] | Child titles under a nav parent |
+//! | [`assert_nav_shape`] | Assert full navigation tree structure in one call |
+//!
+//! # Typical test pattern
+//!
+//! ```rust,ignore
 //! use crate::test_helpers::*;
 //!
 //! let tmp = setup_fixtures();
 //! let manifest = scan(tmp.path()).unwrap();
 //!
+//! // Lookup by name — panics with helpful message if not found
 //! let album = find_album(&manifest, "Landscapes");
 //! let image = find_image(album, "dawn");
 //! assert_eq!(image.title.as_deref(), Some("dawn"));
 //!
+//! // Assert full nav tree shape in one call
 //! assert_nav_shape(&manifest, &[
 //!     ("Landscapes", &[]),
 //!     ("Travel", &["Japan", "Italy"]),
 //!     ("Minimal", &[]),
 //! ]);
 //! ```
+//!
+//! # Shared fixtures
+//!
+//! The standard fixture at `fixtures/content/` exercises: config loading,
+//! config chain merging (root + per-gallery), image sidecars, markdown vs
+//! plain-text description priority, nested albums, pages, link pages,
+//! and unnumbered (hidden) directories. See `fixtures/README.md` for the
+//! full layout and what each element tests.
 
 use std::path::Path;
 use tempfile::TempDir;
