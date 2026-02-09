@@ -49,6 +49,8 @@ mod metadata;
 mod naming;
 mod process;
 mod scan;
+#[cfg(test)]
+mod test_helpers;
 mod types;
 
 use clap::{Parser, Subcommand};

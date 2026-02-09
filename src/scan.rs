@@ -535,41 +535,19 @@ fn build_album(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::*;
     use std::fs;
     use tempfile::TempDir;
-
-    fn setup_fixtures() -> TempDir {
-        let tmp = TempDir::new().unwrap();
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/content");
-
-        // Copy fixture directory recursively
-        copy_dir_recursive(&fixtures, tmp.path()).unwrap();
-        tmp
-    }
-
-    fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-        for entry in fs::read_dir(src)? {
-            let entry = entry?;
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-
-            if src_path.is_dir() {
-                fs::create_dir_all(&dst_path)?;
-                copy_dir_recursive(&src_path, &dst_path)?;
-            } else {
-                fs::copy(&src_path, &dst_path)?;
-            }
-        }
-        Ok(())
-    }
 
     #[test]
     fn scan_finds_all_albums() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Should find 5 albums: Landscapes, Japan, Italy, Minimal, wip-drafts
-        assert_eq!(manifest.albums.len(), 5);
+        assert_eq!(
+            album_titles(&manifest),
+            vec!["Landscapes", "Japan", "Italy", "Minimal", "wip-drafts"]
+        );
     }
 
     #[test]
@@ -577,17 +555,10 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Top level nav should have: Landscapes, Travel, Minimal (all numbered)
-        assert_eq!(manifest.navigation.len(), 3);
-
-        let titles: Vec<&str> = manifest
-            .navigation
-            .iter()
-            .map(|n| n.title.as_str())
-            .collect();
-        assert!(titles.contains(&"Landscapes"));
-        assert!(titles.contains(&"Travel"));
-        assert!(titles.contains(&"Minimal"));
+        assert_eq!(
+            nav_titles(&manifest),
+            vec!["Landscapes", "Travel", "Minimal"]
+        );
     }
 
     #[test]
@@ -595,29 +566,22 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let wip = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "wip-drafts")
-            .unwrap();
-        assert!(!wip.in_nav);
+        assert!(!find_album(&manifest, "wip-drafts").in_nav);
     }
 
     #[test]
-    fn nested_albums_have_children_in_nav() {
+    fn fixture_full_nav_shape() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let travel = manifest
-            .navigation
-            .iter()
-            .find(|n| n.title == "Travel")
-            .unwrap();
-        assert_eq!(travel.children.len(), 2);
-
-        let child_titles: Vec<&str> = travel.children.iter().map(|n| n.title.as_str()).collect();
-        assert!(child_titles.contains(&"Japan"));
-        assert!(child_titles.contains(&"Italy"));
+        assert_nav_shape(
+            &manifest,
+            &[
+                ("Landscapes", &[]),
+                ("Travel", &["Japan", "Italy"]),
+                ("Minimal", &[]),
+            ],
+        );
     }
 
     #[test]
@@ -625,13 +589,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
+        let numbers: Vec<u32> = find_album(&manifest, "Landscapes")
+            .images
             .iter()
-            .find(|a| a.title == "Landscapes")
-            .unwrap();
-        let numbers: Vec<u32> = landscapes.images.iter().map(|i| i.number).collect();
-
+            .map(|i| i.number)
+            .collect();
         assert_eq!(numbers, vec![1, 2, 10]);
     }
 
@@ -658,23 +620,14 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Landscapes")
+        let desc = find_album(&manifest, "Landscapes")
+            .description
+            .as_ref()
             .unwrap();
-        assert!(landscapes.description.is_some());
-        let desc = landscapes.description.as_ref().unwrap();
-        // Should be wrapped in <p> tags (plain text → HTML conversion)
         assert!(desc.contains("<p>"));
         assert!(desc.contains("landscape"));
 
-        let minimal = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Minimal")
-            .unwrap();
-        assert!(minimal.description.is_none());
+        assert!(find_album(&manifest, "Minimal").description.is_none());
     }
 
     #[test]
@@ -780,12 +733,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Landscapes")
-            .unwrap();
-        assert!(landscapes.preview_image.contains("001-dawn"));
+        assert!(
+            find_album(&manifest, "Landscapes")
+                .preview_image
+                .contains("001-dawn")
+        );
     }
 
     #[test]
@@ -828,10 +780,9 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Fixtures have 040-about.md (numbered, in nav) and 050-github.md (link)
         assert!(manifest.pages.len() >= 2);
 
-        let about = manifest.pages.iter().find(|p| p.slug == "about").unwrap();
+        let about = find_page(&manifest, "about");
         assert_eq!(about.title, "About This Gallery");
         assert_eq!(about.link_title, "about");
         assert!(about.body.contains("Simple Gal"));
@@ -972,7 +923,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let github = manifest.pages.iter().find(|p| p.slug == "github").unwrap();
+        let github = find_page(&manifest, "github");
         assert!(github.is_link);
         assert!(github.in_nav);
         assert!(github.body.trim().starts_with("https://"));
@@ -987,9 +938,17 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Fixtures has a config.toml - verify it was loaded
-        // (exact values depend on fixture content, just check it's not default)
-        assert!(!manifest.config.colors.light.background.is_empty());
+        // Root config.toml overrides ALL defaults — verify a sample from each section
+        assert_eq!(manifest.config.thumbnails.aspect_ratio, [3, 4]);
+        assert_eq!(manifest.config.images.quality, 85);
+        assert_eq!(manifest.config.images.sizes, vec![600, 1200, 1800]);
+        assert_eq!(manifest.config.theme.thumbnail_gap, "0.75rem");
+        assert_eq!(manifest.config.theme.frame_x.size, "4vw");
+        assert_eq!(manifest.config.theme.frame_y.min, "1.5rem");
+        assert_eq!(manifest.config.colors.light.background, "#fafafa");
+        assert_eq!(manifest.config.colors.dark.text_muted, "#888888");
+        assert_eq!(manifest.config.font.font, "Playfair Display");
+        assert_eq!(manifest.config.font.weight, "400");
     }
 
     #[test]
@@ -1028,7 +987,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let japan = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
+        let japan = find_album(&manifest, "Japan");
         assert!(japan.path.contains("Travel"));
         assert!(japan.path.contains("Japan"));
         assert!(!japan.path.contains("020-"));
@@ -1182,6 +1141,168 @@ mod tests {
         // Italy: quality from root (85), aspect from group (1:1)
         assert_eq!(italy_album.config.images.quality, 85);
         assert_eq!(italy_album.config.thumbnails.aspect_ratio, [1, 1]);
+    }
+
+    #[test]
+    fn fixture_per_gallery_config_overrides_root() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let landscapes = find_album(&manifest, "Landscapes");
+        // Landscapes has its own config.toml: quality=75, aspect_ratio=[1,1]
+        assert_eq!(landscapes.config.images.quality, 75);
+        assert_eq!(landscapes.config.thumbnails.aspect_ratio, [1, 1]);
+        // Other values inherited from root config
+        assert_eq!(landscapes.config.images.sizes, vec![600, 1200, 1800]);
+        assert_eq!(landscapes.config.colors.light.background, "#fafafa");
+    }
+
+    #[test]
+    fn fixture_album_without_config_inherits_root() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let minimal = find_album(&manifest, "Minimal");
+        assert_eq!(minimal.config.images.quality, 85);
+        assert_eq!(minimal.config.thumbnails.aspect_ratio, [3, 4]);
+    }
+
+    #[test]
+    fn fixture_config_chain_all_sections() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Landscapes overrides images.quality and thumbnails.aspect_ratio;
+        // everything else should come from root config.
+        let ls = find_album(&manifest, "Landscapes");
+
+        // From Landscapes/config.toml
+        assert_eq!(ls.config.images.quality, 75);
+        assert_eq!(ls.config.thumbnails.aspect_ratio, [1, 1]);
+
+        // Inherited from root config — theme
+        assert_eq!(ls.config.theme.thumbnail_gap, "0.75rem");
+        assert_eq!(ls.config.theme.grid_padding, "1.5rem");
+        assert_eq!(ls.config.theme.frame_x.size, "4vw");
+        assert_eq!(ls.config.theme.frame_x.min, "0.5rem");
+        assert_eq!(ls.config.theme.frame_x.max, "3rem");
+        assert_eq!(ls.config.theme.frame_y.size, "5vw");
+        assert_eq!(ls.config.theme.frame_y.min, "1.5rem");
+        assert_eq!(ls.config.theme.frame_y.max, "4rem");
+
+        // Inherited from root config — colors
+        assert_eq!(ls.config.colors.light.background, "#fafafa");
+        assert_eq!(ls.config.colors.light.text_muted, "#777777");
+        assert_eq!(ls.config.colors.light.border, "#d0d0d0");
+        assert_eq!(ls.config.colors.light.link, "#444444");
+        assert_eq!(ls.config.colors.light.link_hover, "#111111");
+        assert_eq!(ls.config.colors.dark.background, "#111111");
+        assert_eq!(ls.config.colors.dark.text, "#eeeeee");
+        assert_eq!(ls.config.colors.dark.link, "#bbbbbb");
+
+        // Inherited from root config — font
+        assert_eq!(ls.config.font.font, "Playfair Display");
+        assert_eq!(ls.config.font.weight, "400");
+        assert_eq!(ls.config.font.font_type, crate::config::FontType::Serif);
+
+        // Inherited from root config — backend
+        assert_eq!(ls.config.backend.name, crate::config::BackendName::Rust);
+
+        // Inherited from root config — image sizes (not overridden by gallery)
+        assert_eq!(ls.config.images.sizes, vec![600, 1200, 1800]);
+    }
+
+    #[test]
+    fn fixture_image_sidecar_read() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Landscapes: dawn has sidecar, dusk and night do not
+        assert_eq!(
+            image_descriptions(find_album(&manifest, "Landscapes")),
+            vec![
+                Some("First light breaking over the mountain ridge."),
+                None,
+                None,
+            ]
+        );
+
+        // Japan: tokyo has a sidecar
+        let tokyo = find_image(find_album(&manifest, "Japan"), "tokyo");
+        assert_eq!(
+            tokyo.description.as_deref(),
+            Some("Shibuya crossing at dusk, long exposure.")
+        );
+    }
+
+    #[test]
+    fn fixture_image_titles() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        assert_eq!(
+            image_titles(find_album(&manifest, "Landscapes")),
+            vec![Some("dawn"), Some("dusk"), Some("night")]
+        );
+    }
+
+    #[test]
+    fn fixture_description_md_overrides_txt() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let desc = find_album(&manifest, "Japan").description.as_ref().unwrap();
+        assert!(desc.contains("<strong>Tokyo</strong>"));
+        assert!(!desc.contains("Street photography"));
+    }
+
+    // =========================================================================
+    // Wider input variants
+    // =========================================================================
+
+    #[test]
+    fn http_link_page_detected() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("010-link.md"), "http://example.com\n").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let page = manifest.pages.first().unwrap();
+        assert!(page.is_link);
+    }
+
+    #[test]
+    fn preview_image_when_first_is_not_001() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("005-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("010-second.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.albums[0].preview_image.contains("005-first"));
+    }
+
+    #[test]
+    fn description_md_preserves_inline_html() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(
+            album.join("description.md"),
+            "Text with <em>emphasis</em> and a [link](https://example.com).",
+        )
+        .unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.albums[0].description.as_ref().unwrap();
+        // Markdown renders inline HTML and markdown syntax
+        assert!(desc.contains("<em>emphasis</em>"));
+        assert!(desc.contains(r#"<a href="https://example.com">link</a>"#));
     }
 
     #[test]

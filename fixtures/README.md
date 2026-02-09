@@ -1,31 +1,61 @@
 # Test Fixtures
 
-This directory contains minimal test data for the filesystem scanner.
+Shared fixture data for the test suite. Designed to exercise the full
+feature set with minimal data — every file is here for a reason.
 
-## Structure
+## `content/` — Primary Fixture
+
+Used by `scan.rs` tests (copied to a temp dir via `setup_fixtures()`).
 
 ```
 content/
-├── 010-Landscapes/           # Numbered album (in nav)
-│   ├── info.txt
-│   ├── 001-dawn.jpg
-│   ├── 002-dusk.jpg
-│   └── 010-night.jpg         # Non-contiguous OK
-├── 020-Travel/               # Directory with nested albums
-│   ├── 010-Japan/
-│   │   ├── info.txt
-│   │   └── 001-tokyo.jpg
+├── config.toml                    # Root config — overrides ALL defaults
+├── 010-Landscapes/                # Numbered album (in nav)
+│   ├── config.toml                # Per-gallery config override (quality, aspect_ratio)
+│   ├── description.txt            # Album description (plain text)
+│   ├── 001-dawn.jpg               # Image with sidecar
+│   ├── 001-dawn.txt               # Image sidecar (description)
+│   ├── 002-dusk.jpg               # Image without sidecar
+│   └── 010-night.jpg              # Non-contiguous numbering
+├── 020-Travel/                    # Album group (nested galleries)
+│   ├── 010-Japan/                 # Nested album
+│   │   ├── description.txt        # Plain text description (lower priority)
+│   │   ├── description.md         # Markdown description (takes priority over .txt)
+│   │   ├── 001-tokyo.jpg          # Image with sidecar
+│   │   └── 001-tokyo.txt          # Image sidecar
 │   └── 020-Italy/
-│       └── 001-rome.jpg      # No info.txt (optional)
-├── 030-Minimal/              # Album with single image, no info
+│       └── 001-rome.jpg           # No description, no sidecar
+├── 030-Minimal/                   # Album with single image, no extras
 │   └── 001-solo.jpg
-└── wip-drafts/               # Unnumbered (hidden from nav)
+├── 040-about.md                   # Page (numbered, in nav, has # heading)
+├── 050-github.md                  # Link page (single URL as body)
+└── wip-drafts/                    # Unnumbered (hidden from nav)
     └── 001-test.jpg
 ```
 
-## Usage
+### What each piece exercises
 
-Tests copy this to a temp directory and run the scanner against it.
+| Fixture element | Feature tested |
+|---|---|
+| Root `config.toml` (all keys) | Config loading picks up every field, not just defaults |
+| `010-Landscapes/config.toml` | Per-gallery config overrides root; config chain merging |
+| `description.txt` (Landscapes) | Album description from plain text (paragraphs, linkification) |
+| `description.md` + `description.txt` (Japan) | Markdown takes priority over plain text |
+| `001-dawn.txt`, `001-tokyo.txt` | Image sidecar descriptions |
+| `002-dusk.jpg` (no sidecar) | Images without sidecars get no description |
+| `020-Travel/` with nested albums | Album groups, nested navigation |
+| `030-Minimal/` | Single-image album, no description, no config |
+| `040-about.md` | Page with heading (title extraction), in-nav |
+| `050-github.md` | Link page detection (single URL body) |
+| `wip-drafts/` | Unnumbered directory hidden from nav |
 
-The `.jpg` files here are 1x1 pixel placeholders—real image processing tests
-use the actual images in `001-NY/`.
+### Image files
+
+The `.jpg` files are 1x1 pixel placeholders. Image processing tests
+use their own test images — these fixtures are for scan/config/structure testing.
+
+## `browser-content/` — Browser Layout Fixture
+
+Used by `tests/browser_layout.rs` (headless Chrome). Separate from
+`content/` because browser tests need specific image dimensions and
+description lengths for layout assertions.

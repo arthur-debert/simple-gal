@@ -1,8 +1,48 @@
-# Test fixture config
+# Test fixture config — overrides ALL defaults to verify config loading.
+# Every value here differs from stock defaults so tests can confirm
+# the config was actually picked up.
+
+[thumbnails]
+aspect_ratio = [3, 4]
+
+[images]
+sizes = [600, 1200, 1800]
+quality = 85
+
+[theme]
+thumbnail_gap = "0.75rem"
+grid_padding = "1.5rem"
+
+[theme.frame_x]
+size = "4vw"
+min = "0.5rem"
+max = "3rem"
+
+[theme.frame_y]
+size = "5vw"
+min = "1.5rem"
+max = "4rem"
+
 [colors.light]
 background = "#fafafa"
 text = "#222222"
+text_muted = "#777777"
+border = "#d0d0d0"
+link = "#444444"
+link_hover = "#111111"
 
 [colors.dark]
-background = "#1a1a1a"
-text = "#dddddd"
+background = "#111111"
+text = "#eeeeee"
+text_muted = "#888888"
+border = "#444444"
+link = "#bbbbbb"
+link_hover = "#eeeeee"
+
+[font]
+font = "Playfair Display"
+weight = "400"
+font_type = "serif"
+
+[backend]
+name = "rust"

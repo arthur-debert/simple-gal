@@ -1517,4 +1517,109 @@ quality = 200
         let merged = base.merge(overlay);
         assert_eq!(merged.backend.name, BackendName::Rust);
     }
+
+    // =========================================================================
+    // Partial nested merge tests — verify unset fields are preserved
+    // =========================================================================
+
+    #[test]
+    fn merge_partial_theme_frame_x_only() {
+        let partial: PartialSiteConfig = toml::from_str(
+            r#"
+            [theme.frame_x]
+            size = "5vw"
+        "#,
+        )
+        .unwrap();
+        let config = SiteConfig::default().merge(partial);
+
+        // Overridden
+        assert_eq!(config.theme.frame_x.size, "5vw");
+        // Preserved from defaults
+        assert_eq!(config.theme.frame_x.min, "1rem");
+        assert_eq!(config.theme.frame_x.max, "2.5rem");
+        // frame_y entirely untouched
+        assert_eq!(config.theme.frame_y.size, "6vw");
+        assert_eq!(config.theme.frame_y.min, "2rem");
+        assert_eq!(config.theme.frame_y.max, "5rem");
+        // Other theme fields untouched
+        assert_eq!(config.theme.thumbnail_gap, "1rem");
+        assert_eq!(config.theme.grid_padding, "2rem");
+    }
+
+    #[test]
+    fn merge_partial_colors_light_only() {
+        let partial: PartialSiteConfig = toml::from_str(
+            r##"
+            [colors.light]
+            background = "#fafafa"
+            text = "#222222"
+        "##,
+        )
+        .unwrap();
+        let config = SiteConfig::default().merge(partial);
+
+        // Overridden
+        assert_eq!(config.colors.light.background, "#fafafa");
+        assert_eq!(config.colors.light.text, "#222222");
+        // Light defaults preserved for unset fields
+        assert_eq!(config.colors.light.text_muted, "#666666");
+        assert_eq!(config.colors.light.border, "#e0e0e0");
+        assert_eq!(config.colors.light.link, "#333333");
+        assert_eq!(config.colors.light.link_hover, "#000000");
+        // Dark entirely untouched
+        assert_eq!(config.colors.dark.background, "#000000");
+        assert_eq!(config.colors.dark.text, "#fafafa");
+    }
+
+    #[test]
+    fn merge_partial_font_weight_only() {
+        let partial: PartialSiteConfig = toml::from_str(
+            r#"
+            [font]
+            weight = "300"
+        "#,
+        )
+        .unwrap();
+        let config = SiteConfig::default().merge(partial);
+
+        assert_eq!(config.font.weight, "300");
+        assert_eq!(config.font.font, "Space Grotesk");
+        assert_eq!(config.font.font_type, FontType::Sans);
+    }
+
+    #[test]
+    fn merge_multiple_sections_independently() {
+        let partial: PartialSiteConfig = toml::from_str(
+            r##"
+            [colors.dark]
+            background = "#1a1a1a"
+
+            [font]
+            font = "Lora"
+            font_type = "serif"
+
+            [backend]
+            name = "rust"
+        "##,
+        )
+        .unwrap();
+        let config = SiteConfig::default().merge(partial);
+
+        // Each section merged independently
+        assert_eq!(config.colors.dark.background, "#1a1a1a");
+        assert_eq!(config.colors.dark.text, "#fafafa");
+        assert_eq!(config.colors.light.background, "#ffffff");
+
+        assert_eq!(config.font.font, "Lora");
+        assert_eq!(config.font.font_type, FontType::Serif);
+        assert_eq!(config.font.weight, "600"); // preserved
+
+        assert_eq!(config.backend.name, BackendName::Rust);
+
+        // Sections not mentioned at all → full defaults
+        assert_eq!(config.images.quality, 90);
+        assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
+        assert_eq!(config.theme.frame_x.size, "3vw");
+    }
 }
