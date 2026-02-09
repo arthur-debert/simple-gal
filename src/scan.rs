@@ -987,9 +987,17 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Fixtures has a config.toml - verify it was loaded
-        // (exact values depend on fixture content, just check it's not default)
-        assert!(!manifest.config.colors.light.background.is_empty());
+        // Root config.toml overrides ALL defaults — verify a sample from each section
+        assert_eq!(manifest.config.thumbnails.aspect_ratio, [3, 4]);
+        assert_eq!(manifest.config.images.quality, 85);
+        assert_eq!(manifest.config.images.sizes, vec![600, 1200, 1800]);
+        assert_eq!(manifest.config.theme.thumbnail_gap, "0.75rem");
+        assert_eq!(manifest.config.theme.frame_x.size, "4vw");
+        assert_eq!(manifest.config.theme.frame_y.min, "1.5rem");
+        assert_eq!(manifest.config.colors.light.background, "#fafafa");
+        assert_eq!(manifest.config.colors.dark.text_muted, "#888888");
+        assert_eq!(manifest.config.font.font, "Playfair Display");
+        assert_eq!(manifest.config.font.weight, "400");
     }
 
     #[test]
@@ -1182,6 +1190,77 @@ mod tests {
         // Italy: quality from root (85), aspect from group (1:1)
         assert_eq!(italy_album.config.images.quality, 85);
         assert_eq!(italy_album.config.thumbnails.aspect_ratio, [1, 1]);
+    }
+
+    #[test]
+    fn fixture_per_gallery_config_overrides_root() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
+
+        // Landscapes has its own config.toml: quality=75, aspect_ratio=[1,1]
+        assert_eq!(landscapes.config.images.quality, 75);
+        assert_eq!(landscapes.config.thumbnails.aspect_ratio, [1, 1]);
+        // Other values inherited from root config
+        assert_eq!(landscapes.config.images.sizes, vec![600, 1200, 1800]);
+        assert_eq!(landscapes.config.colors.light.background, "#fafafa");
+    }
+
+    #[test]
+    fn fixture_album_without_config_inherits_root() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let minimal = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Minimal")
+            .unwrap();
+
+        // Minimal has no config.toml — should get root values
+        assert_eq!(minimal.config.images.quality, 85);
+        assert_eq!(minimal.config.thumbnails.aspect_ratio, [3, 4]);
+    }
+
+    #[test]
+    fn fixture_image_sidecar_read() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let landscapes = manifest
+            .albums
+            .iter()
+            .find(|a| a.title == "Landscapes")
+            .unwrap();
+
+        // 001-dawn has a sidecar .txt
+        let dawn = landscapes.images.iter().find(|i| i.slug == "dawn").unwrap();
+        assert_eq!(
+            dawn.description.as_deref(),
+            Some("First light breaking over the mountain ridge.")
+        );
+
+        // 002-dusk has no sidecar
+        let dusk = landscapes.images.iter().find(|i| i.slug == "dusk").unwrap();
+        assert!(dusk.description.is_none());
+    }
+
+    #[test]
+    fn fixture_description_md_overrides_txt() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let japan = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
+
+        // Japan has both description.txt and description.md — md wins
+        let desc = japan.description.as_ref().unwrap();
+        assert!(desc.contains("<strong>Tokyo</strong>"));
+        assert!(!desc.contains("Street photography"));
     }
 
     #[test]

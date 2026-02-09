@@ -1,0 +1,8 @@
+# Per-gallery config override — exercises config chain merging.
+# Only overrides a subset of keys; the rest should inherit from root.
+
+[images]
+quality = 75
+
+[thumbnails]
+aspect_ratio = [1, 1]
