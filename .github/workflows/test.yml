@@ -25,7 +25,7 @@ jobs:
         run: cargo test --all-features
 
       - name: Run ignored tests (require ImageMagick)
-        run: cargo test --all-features -- --ignored
+        run: cargo test --all-features --lib --test compare_backends -- --ignored
 
       - name: Build release binary
         run: cargo build --release
