@@ -535,41 +535,19 @@ fn build_album(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::*;
     use std::fs;
     use tempfile::TempDir;
-
-    fn setup_fixtures() -> TempDir {
-        let tmp = TempDir::new().unwrap();
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/content");
-
-        // Copy fixture directory recursively
-        copy_dir_recursive(&fixtures, tmp.path()).unwrap();
-        tmp
-    }
-
-    fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-        for entry in fs::read_dir(src)? {
-            let entry = entry?;
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-
-            if src_path.is_dir() {
-                fs::create_dir_all(&dst_path)?;
-                copy_dir_recursive(&src_path, &dst_path)?;
-            } else {
-                fs::copy(&src_path, &dst_path)?;
-            }
-        }
-        Ok(())
-    }
 
     #[test]
     fn scan_finds_all_albums() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Should find 5 albums: Landscapes, Japan, Italy, Minimal, wip-drafts
-        assert_eq!(manifest.albums.len(), 5);
+        assert_eq!(
+            album_titles(&manifest),
+            vec!["Landscapes", "Japan", "Italy", "Minimal", "wip-drafts"]
+        );
     }
 
     #[test]
@@ -577,17 +555,10 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Top level nav should have: Landscapes, Travel, Minimal (all numbered)
-        assert_eq!(manifest.navigation.len(), 3);
-
-        let titles: Vec<&str> = manifest
-            .navigation
-            .iter()
-            .map(|n| n.title.as_str())
-            .collect();
-        assert!(titles.contains(&"Landscapes"));
-        assert!(titles.contains(&"Travel"));
-        assert!(titles.contains(&"Minimal"));
+        assert_eq!(
+            nav_titles(&manifest),
+            vec!["Landscapes", "Travel", "Minimal"]
+        );
     }
 
     #[test]
@@ -595,29 +566,22 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let wip = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "wip-drafts")
-            .unwrap();
-        assert!(!wip.in_nav);
+        assert!(!find_album(&manifest, "wip-drafts").in_nav);
     }
 
     #[test]
-    fn nested_albums_have_children_in_nav() {
+    fn fixture_full_nav_shape() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let travel = manifest
-            .navigation
-            .iter()
-            .find(|n| n.title == "Travel")
-            .unwrap();
-        assert_eq!(travel.children.len(), 2);
-
-        let child_titles: Vec<&str> = travel.children.iter().map(|n| n.title.as_str()).collect();
-        assert!(child_titles.contains(&"Japan"));
-        assert!(child_titles.contains(&"Italy"));
+        assert_nav_shape(
+            &manifest,
+            &[
+                ("Landscapes", &[]),
+                ("Travel", &["Japan", "Italy"]),
+                ("Minimal", &[]),
+            ],
+        );
     }
 
     #[test]
@@ -625,13 +589,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
+        let numbers: Vec<u32> = find_album(&manifest, "Landscapes")
+            .images
             .iter()
-            .find(|a| a.title == "Landscapes")
-            .unwrap();
-        let numbers: Vec<u32> = landscapes.images.iter().map(|i| i.number).collect();
-
+            .map(|i| i.number)
+            .collect();
         assert_eq!(numbers, vec![1, 2, 10]);
     }
 
@@ -658,23 +620,14 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Landscapes")
+        let desc = find_album(&manifest, "Landscapes")
+            .description
+            .as_ref()
             .unwrap();
-        assert!(landscapes.description.is_some());
-        let desc = landscapes.description.as_ref().unwrap();
-        // Should be wrapped in <p> tags (plain text → HTML conversion)
         assert!(desc.contains("<p>"));
         assert!(desc.contains("landscape"));
 
-        let minimal = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Minimal")
-            .unwrap();
-        assert!(minimal.description.is_none());
+        assert!(find_album(&manifest, "Minimal").description.is_none());
     }
 
     #[test]
@@ -780,12 +733,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Landscapes")
-            .unwrap();
-        assert!(landscapes.preview_image.contains("001-dawn"));
+        assert!(
+            find_album(&manifest, "Landscapes")
+                .preview_image
+                .contains("001-dawn")
+        );
     }
 
     #[test]
@@ -828,10 +780,9 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Fixtures have 040-about.md (numbered, in nav) and 050-github.md (link)
         assert!(manifest.pages.len() >= 2);
 
-        let about = manifest.pages.iter().find(|p| p.slug == "about").unwrap();
+        let about = find_page(&manifest, "about");
         assert_eq!(about.title, "About This Gallery");
         assert_eq!(about.link_title, "about");
         assert!(about.body.contains("Simple Gal"));
@@ -972,7 +923,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let github = manifest.pages.iter().find(|p| p.slug == "github").unwrap();
+        let github = find_page(&manifest, "github");
         assert!(github.is_link);
         assert!(github.in_nav);
         assert!(github.body.trim().starts_with("https://"));
@@ -1036,7 +987,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let japan = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
+        let japan = find_album(&manifest, "Japan");
         assert!(japan.path.contains("Travel"));
         assert!(japan.path.contains("Japan"));
         assert!(!japan.path.contains("020-"));
@@ -1197,12 +1148,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Landscapes")
-            .unwrap();
-
+        let landscapes = find_album(&manifest, "Landscapes");
         // Landscapes has its own config.toml: quality=75, aspect_ratio=[1,1]
         assert_eq!(landscapes.config.images.quality, 75);
         assert_eq!(landscapes.config.thumbnails.aspect_ratio, [1, 1]);
@@ -1216,13 +1162,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let minimal = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Minimal")
-            .unwrap();
-
-        // Minimal has no config.toml — should get root values
+        let minimal = find_album(&manifest, "Minimal");
         assert_eq!(minimal.config.images.quality, 85);
         assert_eq!(minimal.config.thumbnails.aspect_ratio, [3, 4]);
     }
@@ -1232,22 +1172,33 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let landscapes = manifest
-            .albums
-            .iter()
-            .find(|a| a.title == "Landscapes")
-            .unwrap();
-
-        // 001-dawn has a sidecar .txt
-        let dawn = landscapes.images.iter().find(|i| i.slug == "dawn").unwrap();
+        // Landscapes: dawn has sidecar, dusk and night do not
         assert_eq!(
-            dawn.description.as_deref(),
-            Some("First light breaking over the mountain ridge.")
+            image_descriptions(find_album(&manifest, "Landscapes")),
+            vec![
+                Some("First light breaking over the mountain ridge."),
+                None,
+                None,
+            ]
         );
 
-        // 002-dusk has no sidecar
-        let dusk = landscapes.images.iter().find(|i| i.slug == "dusk").unwrap();
-        assert!(dusk.description.is_none());
+        // Japan: tokyo has a sidecar
+        let tokyo = find_image(find_album(&manifest, "Japan"), "tokyo");
+        assert_eq!(
+            tokyo.description.as_deref(),
+            Some("Shibuya crossing at dusk, long exposure.")
+        );
+    }
+
+    #[test]
+    fn fixture_image_titles() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        assert_eq!(
+            image_titles(find_album(&manifest, "Landscapes")),
+            vec![Some("dawn"), Some("dusk"), Some("night")]
+        );
     }
 
     #[test]
@@ -1255,10 +1206,7 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        let japan = manifest.albums.iter().find(|a| a.title == "Japan").unwrap();
-
-        // Japan has both description.txt and description.md — md wins
-        let desc = japan.description.as_ref().unwrap();
+        let desc = find_album(&manifest, "Japan").description.as_ref().unwrap();
         assert!(desc.contains("<strong>Tokyo</strong>"));
         assert!(!desc.contains("Street photography"));
     }
