@@ -1539,4 +1539,173 @@ mod tests {
         // Should NOT have any preload links
         assert!(!html.contains(r#"rel="preload""#));
     }
+
+    // =========================================================================
+    // CSS variables from config in rendered HTML
+    // =========================================================================
+
+    #[test]
+    fn rendered_html_contains_color_css_variables() {
+        let mut config = SiteConfig::default();
+        config.colors.light.background = "#fafafa".to_string();
+        config.colors.dark.background = "#111111".to_string();
+
+        let color_css = crate::config::generate_color_css(&config.colors);
+        let theme_css = crate::config::generate_theme_css(&config.theme);
+        let font_css = crate::config::generate_font_css(&config.font);
+        let css = format!("{}\n{}\n{}", color_css, theme_css, font_css);
+
+        let album = create_test_album();
+        let html = render_album_page(&album, &[], &[], &css, "").into_string();
+
+        assert!(html.contains("--color-bg: #fafafa"));
+        assert!(html.contains("--color-bg: #111111"));
+        assert!(html.contains("--color-text:"));
+        assert!(html.contains("--color-text-muted:"));
+        assert!(html.contains("--color-border:"));
+        assert!(html.contains("--color-link:"));
+        assert!(html.contains("--color-link-hover:"));
+    }
+
+    #[test]
+    fn rendered_html_contains_theme_css_variables() {
+        let mut config = SiteConfig::default();
+        config.theme.thumbnail_gap = "0.5rem".to_string();
+        config.theme.frame_x.size = "5vw".to_string();
+
+        let theme_css = crate::config::generate_theme_css(&config.theme);
+        let album = create_test_album();
+        let html = render_album_page(&album, &[], &[], &theme_css, "").into_string();
+
+        assert!(html.contains("--thumbnail-gap: 0.5rem"));
+        assert!(html.contains("--frame-width-x: clamp(1rem, 5vw, 2.5rem)"));
+        assert!(html.contains("--frame-width-y:"));
+        assert!(html.contains("--grid-padding:"));
+    }
+
+    #[test]
+    fn rendered_html_contains_font_css_variables() {
+        let mut config = SiteConfig::default();
+        config.font.font = "Lora".to_string();
+        config.font.weight = "300".to_string();
+        config.font.font_type = crate::config::FontType::Serif;
+
+        let font_css = crate::config::generate_font_css(&config.font);
+        let font_url = config.font.stylesheet_url();
+
+        let album = create_test_album();
+        let html = render_album_page(&album, &[], &[], &font_css, &font_url).into_string();
+
+        assert!(html.contains("--font-family:"));
+        assert!(html.contains("--font-weight: 300"));
+        assert!(html.contains("fonts.googleapis.com"));
+        assert!(html.contains("Lora"));
+    }
+
+    // =========================================================================
+    // Index page edge cases
+    // =========================================================================
+
+    #[test]
+    fn index_page_excludes_non_nav_albums() {
+        let manifest = Manifest {
+            navigation: vec![],
+            albums: vec![
+                Album {
+                    path: "visible".to_string(),
+                    title: "Visible".to_string(),
+                    description: None,
+                    thumbnail: "visible/thumb.webp".to_string(),
+                    images: vec![],
+                    in_nav: true,
+                    config: SiteConfig::default(),
+                },
+                Album {
+                    path: "hidden".to_string(),
+                    title: "Hidden".to_string(),
+                    description: None,
+                    thumbnail: "hidden/thumb.webp".to_string(),
+                    images: vec![],
+                    in_nav: false,
+                    config: SiteConfig::default(),
+                },
+            ],
+            pages: vec![],
+            config: SiteConfig::default(),
+        };
+
+        let html = render_index(&manifest, "", "").into_string();
+
+        assert!(html.contains("Visible"));
+        assert!(!html.contains("Hidden"));
+    }
+
+    #[test]
+    fn index_page_with_no_albums() {
+        let manifest = Manifest {
+            navigation: vec![],
+            albums: vec![],
+            pages: vec![],
+            config: SiteConfig::default(),
+        };
+
+        let html = render_index(&manifest, "", "").into_string();
+
+        assert!(html.contains("album-grid"));
+        assert!(html.contains("Gallery"));
+    }
+
+    // =========================================================================
+    // Album page with single image
+    // =========================================================================
+
+    #[test]
+    fn single_image_album_no_prev_next() {
+        let album = Album {
+            path: "solo".to_string(),
+            title: "Solo Album".to_string(),
+            description: None,
+            thumbnail: "solo/001-thumb.webp".to_string(),
+            images: vec![Image {
+                number: 1,
+                source_path: "solo/001-photo.jpg".to_string(),
+                title: Some("Photo".to_string()),
+                description: None,
+                dimensions: (1600, 1200),
+                generated: {
+                    let mut map = BTreeMap::new();
+                    map.insert(
+                        "800".to_string(),
+                        GeneratedVariant {
+                            avif: "solo/001-photo-800.avif".to_string(),
+                            webp: "solo/001-photo-800.webp".to_string(),
+                            width: 800,
+                            height: 600,
+                        },
+                    );
+                    map
+                },
+                thumbnail: "solo/001-photo-thumb.webp".to_string(),
+            }],
+            in_nav: true,
+            config: SiteConfig::default(),
+        };
+
+        let image = &album.images[0];
+        let html = render_image_page(&album, image, None, None, &[], &[], "", "").into_string();
+
+        // Both prev and next should go back to album
+        assert!(html.contains(r#"data-prev="../""#));
+        assert!(html.contains(r#"data-next="../""#));
+    }
+
+    #[test]
+    fn album_page_no_description() {
+        let mut album = create_test_album();
+        album.description = None;
+        let html = render_album_page(&album, &[], &[], "", "").into_string();
+
+        assert!(!html.contains("album-description"));
+        assert!(html.contains("Test Album"));
+    }
 }

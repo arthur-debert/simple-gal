@@ -1168,6 +1168,51 @@ mod tests {
     }
 
     #[test]
+    fn fixture_config_chain_all_sections() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Landscapes overrides images.quality and thumbnails.aspect_ratio;
+        // everything else should come from root config.
+        let ls = find_album(&manifest, "Landscapes");
+
+        // From Landscapes/config.toml
+        assert_eq!(ls.config.images.quality, 75);
+        assert_eq!(ls.config.thumbnails.aspect_ratio, [1, 1]);
+
+        // Inherited from root config — theme
+        assert_eq!(ls.config.theme.thumbnail_gap, "0.75rem");
+        assert_eq!(ls.config.theme.grid_padding, "1.5rem");
+        assert_eq!(ls.config.theme.frame_x.size, "4vw");
+        assert_eq!(ls.config.theme.frame_x.min, "0.5rem");
+        assert_eq!(ls.config.theme.frame_x.max, "3rem");
+        assert_eq!(ls.config.theme.frame_y.size, "5vw");
+        assert_eq!(ls.config.theme.frame_y.min, "1.5rem");
+        assert_eq!(ls.config.theme.frame_y.max, "4rem");
+
+        // Inherited from root config — colors
+        assert_eq!(ls.config.colors.light.background, "#fafafa");
+        assert_eq!(ls.config.colors.light.text_muted, "#777777");
+        assert_eq!(ls.config.colors.light.border, "#d0d0d0");
+        assert_eq!(ls.config.colors.light.link, "#444444");
+        assert_eq!(ls.config.colors.light.link_hover, "#111111");
+        assert_eq!(ls.config.colors.dark.background, "#111111");
+        assert_eq!(ls.config.colors.dark.text, "#eeeeee");
+        assert_eq!(ls.config.colors.dark.link, "#bbbbbb");
+
+        // Inherited from root config — font
+        assert_eq!(ls.config.font.font, "Playfair Display");
+        assert_eq!(ls.config.font.weight, "400");
+        assert_eq!(ls.config.font.font_type, crate::config::FontType::Serif);
+
+        // Inherited from root config — backend
+        assert_eq!(ls.config.backend.name, crate::config::BackendName::Rust);
+
+        // Inherited from root config — image sizes (not overridden by gallery)
+        assert_eq!(ls.config.images.sizes, vec![600, 1200, 1800]);
+    }
+
+    #[test]
     fn fixture_image_sidecar_read() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
@@ -1209,6 +1254,55 @@ mod tests {
         let desc = find_album(&manifest, "Japan").description.as_ref().unwrap();
         assert!(desc.contains("<strong>Tokyo</strong>"));
         assert!(!desc.contains("Street photography"));
+    }
+
+    // =========================================================================
+    // Wider input variants
+    // =========================================================================
+
+    #[test]
+    fn http_link_page_detected() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("010-link.md"), "http://example.com\n").unwrap();
+
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let page = manifest.pages.first().unwrap();
+        assert!(page.is_link);
+    }
+
+    #[test]
+    fn preview_image_when_first_is_not_001() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("005-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("010-second.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.albums[0].preview_image.contains("005-first"));
+    }
+
+    #[test]
+    fn description_md_preserves_inline_html() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(
+            album.join("description.md"),
+            "Text with <em>emphasis</em> and a [link](https://example.com).",
+        )
+        .unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.albums[0].description.as_ref().unwrap();
+        // Markdown renders inline HTML and markdown syntax
+        assert!(desc.contains("<em>emphasis</em>"));
+        assert!(desc.contains(r#"<a href="https://example.com">link</a>"#));
     }
 
     #[test]
