@@ -1,33 +1,18 @@
-//! Integration tests for cross-backend dimension parity and visual comparison.
+//! Integration test for cross-backend dimension parity.
 //!
-//! `cross_backend_dimension_parity` runs automatically with synthetic images
-//! and asserts that ImageMagick and Rust backends produce identical output
-//! dimensions. Skips gracefully when ImageMagick is not installed.
+//! Asserts that ImageMagick and Rust backends produce identical output
+//! dimensions for resizes and thumbnails. Skips gracefully when
+//! ImageMagick is not installed.
 //!
-//! `generate_comparison_images` is `#[ignore]` — requires real content images
-//! for manual quality inspection:
-//!   cargo test --test compare_backends generate_comparison_images -- --ignored --nocapture
-//!
-//! Outputs go to /tmp/simple-gal-compare/
-
-// Since simple-gal is a binary crate, we can't import from it directly.
-// Instead, this test uses the image/webp crates directly to replicate
-// what RustBackend does, and shells out to ImageMagick for comparison.
+//! For visual quality comparison, use the example instead:
+//!   cargo run --example compare_backends
 
 use image::{ImageEncoder, RgbImage};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::time::Instant;
 
-const OUTPUT_DIR: &str = "/tmp/simple-gal-compare";
-const SIZES: &[u32] = &[800, 1400, 2080];
 const QUALITY: u32 = 90;
-const THUMB_CROP_W: u32 = 400;
-const THUMB_CROP_H: u32 = 500;
 
-/// Create a valid JPEG file with the given dimensions.
-///
-/// Duplicated from rust_backend tests because simple-gal is a binary crate.
 fn create_test_jpeg(path: &Path, width: u32, height: u32) {
     let img = RgbImage::from_fn(width, height, |x, y| {
         image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
@@ -142,10 +127,6 @@ fn save_image(img: &image::DynamicImage, path: &Path, quality: u32) {
     }
 }
 
-fn file_kb(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|m| m.len() / 1024).unwrap_or(0)
-}
-
 /// Automated parity test: synthetic images through both backends, assert dimensions match.
 #[test]
 fn cross_backend_dimension_parity() {
@@ -156,7 +137,6 @@ fn cross_backend_dimension_parity() {
 
     let tmp = tempfile::TempDir::new().unwrap();
 
-    // Resize cases: (source_w, source_h, target_w, target_h)
     let resize_cases = [
         (800, 600, 400, 300),
         (600, 800, 300, 400),
@@ -188,7 +168,6 @@ fn cross_backend_dimension_parity() {
         );
     }
 
-    // Thumbnail cases: (source_w, source_h, crop_w, crop_h)
     let thumb_cases = [
         (800, 600, 400, 500),
         (600, 800, 400, 500),
@@ -219,138 +198,4 @@ fn cross_backend_dimension_parity() {
             sw, sh, cw, ch, magick_dims, rust_dims
         );
     }
-}
-
-#[test]
-#[ignore]
-fn generate_comparison_images() {
-    let test_images: Vec<PathBuf> = vec![
-        "content/001-NY/Q1020899.jpg".into(),
-        "content/002-Greece/L1000601.jpg".into(),
-        "content/001-NY/Q1021635.jpg".into(),
-    ];
-
-    // Check that at least one test image exists
-    let available: Vec<&PathBuf> = test_images.iter().filter(|p| p.exists()).collect();
-    if available.is_empty() {
-        eprintln!("No test images found in content/ - skipping comparison");
-        return;
-    }
-
-    // Check ImageMagick is available
-    if !magick_available() {
-        eprintln!("ImageMagick not found - skipping comparison");
-        return;
-    }
-
-    let _ = std::fs::remove_dir_all(OUTPUT_DIR);
-    std::fs::create_dir_all(OUTPUT_DIR).unwrap();
-
-    for source in &available {
-        let stem = source.file_stem().unwrap().to_str().unwrap();
-        println!("\n=== {} ===", stem);
-
-        // Copy original
-        std::fs::copy(source, format!("{}/{}_original.jpg", OUTPUT_DIR, stem)).unwrap();
-
-        let (orig_w, orig_h) = image::image_dimensions(source).unwrap();
-        let longer = orig_w.max(orig_h);
-        println!("  Original: {}x{}", orig_w, orig_h);
-
-        // Responsive sizes
-        for &target in SIZES {
-            if target > longer {
-                println!("  Skipping {}w (exceeds original)", target);
-                continue;
-            }
-
-            let (out_w, out_h) = if orig_w >= orig_h {
-                let r = target as f64 / orig_w as f64;
-                (target, (orig_h as f64 * r).round() as u32)
-            } else {
-                let r = target as f64 / orig_h as f64;
-                ((orig_w as f64 * r).round() as u32, target)
-            };
-
-            // WebP
-            let mw = PathBuf::from(format!("{}/{}_{}w_magick.webp", OUTPUT_DIR, stem, target));
-            let rw = PathBuf::from(format!("{}/{}_{}w_rust.webp", OUTPUT_DIR, stem, target));
-
-            let t = Instant::now();
-            magick_resize(source, &mw, out_w, out_h, QUALITY);
-            let m_ms = t.elapsed().as_millis();
-
-            let t = Instant::now();
-            rust_resize(source, &rw, out_w, out_h, QUALITY);
-            let r_ms = t.elapsed().as_millis();
-
-            println!(
-                "  WebP  {}w: magick={}KB/{}ms  rust={}KB/{}ms",
-                target,
-                file_kb(&mw),
-                m_ms,
-                file_kb(&rw),
-                r_ms
-            );
-
-            // AVIF
-            let ma = PathBuf::from(format!("{}/{}_{}w_magick.avif", OUTPUT_DIR, stem, target));
-            let ra = PathBuf::from(format!("{}/{}_{}w_rust.avif", OUTPUT_DIR, stem, target));
-
-            let t = Instant::now();
-            magick_resize(source, &ma, out_w, out_h, QUALITY);
-            let m_ms = t.elapsed().as_millis();
-
-            let t = Instant::now();
-            rust_resize(source, &ra, out_w, out_h, QUALITY);
-            let r_ms = t.elapsed().as_millis();
-
-            println!(
-                "  AVIF  {}w: magick={}KB/{}ms  rust={}KB/{}ms",
-                target,
-                file_kb(&ma),
-                m_ms,
-                file_kb(&ra),
-                r_ms
-            );
-        }
-
-        // Thumbnail
-        let mt = PathBuf::from(format!("{}/{}_thumb_magick.webp", OUTPUT_DIR, stem));
-        let rt = PathBuf::from(format!("{}/{}_thumb_rust.webp", OUTPUT_DIR, stem));
-
-        let t = Instant::now();
-        magick_thumbnail(source, &mt, THUMB_CROP_W, THUMB_CROP_H, QUALITY);
-        let m_ms = t.elapsed().as_millis();
-
-        let t = Instant::now();
-        rust_thumbnail(source, &rt, THUMB_CROP_W, THUMB_CROP_H, QUALITY);
-        let r_ms = t.elapsed().as_millis();
-
-        println!(
-            "  Thumb 400x500: magick={}KB/{}ms  rust={}KB/{}ms",
-            file_kb(&mt),
-            m_ms,
-            file_kb(&rt),
-            r_ms
-        );
-    }
-
-    // List all generated files
-    println!("\n--- Generated files in {} ---", OUTPUT_DIR);
-    let mut entries: Vec<_> = std::fs::read_dir(OUTPUT_DIR)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in &entries {
-        let meta = entry.metadata().unwrap();
-        println!(
-            "  {:>8}KB  {}",
-            meta.len() / 1024,
-            entry.file_name().to_string_lossy()
-        );
-    }
-    println!("\nTotal files: {}", entries.len());
-    println!("Open in Finder: open {}", OUTPUT_DIR);
 }
