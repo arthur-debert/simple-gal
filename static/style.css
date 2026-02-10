@@ -408,15 +408,14 @@ body.image-view main {
 .image-nav {
     flex: 0 0 auto;
     width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    text-align: center;
+    text-wrap: balance;
     padding: 0.25rem 0;
     z-index: 20;
 }
 
 .image-nav a {
-    display: block;
+    display: inline-block;
     width: 18px;
     height: 18px;
     position: relative;
