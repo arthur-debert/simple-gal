@@ -505,6 +505,11 @@ body.has-description .image-page {
     }
 }
 
+/* ===== Print Credit (hidden on screen, visible in print) ===== */
+.print-credit {
+    display: none;
+}
+
 /* ===== Loading State ===== */
 .image-frame img {
     background: var(--color-border);
@@ -532,5 +537,32 @@ body.has-description .image-page {
     body.image-view main {
         height: auto;
         padding: 0;
+    }
+
+    /* Container queries need a fixed-size ancestor; disable for print */
+    .image-page {
+        container-type: normal;
+    }
+
+    .image-frame {
+        width: 100%;
+        height: auto;
+    }
+
+    body.has-caption .image-frame {
+        width: 100%;
+        height: auto;
+    }
+
+    .image-description {
+        overflow: visible;
+    }
+
+    /* Print credit line below image */
+    .print-credit {
+        display: block;
+        font-size: var(--font-size-small);
+        color: var(--color-text);
+        padding-top: 0.75rem;
     }
 }

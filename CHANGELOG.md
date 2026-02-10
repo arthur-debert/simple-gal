@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Print view shows "Album › Photo Title" credit line below the image
+
 ### Changed
 - Replaced click-zone JavaScript with pure HTML/CSS `<a>` overlays, reducing nav.js from ~90 to ~30 lines
 - Fixed Escape key navigating to current page instead of album page
+
+### Fixed
+- Print view: image disappeared when photo had a description (container query sizing collapsed without fixed viewport height)
+- Print view: page split into two pages due to fixed header margin and viewport-height layout
 
 ## [0.1.1] - 2026-02-07
 

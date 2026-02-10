@@ -673,6 +673,9 @@ fn render_image_page(
                         img #main-image src=(default_src) alt=(alt_text);
                     }
                 }
+                p.print-credit {
+                    (album.title) " › " (image_label)
+                }
                 @if let Some(text) = caption_text {
                     p.image-caption { (text) }
                 }
