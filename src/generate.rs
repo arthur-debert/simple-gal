@@ -578,9 +578,16 @@ fn render_image_page(
         .map(|(_, v)| strip_prefix(&v.webp))
         .unwrap_or_default();
 
-    // Build preload srcsets for adjacent images
-    let prev_avif_srcset = prev.map(&avif_srcset_for);
-    let next_avif_srcset = next.map(&avif_srcset_for);
+    // Pick a single middle-size AVIF URL for adjacent image prefetch
+    let mid_avif = |img: &Image| -> String {
+        let sizes: Vec<_> = img.generated.iter().collect();
+        sizes
+            .get(sizes.len() / 2)
+            .map(|(_, v)| strip_prefix(&v.avif))
+            .unwrap_or_default()
+    };
+    let prev_prefetch = prev.map(&mid_avif);
+    let next_prefetch = next.map(&mid_avif);
 
     // Calculate aspect ratio
     let (width, height) = image.dimensions;
@@ -651,14 +658,14 @@ fn render_image_page(
         None => "image-view",
     };
 
-    // Build <head> extras: render-blocking link + adjacent image preloads
+    // Build <head> extras: render-blocking link + adjacent image prefetches
     let head_extra = html! {
         link rel="expect" href="#main-image" blocking="render";
-        @if let Some(ref srcset) = prev_avif_srcset {
-            link rel="preload" as="image" imagesrcset=(srcset) imagesizes=(IMAGE_SIZES) fetchpriority="low";
+        @if let Some(ref href) = prev_prefetch {
+            link rel="prefetch" as="image" href=(href);
         }
-        @if let Some(ref srcset) = next_avif_srcset {
-            link rel="preload" as="image" imagesrcset=(srcset) imagesizes=(IMAGE_SIZES) fetchpriority="low";
+        @if let Some(ref href) = next_prefetch {
+            link rel="prefetch" as="image" href=(href);
         }
     };
 
@@ -672,6 +679,9 @@ fn render_image_page(
                         source type="image/webp" srcset=(srcset_webp) sizes=(IMAGE_SIZES);
                         img #main-image src=(default_src) alt=(alt_text);
                     }
+                }
+                p.print-credit {
+                    (album.title) " › " (image_label)
                 }
                 @if let Some(text) = caption_text {
                     p.image-caption { (text) }
@@ -692,7 +702,8 @@ fn render_image_page(
                 }
             }
         }
-        div.nav-zones data-prev=(prev_url) data-next=(next_url) {}
+        a.nav-prev href=(prev_url) aria-label="Previous image" {}
+        a.nav-next href=(next_url) aria-label="Next image" {}
         script { (PreEscaped(JS)) }
     };
 
@@ -1049,7 +1060,7 @@ mod tests {
     }
 
     #[test]
-    fn render_image_page_navigation_zones() {
+    fn render_image_page_nav_links() {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
@@ -1066,9 +1077,10 @@ mod tests {
         )
         .into_string();
 
-        assert!(html.contains("nav-zones"));
-        assert!(html.contains("data-prev="));
-        assert!(html.contains("data-next="));
+        assert!(html.contains("nav-prev"));
+        assert!(html.contains("nav-next"));
+        assert!(html.contains(r#"aria-label="Previous image""#));
+        assert!(html.contains(r#"aria-label="Next image""#));
     }
 
     #[test]
@@ -1089,8 +1101,8 @@ mod tests {
             "Gallery",
         )
         .into_string();
-        assert!(html1.contains(r#"data-prev="../""#));
-        assert!(html1.contains(r#"data-next="../2/""#));
+        assert!(html1.contains(r#"class="nav-prev" href="../""#));
+        assert!(html1.contains(r#"class="nav-next" href="../2/""#));
 
         // Second image - has prev, no next (image[1] has no title)
         let html2 = render_image_page(
@@ -1105,8 +1117,8 @@ mod tests {
             "Gallery",
         )
         .into_string();
-        assert!(html2.contains(r#"data-prev="../1-Dawn/""#));
-        assert!(html2.contains(r#"data-next="../""#));
+        assert!(html2.contains(r#"class="nav-prev" href="../1-Dawn/""#));
+        assert!(html2.contains(r#"class="nav-next" href="../""#));
     }
 
     #[test]
@@ -1541,7 +1553,7 @@ mod tests {
     }
 
     #[test]
-    fn render_image_page_preloads_next_image() {
+    fn render_image_page_prefetches_next_image() {
         let album = create_test_album();
         let image = &album.images[0];
         let html = render_image_page(
@@ -1557,15 +1569,14 @@ mod tests {
         )
         .into_string();
 
-        // Should have a preload link with the next image's avif srcset
-        assert!(html.contains(r#"rel="preload""#));
+        // Should have a prefetch link with the next image's middle-size avif
+        assert!(html.contains(r#"rel="prefetch""#));
         assert!(html.contains(r#"as="image""#));
         assert!(html.contains("002-night-800.avif"));
-        assert!(html.contains(r#"fetchpriority="low""#));
     }
 
     #[test]
-    fn render_image_page_preloads_prev_image() {
+    fn render_image_page_prefetches_prev_image() {
         let album = create_test_album();
         let image = &album.images[1];
         let html = render_image_page(
@@ -1581,14 +1592,15 @@ mod tests {
         )
         .into_string();
 
-        // Should have a preload link with the prev image's avif srcset
-        assert!(html.contains(r#"rel="preload""#));
+        // Should have a prefetch link with the prev image's middle-size avif
+        assert!(html.contains(r#"rel="prefetch""#));
         assert!(html.contains("001-dawn-800.avif"));
-        assert!(html.contains("001-dawn-1400.avif"));
+        // Single URL (href), not a srcset — should not contain both sizes
+        assert!(!html.contains("001-dawn-1400.avif"));
     }
 
     #[test]
-    fn render_image_page_no_preload_without_adjacent() {
+    fn render_image_page_no_prefetch_without_adjacent() {
         let album = create_test_album();
         let image = &album.images[0];
         // No prev, no next
@@ -1597,8 +1609,8 @@ mod tests {
 
         // Should still have the render-blocking link
         assert!(html.contains(r#"rel="expect""#));
-        // Should NOT have any preload links
-        assert!(!html.contains(r#"rel="preload""#));
+        // Should NOT have any prefetch links
+        assert!(!html.contains(r#"rel="prefetch""#));
     }
 
     // =========================================================================
@@ -1758,8 +1770,8 @@ mod tests {
             render_image_page(&album, image, None, None, &[], &[], "", "", "Gallery").into_string();
 
         // Both prev and next should go back to album
-        assert!(html.contains(r#"data-prev="../""#));
-        assert!(html.contains(r#"data-next="../""#));
+        assert!(html.contains(r#"class="nav-prev" href="../""#));
+        assert!(html.contains(r#"class="nav-next" href="../""#));
     }
 
     #[test]

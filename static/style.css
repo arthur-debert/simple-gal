@@ -393,16 +393,17 @@ body.image-view main {
     height: 100%;
 }
 
-/* Navigation zones (invisible) */
-.nav-zones {
+/* Click navigation zones (invisible prev/next links) */
+.nav-prev,
+.nav-next {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
+    top: var(--header-height);
     bottom: 0;
+    width: 30%;
     z-index: 10;
-    pointer-events: none;
 }
+.nav-prev { left: 0; }
+.nav-next { right: 0; }
 
 /* ===== Image Navigation Dots ===== */
 .image-nav {
@@ -504,6 +505,11 @@ body.has-description .image-page {
     }
 }
 
+/* ===== Print Credit (hidden on screen, visible in print) ===== */
+.print-credit {
+    display: none;
+}
+
 /* ===== Loading State ===== */
 .image-frame img {
     background: var(--color-border);
@@ -511,14 +517,53 @@ body.has-description .image-page {
 
 /* ===== Print ===== */
 @media print {
+    .site-header,
     .site-nav,
-    .nav-zones,
-    .image-nav,
-    .breadcrumb {
+    .nav-prev,
+    .nav-next,
+    .image-nav {
         display: none;
     }
 
     main {
+        margin-top: 0;
         margin-left: 0;
+    }
+
+    body.image-view {
+        overflow: visible;
+    }
+
+    body.image-view main {
+        height: auto;
+        padding: 0;
+    }
+
+    /* Container queries need a fixed-size ancestor; disable for print */
+    .image-page {
+        container-type: normal;
+    }
+
+    .image-frame {
+        width: 100%;
+        height: auto;
+    }
+
+    body.has-caption .image-frame {
+        width: 100%;
+        height: auto;
+    }
+
+    .image-description {
+        overflow: visible;
+    }
+
+    /* Print credit line below image */
+    .print-credit {
+        display: block;
+        width: 100%;
+        font-size: var(--font-size-small);
+        color: var(--color-text);
+        padding-top: 0.75rem;
     }
 }
