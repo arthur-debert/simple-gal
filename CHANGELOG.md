@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Replaced click-zone JavaScript with pure HTML/CSS `<a>` overlays, reducing nav.js from ~90 to ~30 lines
+- Fixed Escape key navigating to current page instead of album page
+
 ## [0.1.1] - 2026-02-07
 
 ### Added

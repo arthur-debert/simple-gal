@@ -393,16 +393,17 @@ body.image-view main {
     height: 100%;
 }
 
-/* Navigation zones (invisible) */
-.nav-zones {
+/* Click navigation zones (invisible prev/next links) */
+.nav-prev,
+.nav-next {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
+    top: var(--header-height);
     bottom: 0;
+    width: 30%;
     z-index: 10;
-    pointer-events: none;
 }
+.nav-prev { left: 0; }
+.nav-next { right: 0; }
 
 /* ===== Image Navigation Dots ===== */
 .image-nav {
@@ -512,7 +513,8 @@ body.has-description .image-page {
 /* ===== Print ===== */
 @media print {
     .site-nav,
-    .nav-zones,
+    .nav-prev,
+    .nav-next,
     .image-nav,
     .breadcrumb {
         display: none;

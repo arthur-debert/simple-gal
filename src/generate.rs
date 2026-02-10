@@ -692,7 +692,8 @@ fn render_image_page(
                 }
             }
         }
-        div.nav-zones data-prev=(prev_url) data-next=(next_url) {}
+        a.nav-prev href=(prev_url) aria-label="Previous image" {}
+        a.nav-next href=(next_url) aria-label="Next image" {}
         script { (PreEscaped(JS)) }
     };
 
@@ -1049,7 +1050,7 @@ mod tests {
     }
 
     #[test]
-    fn render_image_page_navigation_zones() {
+    fn render_image_page_nav_links() {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
@@ -1066,9 +1067,10 @@ mod tests {
         )
         .into_string();
 
-        assert!(html.contains("nav-zones"));
-        assert!(html.contains("data-prev="));
-        assert!(html.contains("data-next="));
+        assert!(html.contains("nav-prev"));
+        assert!(html.contains("nav-next"));
+        assert!(html.contains(r#"aria-label="Previous image""#));
+        assert!(html.contains(r#"aria-label="Next image""#));
     }
 
     #[test]
@@ -1089,8 +1091,8 @@ mod tests {
             "Gallery",
         )
         .into_string();
-        assert!(html1.contains(r#"data-prev="../""#));
-        assert!(html1.contains(r#"data-next="../2/""#));
+        assert!(html1.contains(r#"class="nav-prev" href="../""#));
+        assert!(html1.contains(r#"class="nav-next" href="../2/""#));
 
         // Second image - has prev, no next (image[1] has no title)
         let html2 = render_image_page(
@@ -1105,8 +1107,8 @@ mod tests {
             "Gallery",
         )
         .into_string();
-        assert!(html2.contains(r#"data-prev="../1-Dawn/""#));
-        assert!(html2.contains(r#"data-next="../""#));
+        assert!(html2.contains(r#"class="nav-prev" href="../1-Dawn/""#));
+        assert!(html2.contains(r#"class="nav-next" href="../""#));
     }
 
     #[test]
@@ -1758,8 +1760,8 @@ mod tests {
             render_image_page(&album, image, None, None, &[], &[], "", "", "Gallery").into_string();
 
         // Both prev and next should go back to album
-        assert!(html.contains(r#"data-prev="../""#));
-        assert!(html.contains(r#"data-next="../""#));
+        assert!(html.contains(r#"class="nav-prev" href="../""#));
+        assert!(html.contains(r#"class="nav-next" href="../""#));
     }
 
     #[test]
