@@ -55,6 +55,7 @@
 //! text = "#111111"
 //! text_muted = "#666666"    # Nav menu, breadcrumbs, captions
 //! border = "#e0e0e0"
+//! separator = "#e0e0e0"
 //! link = "#333333"
 //! link_hover = "#000000"
 //!
@@ -63,6 +64,7 @@
 //! text = "#fafafa"
 //! text_muted = "#999999"
 //! border = "#333333"
+//! separator = "#333333"
 //! link = "#cccccc"
 //! link_hover = "#ffffff"
 //!
@@ -618,6 +620,8 @@ pub struct ColorScheme {
     pub text_muted: String,
     /// Border color.
     pub border: String,
+    /// Separator color (header bar underline, nav menu divider).
+    pub separator: String,
     /// Link color.
     pub link: String,
     /// Link hover color.
@@ -631,6 +635,7 @@ pub struct PartialColorScheme {
     pub text: Option<String>,
     pub text_muted: Option<String>,
     pub border: Option<String>,
+    pub separator: Option<String>,
     pub link: Option<String>,
     pub link_hover: Option<String>,
 }
@@ -649,6 +654,9 @@ impl ColorScheme {
         if let Some(v) = other.border {
             self.border = v;
         }
+        if let Some(v) = other.separator {
+            self.separator = v;
+        }
         if let Some(v) = other.link {
             self.link = v;
         }
@@ -666,6 +674,7 @@ impl ColorScheme {
             text: "#111111".to_string(),
             text_muted: "#666666".to_string(),
             border: "#e0e0e0".to_string(),
+            separator: "#e0e0e0".to_string(),
             link: "#333333".to_string(),
             link_hover: "#000000".to_string(),
         }
@@ -677,6 +686,7 @@ impl ColorScheme {
             text: "#fafafa".to_string(),
             text_muted: "#999999".to_string(),
             border: "#333333".to_string(),
+            separator: "#333333".to_string(),
             link: "#cccccc".to_string(),
             link_hover: "#ffffff".to_string(),
         }
@@ -791,6 +801,7 @@ background = "#ffffff"
 text = "#111111"
 text_muted = "#666666"    # Nav, breadcrumbs, captions
 border = "#e0e0e0"
+separator = "#e0e0e0"     # Header underline, nav menu divider
 link = "#333333"
 link_hover = "#000000"
 
@@ -802,6 +813,7 @@ background = "#000000"
 text = "#fafafa"
 text_muted = "#999999"
 border = "#333333"
+separator = "#333333"     # Header underline, nav menu divider
 link = "#cccccc"
 link_hover = "#ffffff"
 
@@ -855,7 +867,7 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
     --color-border: {light_border};
     --color-link: {light_link};
     --color-link-hover: {light_link_hover};
-    --color-separator: #000000;
+    --color-separator: {light_separator};
 }}
 
 @media (prefers-color-scheme: dark) {{
@@ -866,19 +878,21 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
         --color-border: {dark_border};
         --color-link: {dark_link};
         --color-link-hover: {dark_link_hover};
-        --color-separator: #ffffff;
+        --color-separator: {dark_separator};
     }}
 }}"#,
         light_bg = colors.light.background,
         light_text = colors.light.text,
         light_text_muted = colors.light.text_muted,
         light_border = colors.light.border,
+        light_separator = colors.light.separator,
         light_link = colors.light.link,
         light_link_hover = colors.light.link_hover,
         dark_bg = colors.dark.background,
         dark_text = colors.dark.text,
         dark_text_muted = colors.dark.text_muted,
         dark_border = colors.dark.border,
+        dark_separator = colors.dark.separator,
         dark_link = colors.dark.link,
         dark_link_hover = colors.dark.link_hover,
     )

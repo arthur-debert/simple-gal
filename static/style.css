@@ -108,7 +108,7 @@ img {
     align-items: center;
     justify-content: space-between;
     padding: 0 2rem;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-separator);
     background: var(--color-bg);
     font-size: var(--font-size-small);
     z-index: 100;
