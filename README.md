@@ -1,265 +1,123 @@
-# Simple Gal
+# simple-gal
 
-A minimal static site generator for fine art photography portfolios. Generates fast-loading, responsive photo albums from a filesystem-based data source.
+A photography-oriented image gallery generator. It leverages the information in your files, can be dropped onto any server or platform, and produces a clean, fast user experience. No bullshit.
 
-## How It Works
+## The Pain
 
-Simple Gal uses your filesystem as the data source. Directories become albums, images are ordered by numeric prefix, and markdown files become pages.
+Photographers, pros or otherwise, amass a lot of image galleries over time to showcase their work. While there are many platforms, SaaS products, apps, and generators for image galleries, most of them invariably:
+
+- Bolt on features for the platform, not for you (login, likes, comments).
+- Ship updates that break or change things.
+- Charge subscription fees.
+- Require server infrastructure with maintenance, updates, and vulnerabilities.
+- Use bespoke data models that force you to redo all the curating work on migrations.
+- Offer poor photographic control: compression, sharpening, aspect ratios, image and gallery ordering.
+
+simple-gal is a solution born out of this pain. It aims to be useful, simple, and maintenance-free 30 years from now. It shelters you from technological, business, and product changes (as much as possible), and puts your image files at the center as the source of truth: no tool-specific data formats to migrate from.
+
+| Gallery page | Photo page |
+|:---:|:---:|
+| ![Gallery page](assets/gallery-page.jpeg) | ![Photo page](assets/photo-page.jpeg) |
+
+## What simple-gal Gives You
+
+- **Future-proof / Resilient**:
+  - **The tool**: no external deps, pre-compiled binaries. As long as you can run a Unix program, it works.
+  - **The output**: tried-and-true HTML elements and established CSS, with only 80 lines of vanilla JavaScript. No dependencies, no front-end toolchain. Unless browsers break fundamental HTML support, you're good.
+  - **Formats**: TIFF, JPEG, AVIF, and WebP fallback.
+  - **Hosting**: just drop the generated directory onto any file server. No configuration required.
+- **Photographic Control**:
+  - **Image quality**: fine-tune compression and sharpening, per size.
+  - **Aspect ratios**: changeable per gallery, configurable for thumbnails. No more generic center crops.
+  - **Responsive image sizes**: fine control over several responsive dimensions so users download the smallest file for their screen without aggressive in-browser downscaling.
+- **User Experience**:
+  - **Page-based**: robust navigation with smooth transitions.
+  - **Lightning fast**: ~9 KB per page (sans image files) and a simple render pipeline. It's instant.
+  - **Mobile-first**: swipes and edge clicks that users have come to expect.
+- **Design**:
+  - **Minimal**: clean and good-looking. No distractions, no fads.
+  - **Tweakable**: change colors, fonts, and other details via config.
+  - **Light/dark mode**: respects the user's system preference.
+
+## Structuring Your Galleries
+
+The directory and file structure is the source of truth for your data.
+
+In your content root (`content/` by default), each directory is a gallery containing images. Or it can be a group (like "Travel") under which galleries are nested (say "Paris", "London"), so that navigation can group your galleries thematically.
+
+Galleries and images are ordered by a numeric prefix (e.g. `001-Paris`, `002-London`).
+
+- **Photo title**: from the IPTC tag if available, otherwise the filename (e.g. `003-Dusk.jpg` becomes "Dusk").
+- **Photo description**: from the IPTC tag if available, otherwise from a same-name `.txt` sidecar (e.g. `003-Dusk.txt`).
+- **Gallery names**: from the directory name. Descriptions from `description.md` (or `.txt`) inside the directory.
+
+A `config.toml` in the content root sets global preferences. Each gallery can have its own `config.toml` — only changed properties need to be listed; the rest are inherited from parents.
+
+Any `NNN-<name>.md` file in the content root is added as a page in the navigation (e.g. `001-About.md`).
 
 ```
-content/                         # Root directory
-├── config.toml                  # Site configuration (optional)
-├── 040-about.md                 # Page (numbered = shown in nav)
-├── 050-github.md                # External link (URL-only .md file)
-├── 010-Landscapes/              # Album (numbered = shown in nav)
-│   ├── info.txt                 # Optional description
-│   ├── 001-dawn.jpg             # Preview image (lowest number)
+content/
+├── config.toml                    # Site configuration (optional)
+├── 040-about.md                   # Page (numbered = shown in nav)
+├── 050-github.md                  # Link page (URL-only .md file)
+├── 010-Landscapes/                # Album (numbered = shown in nav)
+│   ├── config.toml                # Per-gallery config (overrides parent)
+│   ├── description.txt            # Optional album description
+│   ├── 001-dawn.jpg               # Preview image (lowest number)
+│   ├── 001-dawn.txt               # Image sidecar description
 │   ├── 002-sunset.jpg
-│   └── 010-mountains.jpg        # Non-contiguous numbering OK
-├── 020-Travel/                  # Container directory (has subdirs)
-│   ├── 010-Japan/               # Nested album
-│   │   ├── info.txt
+│   └── 010-mountains.jpg          # Non-contiguous numbering OK
+├── 020-Travel/                    # Container directory (has subdirs)
+│   ├── config.toml                # Group config (applies to all children)
+│   ├── 010-Japan/                 # Nested album
+│   │   ├── config.toml            # Gallery config (overrides parent)
+│   │   ├── description.md         # Markdown description
 │   │   └── 001-tokyo.jpg
 │   └── 020-Italy/
 │       └── 001-rome.jpg
-├── 030-Minimal/                 # Another album
+├── 030-Minimal/                   # Album with a single image
 │   └── 001-solo.jpg
-└── wip-experiments/             # No number prefix = not in nav (still accessible)
+└── wip-experiments/               # No number prefix = hidden from nav
     └── 001-draft.jpg
 ```
 
-### Naming Convention
+Key points:
 
-All entities (albums, images, pages, container directories) follow the same `NNN-name` convention:
-
-- `NNN-` numeric prefix determines sort order (e.g., `001-`, `020-`, `100-`)
-- Dashes in the name portion become spaces in display titles (`010-My-Best-Photos` → "My Best Photos")
-- Only numbered entries appear in the navigation menu
-- Unnumbered entries still exist and are accessible by URL, but are hidden from nav
-
-### Albums
-
-- A directory containing images (`.jpg`, `.jpeg`, `.png`, `.webp`)
-- Optional `info.txt` for a description shown on the album page
-- **Preview image**: Image numbered `001-*` is used as the album thumbnail. Falls back to the first image by sort order if no `001` exists.
-- Directories cannot mix images and subdirectories
-
-### Image Metadata
-
-Image titles and descriptions can come from multiple sources. The first available value wins:
-
-- **Title**: IPTC title (from Lightroom/Capture One) → filename stem → none
-- **Description**: sidecar `.txt` file → IPTC caption → none
-
-A sidecar file uses the same stem as the image: `001-photo.txt` for `001-photo.jpg`. IPTC titles sourced from metadata are sanitized for use in URLs (truncated to 80 chars, special characters replaced).
-
-### Container Directories
-
-- A directory containing other directories (not images)
-- Numbered containers appear in nav as groups with their children nested underneath
-- Unnumbered containers are transparent: their children are promoted to the parent level in nav
-
-### Pages
-
-Markdown files (`.md`) in the content root become site pages:
-
-- **Content pages**: Regular markdown rendered as HTML pages (e.g., `040-about.md`)
-- **Link pages**: If the `.md` file contains only a URL, it renders as an external link in the nav (e.g., `050-github.md` containing `https://github.com/user/repo`)
-- Pages appear in the navigation **after** albums, separated by a divider
-- An `# H1` heading overrides the filename-derived title
-
-### Navigation Order
-
-Navigation items are sorted by their numeric prefix. Albums and containers appear first, then a separator, then pages. Within each group, items are sorted by number.
-
-## Build Pipeline
-
-```
-1. Scan      →  manifest.json    (filesystem → structured data)
-2. Process   →  processed/       (responsive sizes + thumbnails)
-3. Generate  →  dist/            (final HTML site)
-```
-
-Each stage is independent and produces a manifest file that the next stage consumes. Image processing is cached — unchanged sources are skipped on subsequent builds.
-
-### Image Processing
-
-Optimized for fine art photography:
-
-- **Formats**: AVIF (primary) + WebP (fallback)
-- **Responsive sizes**: 800px, 1400px, 2080px (configurable)
-- **Thumbnails**: Single size, cropped to configured aspect ratio (default 4:5)
-- **Quality**: 90% compression, EXIF preserved
-
-### Frontend
-
-Pure HTML/CSS with minimal JS (89 lines):
-
-- No frameworks, no build tools, no npm
-- CSS custom properties for theming
-- Dark/light/auto color schemes (respects `prefers-color-scheme`)
-- Stories-style navigation (click/swipe left/right edges)
-- Keyboard navigation (arrow keys)
-- Responsive frames that preserve aspect ratio
-- View transitions (where supported)
+- Ordering is done with numeric prefixes.
+- Items without a prefix are processed but hidden from navigation and thumbnail grids; they remain accessible by direct URL.
+- Metadata can come from the image's IPTC tags, sidecar files, or filenames.
+- Configuration cascades: root > group > gallery. Only overridden values need to be specified.
 
 ## Installation
 
-### Dependencies
-
-- **Rust compiler** (for building the CLI)
-- **ImageMagick** (`convert` and `identify` commands) with AVIF and WebP support
-
-See [DEPENDENCIES.md](DEPENDENCIES.md) for platform-specific installation instructions, or run:
+Grab a pre-built binary from the [releases page](https://github.com/arthur-debert/simple-gal/releases), or install via Cargo:
 
 ```bash
-./scripts/install-deps.sh
+cargo install simple-gal
 ```
 
-### Build
+## Running simple-gal
+
+By default, the content root is `content/` and the output is `dist/`, both relative to the current directory.
 
 ```bash
-cargo build --release
-```
-
-## Usage
-
-```bash
-# Full build (defaults: --source content --output dist)
+# Full build (scan + process + generate)
 simple-gal build
 
 # Override paths
 simple-gal --source photos --output public build
 
-# Run stages individually
-simple-gal scan
-simple-gal process
-simple-gal generate
+# Run individual stages
+simple-gal scan                # Reads the content root, writes manifest.json to --temp-dir
+simple-gal process             # Generates responsive image sizes to --temp-dir
+simple-gal generate            # Uses manifest + processed images to produce final HTML
+
+# Generate a stock config.toml with all options documented
+simple-gal gen-config
 ```
 
-### CLI Options
+## GitHub Actions / Pages Integration
 
-```
-Options:
-  --source <DIR>      Content directory           [default: content]
-  --output <DIR>      Output directory             [default: dist]
-  --temp-dir <DIR>    Intermediate files directory  [default: .simple-gal-temp]
-```
+simple-gal includes a GitHub Actions workflow that, on every push to `main`, builds the site and deploys it to GitHub Pages.
 
-All options are global and shared across subcommands. Intermediate files (manifests, processed images) are stored in `--temp-dir` and preserved between builds for caching and debugging.
-
-### Build Script
-
-```bash
-# Full build using the same script as CI
-./scripts/build.sh
-```
-
-## Configuration
-
-Place `config.toml` in your content root (e.g., `content/config.toml`). All options are optional — defaults are used for any missing values.
-
-```toml
-# Path to content directory (resolved relative to CWD)
-content_root = "content"
-
-[thumbnails]
-aspect_ratio = [4, 5]     # width:height
-
-[images]
-sizes = [800, 1400, 2080] # Responsive sizes to generate
-quality = 90              # AVIF/WebP quality (0-100)
-
-[theme.frame_x]
-size = "3vw"              # Preferred horizontal frame size
-min = "1rem"              # Minimum horizontal frame size
-max = "2.5rem"            # Maximum horizontal frame size
-
-[theme.frame_y]
-size = "6vw"              # Preferred vertical frame size
-min = "2rem"              # Minimum vertical frame size
-max = "5rem"              # Maximum vertical frame size
-
-[colors.light]
-background = "#ffffff"
-text = "#111111"
-text_muted = "#666666"    # Nav, breadcrumbs, captions
-border = "#e0e0e0"
-link = "#333333"
-link_hover = "#000000"
-
-[colors.dark]
-background = "#0a0a0a"
-text = "#eeeeee"
-text_muted = "#999999"
-border = "#333333"
-link = "#cccccc"
-link_hover = "#ffffff"
-
-[processing]
-max_processes = 4             # Max parallel workers (omit for auto = CPU cores)
-```
-
-Partial configuration is supported — override only the values you want to change:
-
-```toml
-[colors.light]
-background = "#fafafa"
-```
-
-## UI Behavior
-
-### Album View
-- Title + optional description
-- Grid of thumbnails (no pagination, controlled album sizes)
-
-### Image View
-- Breadcrumb navigation: Home > Album
-- Image in responsive frame with configurable padding
-- Navigation: click/tap right edge → next, left edge → previous
-- Keyboard: left/right arrow keys
-- First image ← goes to album, last image → goes to album
-
-### Color Schemes
-- Respects `prefers-color-scheme`
-- Light: white background, dark text
-- Dark: near-black background, light text
-
-## Development
-
-```bash
-# Run tests
-cargo test
-
-# Build and preview locally
-./scripts/build.sh
-python -m http.server -d dist
-```
-
-## Project Structure
-
-```
-├── src/
-│   ├── main.rs           # CLI entry point
-│   ├── naming.rs         # Filename parsing (NNN-name convention)
-│   ├── types.rs          # Shared types (Page, NavItem)
-│   ├── config.rs         # Site configuration (config.toml)
-│   ├── scan.rs           # Stage 1: filesystem → manifest
-│   ├── process.rs        # Stage 2: image processing
-│   ├── generate.rs       # Stage 3: HTML generation
-│   └── imaging/          # ImageMagick backend
-├── static/
-│   ├── style.css         # Base styles (inlined at build)
-│   └── nav.js            # Keyboard/touch navigation (inlined at build)
-├── scripts/
-│   ├── build.sh          # Full build (used by CI)
-│   └── install-deps.sh   # System dependency installer
-└── fixtures/             # Test data
-```
-
-## Deployment
-
-GitHub Actions workflow:
-1. Triggers on push to main
-2. Builds the CLI and runs the full pipeline
-3. Publishes to GitHub Pages
+To use it: fork this repo, replace the `content/` directory with your own images, and push.
