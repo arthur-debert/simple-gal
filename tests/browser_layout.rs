@@ -319,3 +319,61 @@ fn nav_dots_within_viewport() {
     );
     assert!(nav.height > 0.0, "nav should have non-zero height");
 }
+
+#[test]
+#[ignore]
+fn nav_dots_bottom_anchored_no_description() {
+    let tab = load_page(page::no_description::LANDSCAPE, &[]);
+    let nav = bounding_box(&tab, ".image-nav");
+    let vh: f64 = tab
+        .evaluate("window.innerHeight", false)
+        .unwrap()
+        .value
+        .unwrap()
+        .as_f64()
+        .unwrap();
+
+    // Nav should be in the bottom 25% of the viewport
+    assert!(
+        nav.y > vh * 0.75,
+        "nav should be in bottom quarter of viewport, nav.y={} threshold={}",
+        nav.y,
+        vh * 0.75
+    );
+}
+
+#[test]
+#[ignore]
+fn nav_dots_below_image_no_description() {
+    let tab = load_page(page::no_description::LANDSCAPE, &[]);
+    let nav = bounding_box(&tab, ".image-nav");
+    let frame = bounding_box(&tab, ".image-frame");
+    assert!(
+        nav.y >= frame.y + frame.height - 1.0,
+        "nav dots should be below image, nav.y={} frame_bottom={}",
+        nav.y,
+        frame.y + frame.height
+    );
+}
+
+#[test]
+#[ignore]
+fn nav_dots_bottom_anchored_with_caption() {
+    let tab = load_page(page::with_caption::LANDSCAPE, &[]);
+    let nav = bounding_box(&tab, ".image-nav");
+    let vh: f64 = tab
+        .evaluate("window.innerHeight", false)
+        .unwrap()
+        .value
+        .unwrap()
+        .as_f64()
+        .unwrap();
+
+    // Nav should be in the bottom 25% of the viewport
+    assert!(
+        nav.y > vh * 0.75,
+        "nav should be in bottom quarter of viewport, nav.y={} threshold={}",
+        nav.y,
+        vh * 0.75
+    );
+}
