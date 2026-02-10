@@ -28,6 +28,7 @@
 //! # All options are optional - defaults shown below
 //!
 //! content_root = "content"  # Path to content directory (root-level only)
+//! site_title = "Gallery"    # Breadcrumb home label and index page title
 //!
 //! [thumbnails]
 //! aspect_ratio = [4, 5]     # width:height ratio
@@ -117,6 +118,9 @@ pub struct SiteConfig {
     /// Path to the content root directory (only meaningful at root level).
     #[serde(default = "default_content_root")]
     pub content_root: String,
+    /// Site title used in breadcrumbs and the browser tab for the home page.
+    #[serde(default = "default_site_title")]
+    pub site_title: String,
     /// Color schemes for light and dark modes.
     pub colors: ColorConfig,
     /// Thumbnail generation settings (aspect ratio).
@@ -138,6 +142,7 @@ pub struct SiteConfig {
 #[serde(deny_unknown_fields)]
 pub struct PartialSiteConfig {
     pub content_root: Option<String>,
+    pub site_title: Option<String>,
     pub colors: Option<PartialColorConfig>,
     pub thumbnails: Option<PartialThumbnailsConfig>,
     pub images: Option<PartialImagesConfig>,
@@ -151,10 +156,15 @@ fn default_content_root() -> String {
     "content".to_string()
 }
 
+fn default_site_title() -> String {
+    "Gallery".to_string()
+}
+
 impl Default for SiteConfig {
     fn default() -> Self {
         Self {
             content_root: default_content_root(),
+            site_title: default_site_title(),
             colors: ColorConfig::default(),
             thumbnails: ThumbnailsConfig::default(),
             images: ImagesConfig::default(),
@@ -191,6 +201,9 @@ impl SiteConfig {
     pub fn merge(mut self, other: PartialSiteConfig) -> Self {
         if let Some(cr) = other.content_root {
             self.content_root = cr;
+        }
+        if let Some(st) = other.site_title {
+            self.site_title = st;
         }
         if let Some(c) = other.colors {
             self.colors = self.colors.merge(c);
@@ -750,6 +763,9 @@ pub fn stock_config_toml() -> &'static str {
 # Path to content directory (only meaningful at root level)
 content_root = "content"
 
+# Site title shown in breadcrumbs and the browser tab for the home page.
+site_title = "Gallery"
+
 # ---------------------------------------------------------------------------
 # Thumbnail generation
 # ---------------------------------------------------------------------------
@@ -942,6 +958,20 @@ mod tests {
     fn default_config_has_content_root() {
         let config = SiteConfig::default();
         assert_eq!(config.content_root, "content");
+    }
+
+    #[test]
+    fn default_config_has_site_title() {
+        let config = SiteConfig::default();
+        assert_eq!(config.site_title, "Gallery");
+    }
+
+    #[test]
+    fn parse_custom_site_title() {
+        let toml = r#"site_title = "My Portfolio""#;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.site_title, "My Portfolio");
     }
 
     #[test]
