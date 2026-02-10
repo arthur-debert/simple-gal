@@ -55,7 +55,7 @@ A `config.toml` in the content root sets global preferences. Each gallery can ha
 
 Any `NNN-<name>.md` file in the content root is added as a page in the navigation (e.g. `001-About.md`).
 
-```
+```text
 content/
 ├── config.toml                    # Site configuration (optional)
 ├── 040-about.md                   # Page (numbered = shown in nav)
