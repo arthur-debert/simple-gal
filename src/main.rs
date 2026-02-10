@@ -134,12 +134,8 @@ enum Command {
     Generate,
     /// Run the full pipeline: scan → process → generate
     Build,
-    /// Write a stock config.toml with all options documented
-    GenConfig {
-        /// Path to write the config file (use - for stdout)
-        #[arg(default_value = "config.toml")]
-        path: String,
-    },
+    /// Print a stock config.toml with all options documented
+    GenConfig,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -200,22 +196,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("==> Build complete: {}", cli.output.display());
         }
-        Command::GenConfig { path } => {
-            let content = config::stock_config_toml();
-            if path == "-" {
-                print!("{}", content);
-            } else {
-                let p = std::path::Path::new(&path);
-                if p.exists() {
-                    eprintln!(
-                        "Error: {} already exists. Remove it first or choose a different path.",
-                        path
-                    );
-                    std::process::exit(1);
-                }
-                std::fs::write(p, content)?;
-                println!("Wrote stock config to {}", path);
-            }
+        Command::GenConfig => {
+            print!("{}", config::stock_config_toml());
         }
     }
 
