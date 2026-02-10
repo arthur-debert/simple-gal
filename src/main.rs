@@ -74,6 +74,38 @@ fn version_string() -> &'static str {
 #[derive(Parser)]
 #[command(name = "simple-gal")]
 #[command(about = "Static site generator for photo portfolios")]
+#[command(long_about = "\
+Static site generator for photo portfolios
+
+Your filesystem is the data source. Directories become albums, images are
+ordered by numeric prefix, and markdown files become pages.
+
+Content structure:
+
+  content/
+  ├── config.toml                  # Site config (optional, cascades to children)
+  ├── 040-about.md                 # Page (numbered = shown in nav)
+  ├── 050-github.md                # Link page (URL-only .md → external nav link)
+  ├── 010-Landscapes/              # Album (numbered = shown in nav)
+  │   ├── config.toml              # Per-gallery config (overrides parent)
+  │   ├── description.txt          # Album description
+  │   ├── 001-dawn.jpg             # Preview image (lowest number)
+  │   ├── 001-dawn.txt             # Image sidecar description
+  │   └── 010-mountains.jpg        # Non-contiguous numbering OK
+  ├── 020-Travel/                  # Container (has subdirs, not images)
+  │   ├── 010-Japan/               # Nested album
+  │   │   ├── description.md       # Markdown description (priority over .txt)
+  │   │   └── 001-tokyo.jpg
+  │   └── 020-Italy/
+  │       └── 001-rome.jpg
+  └── wip-experiments/             # No number prefix = hidden from nav
+
+Metadata resolution (first available wins):
+  Title:       IPTC tag → filename (001-Dusk.jpg → \"Dusk\")
+  Description: sidecar .txt → IPTC caption
+  Gallery:     directory name; description from description.md or .txt
+
+Run 'simple-gal gen-config' to generate a documented config.toml.")]
 #[command(version = version_string())]
 struct Cli {
     /// Content directory
@@ -94,20 +126,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Scan filesystem and generate manifest
+    /// Scan content directory into a manifest
     Scan,
-    /// Process images (generate responsive sizes and thumbnails)
+    /// Generate responsive image sizes and thumbnails
     Process,
-    /// Generate final HTML site
+    /// Produce the final HTML site from processed images
     Generate,
-    /// Run full build pipeline (scan + process + generate)
+    /// Run the full pipeline: scan → process → generate
     Build,
-    /// Output a stock config.toml with all options and documentation
-    GenConfig {
-        /// Path to write the config file (use - for stdout)
-        #[arg(default_value = "config.toml")]
-        path: String,
-    },
+    /// Print a stock config.toml with all options documented
+    GenConfig,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -168,22 +196,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("==> Build complete: {}", cli.output.display());
         }
-        Command::GenConfig { path } => {
-            let content = config::stock_config_toml();
-            if path == "-" {
-                print!("{}", content);
-            } else {
-                let p = std::path::Path::new(&path);
-                if p.exists() {
-                    eprintln!(
-                        "Error: {} already exists. Remove it first or choose a different path.",
-                        path
-                    );
-                    std::process::exit(1);
-                }
-                std::fs::write(p, content)?;
-                println!("Wrote stock config to {}", path);
-            }
+        Command::GenConfig => {
+            print!("{}", config::stock_config_toml());
         }
     }
 
