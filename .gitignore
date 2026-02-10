@@ -38,3 +38,4 @@ manifest.json
 .simple-gal-browser-temp/
 tests/browser/generated/
 .todos.db
+content-no-git

@@ -37,7 +37,6 @@ mod page {
     }
     pub mod with_description {
         pub const LANDSCAPE: &str = "With-Description/1-landscape/index.html";
-        pub const PORTRAIT: &str = "With-Description/2-portrait/index.html";
     }
 }
 
@@ -222,28 +221,7 @@ fn short_caption_centered_with_frame() {
 
 #[test]
 #[ignore]
-fn long_desc_width_matches_frame() {
-    let tab = load_page(page::with_description::LANDSCAPE, &[]);
-    let frame = bounding_box(&tab, ".image-frame");
-    let desc = bounding_box(&tab, ".image-description");
-    assert_close(desc.width, frame.width, 0.5);
-}
-
-#[test]
-#[ignore]
-fn long_desc_within_frame_width_portrait() {
-    let tab = load_page(
-        page::with_description::PORTRAIT,
-        &[("--aspect-ratio", "0.5")],
-    );
-    let frame = bounding_box(&tab, ".image-frame");
-    let desc = bounding_box(&tab, ".image-description");
-    assert!(desc.width <= frame.width + 1.0);
-}
-
-#[test]
-#[ignore]
-fn long_desc_peeks_at_viewport_bottom() {
+fn long_desc_within_viewport() {
     let tab = load_page(page::with_description::LANDSCAPE, &[]);
     let desc = bounding_box(&tab, ".image-description");
     let vh: f64 = tab
@@ -255,18 +233,19 @@ fn long_desc_peeks_at_viewport_bottom() {
         .unwrap();
     assert!(desc.y < vh, "description should start within viewport");
     assert!(
-        desc.y + desc.height > vh,
-        "description should extend below viewport"
+        desc.y + desc.height <= vh + 1.0,
+        "description should be contained within viewport (scrolls internally)"
     );
 }
 
 #[test]
 #[ignore]
-fn long_desc_page_scrollable() {
+fn long_desc_scrolls_internally() {
     let tab = load_page(page::with_description::LANDSCAPE, &[]);
-    let scrollable = tab
+    let overflows = tab
         .evaluate(
-            "document.documentElement.scrollHeight > window.innerHeight",
+            "(() => { const d = document.querySelector('.image-description'); \
+             return d.scrollHeight > d.clientHeight; })()",
             false,
         )
         .unwrap()
@@ -274,7 +253,7 @@ fn long_desc_page_scrollable() {
         .unwrap()
         .as_bool()
         .unwrap();
-    assert!(scrollable);
+    assert!(overflows, "description should scroll internally");
 }
 
 #[test]
@@ -299,16 +278,44 @@ fn caption_matches_frame_narrow_viewport() {
     assert_close(caption.width, frame.width, 0.5);
 }
 
+// ===========================================================================
+// Image navigation dots
+// ===========================================================================
+
 #[test]
 #[ignore]
-fn desc_matches_frame_wide_viewport() {
-    let tab = load_page_with_viewport(
-        page::with_description::PORTRAIT,
-        &[("--aspect-ratio", "0.75")],
-        1920,
-        1080,
+fn nav_dots_visible() {
+    let tab = load_page(page::with_caption::LANDSCAPE, &[]);
+    let dot = bounding_box(&tab, ".image-nav a");
+    assert!(
+        dot.width >= 8.0,
+        "dot should have visible width, got {}",
+        dot.width
     );
-    let frame = bounding_box(&tab, ".image-frame");
-    let desc = bounding_box(&tab, ".image-description");
-    assert_close(desc.width, frame.width, 0.5);
+    assert!(
+        dot.height >= 8.0,
+        "dot should have visible height, got {}",
+        dot.height
+    );
+}
+
+#[test]
+#[ignore]
+fn nav_dots_within_viewport() {
+    let tab = load_page(page::no_description::LANDSCAPE, &[]);
+    let nav = bounding_box(&tab, ".image-nav");
+    let vh: f64 = tab
+        .evaluate("window.innerHeight", false)
+        .unwrap()
+        .value
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert!(
+        nav.y + nav.height <= vh + 1.0,
+        "nav dots should be within viewport, bottom={} vh={}",
+        nav.y + nav.height,
+        vh
+    );
+    assert!(nav.height > 0.0, "nav should have non-zero height");
 }

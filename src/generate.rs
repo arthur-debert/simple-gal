@@ -610,6 +610,19 @@ fn render_image_page(
         None => format!("{} - Image {}", album.title, display_idx),
     };
 
+    // Build image navigation dot URLs
+    let nav_dots: Vec<String> = album
+        .images
+        .iter()
+        .enumerate()
+        .map(|(idx, img)| {
+            format!(
+                "../{}",
+                image_page_url(idx + 1, total, img.title.as_deref())
+            )
+        })
+        .collect();
+
     let description = image.description.as_deref().filter(|d| !d.is_empty());
     let caption_text = description.filter(|d| is_short_caption(d));
     let description_text = description.filter(|d| !is_short_caption(d));
@@ -649,6 +662,15 @@ fn render_image_page(
             @if let Some(text) = description_text {
                 div.image-description {
                     p { (text) }
+                }
+            }
+            nav.image-nav {
+                @for (idx, url) in nav_dots.iter().enumerate() {
+                    @if idx == image_idx {
+                        a href=(url) aria-current="true" {}
+                    } @else {
+                        a href=(url) {}
+                    }
                 }
             }
         }
@@ -1707,5 +1729,54 @@ mod tests {
 
         assert!(!html.contains("album-description"));
         assert!(html.contains("Test Album"));
+    }
+
+    #[test]
+    fn render_image_page_nav_dots() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
+
+        // Should contain nav with image-nav class
+        assert!(html.contains("image-nav"));
+        // Current image dot should have aria-current
+        assert!(html.contains(r#"aria-current="true""#));
+        // Should have links to both image pages
+        assert!(html.contains(r#"href="../1-Dawn/""#));
+        assert!(html.contains(r#"href="../2/""#));
+    }
+
+    #[test]
+    fn render_image_page_nav_dots_marks_correct_current() {
+        let album = create_test_album();
+        // Render second image page
+        let html = render_image_page(
+            &album,
+            &album.images[1],
+            Some(&album.images[0]),
+            None,
+            &[],
+            &[],
+            "",
+            "",
+        )
+        .into_string();
+
+        // The second dot (href="../2/") should have aria-current
+        // The first dot (href="../1-Dawn/") should NOT
+        assert!(html.contains(r#"<a href="../2/" aria-current="true">"#));
+        assert!(html.contains(r#"<a href="../1-Dawn/">"#));
+        // Verify the first dot does NOT have aria-current
+        assert!(!html.contains(r#"<a href="../1-Dawn/" aria-current"#));
     }
 }
