@@ -561,6 +561,7 @@ body.has-description .image-page {
     /* Print credit line below image */
     .print-credit {
         display: block;
+        width: 100%;
         font-size: var(--font-size-small);
         color: var(--color-text);
         padding-top: 0.75rem;
