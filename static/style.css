@@ -512,15 +512,25 @@ body.has-description .image-page {
 
 /* ===== Print ===== */
 @media print {
+    .site-header,
     .site-nav,
     .nav-prev,
     .nav-next,
-    .image-nav,
-    .breadcrumb {
+    .image-nav {
         display: none;
     }
 
     main {
+        margin-top: 0;
         margin-left: 0;
+    }
+
+    body.image-view {
+        overflow: visible;
+    }
+
+    body.image-view main {
+        height: auto;
+        padding: 0;
     }
 }
