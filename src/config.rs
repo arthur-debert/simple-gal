@@ -28,6 +28,7 @@
 //! # All options are optional - defaults shown below
 //!
 //! content_root = "content"  # Path to content directory (root-level only)
+//! site_title = "Gallery"    # Breadcrumb home label and index page title
 //!
 //! [thumbnails]
 //! aspect_ratio = [4, 5]     # width:height ratio
@@ -55,6 +56,7 @@
 //! text = "#111111"
 //! text_muted = "#666666"    # Nav menu, breadcrumbs, captions
 //! border = "#e0e0e0"
+//! separator = "#e0e0e0"
 //! link = "#333333"
 //! link_hover = "#000000"
 //!
@@ -63,6 +65,7 @@
 //! text = "#fafafa"
 //! text_muted = "#999999"
 //! border = "#333333"
+//! separator = "#333333"
 //! link = "#cccccc"
 //! link_hover = "#ffffff"
 //!
@@ -115,6 +118,9 @@ pub struct SiteConfig {
     /// Path to the content root directory (only meaningful at root level).
     #[serde(default = "default_content_root")]
     pub content_root: String,
+    /// Site title used in breadcrumbs and the browser tab for the home page.
+    #[serde(default = "default_site_title")]
+    pub site_title: String,
     /// Color schemes for light and dark modes.
     pub colors: ColorConfig,
     /// Thumbnail generation settings (aspect ratio).
@@ -136,6 +142,7 @@ pub struct SiteConfig {
 #[serde(deny_unknown_fields)]
 pub struct PartialSiteConfig {
     pub content_root: Option<String>,
+    pub site_title: Option<String>,
     pub colors: Option<PartialColorConfig>,
     pub thumbnails: Option<PartialThumbnailsConfig>,
     pub images: Option<PartialImagesConfig>,
@@ -149,10 +156,15 @@ fn default_content_root() -> String {
     "content".to_string()
 }
 
+fn default_site_title() -> String {
+    "Gallery".to_string()
+}
+
 impl Default for SiteConfig {
     fn default() -> Self {
         Self {
             content_root: default_content_root(),
+            site_title: default_site_title(),
             colors: ColorConfig::default(),
             thumbnails: ThumbnailsConfig::default(),
             images: ImagesConfig::default(),
@@ -189,6 +201,9 @@ impl SiteConfig {
     pub fn merge(mut self, other: PartialSiteConfig) -> Self {
         if let Some(cr) = other.content_root {
             self.content_root = cr;
+        }
+        if let Some(st) = other.site_title {
+            self.site_title = st;
         }
         if let Some(c) = other.colors {
             self.colors = self.colors.merge(c);
@@ -618,6 +633,8 @@ pub struct ColorScheme {
     pub text_muted: String,
     /// Border color.
     pub border: String,
+    /// Separator color (header bar underline, nav menu divider).
+    pub separator: String,
     /// Link color.
     pub link: String,
     /// Link hover color.
@@ -631,6 +648,7 @@ pub struct PartialColorScheme {
     pub text: Option<String>,
     pub text_muted: Option<String>,
     pub border: Option<String>,
+    pub separator: Option<String>,
     pub link: Option<String>,
     pub link_hover: Option<String>,
 }
@@ -649,6 +667,9 @@ impl ColorScheme {
         if let Some(v) = other.border {
             self.border = v;
         }
+        if let Some(v) = other.separator {
+            self.separator = v;
+        }
         if let Some(v) = other.link {
             self.link = v;
         }
@@ -666,6 +687,7 @@ impl ColorScheme {
             text: "#111111".to_string(),
             text_muted: "#666666".to_string(),
             border: "#e0e0e0".to_string(),
+            separator: "#e0e0e0".to_string(),
             link: "#333333".to_string(),
             link_hover: "#000000".to_string(),
         }
@@ -677,6 +699,7 @@ impl ColorScheme {
             text: "#fafafa".to_string(),
             text_muted: "#999999".to_string(),
             border: "#333333".to_string(),
+            separator: "#333333".to_string(),
             link: "#cccccc".to_string(),
             link_hover: "#ffffff".to_string(),
         }
@@ -740,6 +763,9 @@ pub fn stock_config_toml() -> &'static str {
 # Path to content directory (only meaningful at root level)
 content_root = "content"
 
+# Site title shown in breadcrumbs and the browser tab for the home page.
+site_title = "Gallery"
+
 # ---------------------------------------------------------------------------
 # Thumbnail generation
 # ---------------------------------------------------------------------------
@@ -791,6 +817,7 @@ background = "#ffffff"
 text = "#111111"
 text_muted = "#666666"    # Nav, breadcrumbs, captions
 border = "#e0e0e0"
+separator = "#e0e0e0"     # Header underline, nav menu divider
 link = "#333333"
 link_hover = "#000000"
 
@@ -802,6 +829,7 @@ background = "#000000"
 text = "#fafafa"
 text_muted = "#999999"
 border = "#333333"
+separator = "#333333"     # Header underline, nav menu divider
 link = "#cccccc"
 link_hover = "#ffffff"
 
@@ -855,7 +883,7 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
     --color-border: {light_border};
     --color-link: {light_link};
     --color-link-hover: {light_link_hover};
-    --color-separator: #000000;
+    --color-separator: {light_separator};
 }}
 
 @media (prefers-color-scheme: dark) {{
@@ -866,19 +894,21 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
         --color-border: {dark_border};
         --color-link: {dark_link};
         --color-link-hover: {dark_link_hover};
-        --color-separator: #ffffff;
+        --color-separator: {dark_separator};
     }}
 }}"#,
         light_bg = colors.light.background,
         light_text = colors.light.text,
         light_text_muted = colors.light.text_muted,
         light_border = colors.light.border,
+        light_separator = colors.light.separator,
         light_link = colors.light.link,
         light_link_hover = colors.light.link_hover,
         dark_bg = colors.dark.background,
         dark_text = colors.dark.text,
         dark_text_muted = colors.dark.text_muted,
         dark_border = colors.dark.border,
+        dark_separator = colors.dark.separator,
         dark_link = colors.dark.link,
         dark_link_hover = colors.dark.link_hover,
     )
@@ -928,6 +958,20 @@ mod tests {
     fn default_config_has_content_root() {
         let config = SiteConfig::default();
         assert_eq!(config.content_root, "content");
+    }
+
+    #[test]
+    fn default_config_has_site_title() {
+        let config = SiteConfig::default();
+        assert_eq!(config.site_title, "Gallery");
+    }
+
+    #[test]
+    fn parse_custom_site_title() {
+        let toml = r#"site_title = "My Portfolio""#;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.site_title, "My Portfolio");
     }
 
     #[test]
