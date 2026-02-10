@@ -578,9 +578,16 @@ fn render_image_page(
         .map(|(_, v)| strip_prefix(&v.webp))
         .unwrap_or_default();
 
-    // Build preload srcsets for adjacent images
-    let prev_avif_srcset = prev.map(&avif_srcset_for);
-    let next_avif_srcset = next.map(&avif_srcset_for);
+    // Pick a single middle-size AVIF URL for adjacent image prefetch
+    let mid_avif = |img: &Image| -> String {
+        let sizes: Vec<_> = img.generated.iter().collect();
+        sizes
+            .get(sizes.len() / 2)
+            .map(|(_, v)| strip_prefix(&v.avif))
+            .unwrap_or_default()
+    };
+    let prev_prefetch = prev.map(&mid_avif);
+    let next_prefetch = next.map(&mid_avif);
 
     // Calculate aspect ratio
     let (width, height) = image.dimensions;
@@ -651,14 +658,14 @@ fn render_image_page(
         None => "image-view",
     };
 
-    // Build <head> extras: render-blocking link + adjacent image preloads
+    // Build <head> extras: render-blocking link + adjacent image prefetches
     let head_extra = html! {
         link rel="expect" href="#main-image" blocking="render";
-        @if let Some(ref srcset) = prev_avif_srcset {
-            link rel="preload" as="image" imagesrcset=(srcset) imagesizes=(IMAGE_SIZES) fetchpriority="low";
+        @if let Some(ref href) = prev_prefetch {
+            link rel="prefetch" as="image" href=(href);
         }
-        @if let Some(ref srcset) = next_avif_srcset {
-            link rel="preload" as="image" imagesrcset=(srcset) imagesizes=(IMAGE_SIZES) fetchpriority="low";
+        @if let Some(ref href) = next_prefetch {
+            link rel="prefetch" as="image" href=(href);
         }
     };
 
@@ -1546,7 +1553,7 @@ mod tests {
     }
 
     #[test]
-    fn render_image_page_preloads_next_image() {
+    fn render_image_page_prefetches_next_image() {
         let album = create_test_album();
         let image = &album.images[0];
         let html = render_image_page(
@@ -1562,15 +1569,14 @@ mod tests {
         )
         .into_string();
 
-        // Should have a preload link with the next image's avif srcset
-        assert!(html.contains(r#"rel="preload""#));
+        // Should have a prefetch link with the next image's middle-size avif
+        assert!(html.contains(r#"rel="prefetch""#));
         assert!(html.contains(r#"as="image""#));
         assert!(html.contains("002-night-800.avif"));
-        assert!(html.contains(r#"fetchpriority="low""#));
     }
 
     #[test]
-    fn render_image_page_preloads_prev_image() {
+    fn render_image_page_prefetches_prev_image() {
         let album = create_test_album();
         let image = &album.images[1];
         let html = render_image_page(
@@ -1586,14 +1592,15 @@ mod tests {
         )
         .into_string();
 
-        // Should have a preload link with the prev image's avif srcset
-        assert!(html.contains(r#"rel="preload""#));
+        // Should have a prefetch link with the prev image's middle-size avif
+        assert!(html.contains(r#"rel="prefetch""#));
         assert!(html.contains("001-dawn-800.avif"));
-        assert!(html.contains("001-dawn-1400.avif"));
+        // Single URL (href), not a srcset — should not contain both sizes
+        assert!(!html.contains("001-dawn-1400.avif"));
     }
 
     #[test]
-    fn render_image_page_no_preload_without_adjacent() {
+    fn render_image_page_no_prefetch_without_adjacent() {
         let album = create_test_album();
         let image = &album.images[0];
         // No prev, no next
@@ -1602,8 +1609,8 @@ mod tests {
 
         // Should still have the render-blocking link
         assert!(html.contains(r#"rel="expect""#));
-        // Should NOT have any preload links
-        assert!(!html.contains(r#"rel="preload""#));
+        // Should NOT have any prefetch links
+        assert!(!html.contains(r#"rel="prefetch""#));
     }
 
     // =========================================================================
