@@ -113,6 +113,14 @@ pub struct GeneratedVariant {
 
 const CSS_STATIC: &str = include_str!("../static/style.css");
 const JS: &str = include_str!("../static/nav.js");
+const SW_JS_TEMPLATE: &str = include_str!("../static/sw.js");
+// We embed default icons so every installation is a valid PWA out of the box.
+// Users can override these by placing files in their assets/ directory.
+const ICON_192: &[u8] = include_bytes!("../static/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("../static/icon-512.png");
+const APPLE_TOUCH_ICON: &[u8] = include_bytes!("../static/apple-touch-icon.png");
+const FAVICON_PNG: &[u8] = include_bytes!("../static/favicon.png");
+
 const IMAGE_SIZES: &str = "(max-width: 800px) 100vw, 80vw";
 
 /// Zero-padding width for image indices, based on album size.
@@ -215,6 +223,59 @@ pub fn generate(
 
     fs::create_dir_all(output_dir)?;
 
+    // ── PWA assets ────────────────────────────────────────────────────
+    // Written *before* copying user assets so the user can override any
+    // of them by placing files in their assets/ directory.
+    //
+    // IMPORTANT: All PWA paths are absolute from the domain root
+    // (/sw.js, /site.webmanifest, /icon-*.png, scope "/", start_url "/").
+    // The generated site MUST be deployed at the root of its domain.
+    // Subdirectory deployment (e.g. example.com/gallery/) is not supported
+    // because the service worker scope, manifest paths, and cached asset
+    // URLs would all need to be rewritten with the subpath prefix.
+    // ────────────────────────────────────────────────────────────────────
+
+    // 1. Dynamic Manifest (uses site title)
+    let manifest_json = serde_json::json!({
+        "name": manifest.config.site_title,
+        "short_name": manifest.config.site_title,
+        "icons": [
+            {
+                "src": "/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png"
+            },
+            {
+                "src": "/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png"
+            }
+        ],
+        "theme_color": "#ffffff",
+        "background_color": "#ffffff",
+        "display": "standalone",
+        "scope": "/",
+        "start_url": "/"
+    });
+    fs::write(
+        output_dir.join("site.webmanifest"),
+        serde_json::to_string_pretty(&manifest_json)?,
+    )?;
+
+    // 2. Dynamic Service Worker (uses package version for cache busting)
+    // We replace the default cache name with one including the build version.
+    let version = env!("CARGO_PKG_VERSION");
+    let sw_content = SW_JS_TEMPLATE.replace(
+        "const CACHE_NAME = 'simple-gal-v1';",
+        &format!("const CACHE_NAME = 'simple-gal-v{}';", version),
+    );
+    fs::write(output_dir.join("sw.js"), sw_content)?;
+
+    fs::write(output_dir.join("icon-192.png"), ICON_192)?;
+    fs::write(output_dir.join("icon-512.png"), ICON_512)?;
+    fs::write(output_dir.join("apple-touch-icon.png"), APPLE_TOUCH_ICON)?;
+    fs::write(output_dir.join("favicon.png"), FAVICON_PNG)?;
+
     // Copy static assets (favicon, fonts, etc.) to output root
     let assets_path = source_dir.join(&manifest.config.assets_dir);
     if assets_path.is_dir() {
@@ -237,6 +298,10 @@ pub fn generate(
     );
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
     println!("Generated index.html");
+
+    // Generate offline fallback page (served by SW when offline and page not cached)
+    let offline_html = render_offline(&css, favicon_href.as_deref());
+    fs::write(output_dir.join("offline.html"), offline_html.into_string())?;
 
     // Generate pages (content pages only, not link pages)
     for page in manifest.pages.iter().filter(|p| !p.is_link) {
@@ -377,6 +442,9 @@ fn base_document(
                 meta charset="UTF-8";
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { (title) }
+                // PWA links — absolute paths, requires root deployment (see PWA comment in generate())
+                link rel="manifest" href="/site.webmanifest";
+                link rel="apple-touch-icon" href="/apple-touch-icon.png";
                 @if let Some(href) = favicon_href {
                     link rel="icon" type=(favicon_type(href)) href=(href);
                 }
@@ -389,6 +457,15 @@ fn base_document(
                 style { (PreEscaped(css)) }
                 @if let Some(extra) = head_extra {
                     (extra)
+                }
+                script {
+                    (PreEscaped(r#"
+                        if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+                            window.addEventListener('load', () => {
+                                navigator.serviceWorker.register('/sw.js');
+                            });
+                        }
+                    "#))
                 }
             }
             body class=[body_class] {
@@ -831,6 +908,26 @@ fn render_page(
         favicon_href,
         content,
     )
+}
+
+/// Renders a minimal offline fallback page.
+///
+/// Served by the service worker when the user is offline and the requested
+/// page is not in the cache. Uses the site's CSS so it matches the gallery
+/// look-and-feel. No navigation or font URL — the page must work with only
+/// the pre-cached assets.
+fn render_offline(css: &str, favicon_href: Option<&str>) -> Markup {
+    let content = html! {
+        main.page {
+            article.page-content {
+                h1 { "You're offline" }
+                p { "This page hasn't been cached yet. Connect to the internet or go back to a page you've already visited." }
+                p { a href="/" { "Go to the gallery" } }
+            }
+        }
+    };
+
+    base_document("Offline", css, None, None, None, favicon_href, content)
 }
 
 // ============================================================================
@@ -2049,5 +2146,21 @@ mod tests {
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
+    }
+
+    #[test]
+    fn pwa_assets_present() {
+        let manifest = Manifest {
+            navigation: vec![],
+            albums: vec![],
+            pages: vec![],
+            config: SiteConfig::default(),
+        };
+
+        let html = render_index(&manifest, "", None, None).into_string();
+
+        assert!(html.contains(r#"<link rel="manifest" href="/site.webmanifest">"#));
+        assert!(html.contains(r#"<link rel="apple-touch-icon" href="/apple-touch-icon.png">"#));
+        assert!(html.contains("navigator.serviceWorker.register('/sw.js');"));
     }
 }

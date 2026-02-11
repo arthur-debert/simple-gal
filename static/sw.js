@@ -1,0 +1,97 @@
+const CACHE_NAME = 'simple-gal-v1';
+const IMAGE_CACHE_NAME = CACHE_NAME + '-images';
+const MAX_CACHED_IMAGES = 200;
+const ASSETS_TO_CACHE = [
+    '/',
+    '/index.html',
+    '/offline.html',
+    '/site.webmanifest',
+    '/icon-192.png',
+    '/icon-512.png',
+    '/apple-touch-icon.png'
+];
+
+// Install event: cache core assets
+self.addEventListener('install', (event) => {
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => {
+            return cache.addAll(ASSETS_TO_CACHE);
+        })
+    );
+});
+
+// Activate event: clean up old caches
+self.addEventListener('activate', (event) => {
+    const keep = new Set([CACHE_NAME, IMAGE_CACHE_NAME]);
+    event.waitUntil(
+        caches.keys().then((cacheNames) => {
+            return Promise.all(
+                cacheNames
+                    .filter((name) => !keep.has(name))
+                    .map((name) => caches.delete(name))
+            );
+        })
+    );
+});
+
+// Fetch event: Network first for HTML, Cache first for others
+self.addEventListener('fetch', (event) => {
+    const url = new URL(event.request.url);
+
+    // Navigation requests (HTML) - Network First, fall back to cache
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request)
+                .then((response) => {
+                    return caches.open(CACHE_NAME).then((cache) => {
+                        cache.put(event.request, response.clone());
+                        return response;
+                    });
+                })
+                .catch(() => {
+                    return caches.match(event.request).then((cached) => {
+                        return cached || caches.match('/offline.html');
+                    });
+                })
+        );
+        return;
+    }
+
+    // Image requests - Cache First, fall back to network
+    // Uses a separate bounded cache (MAX_CACHED_IMAGES) to prevent unbounded storage growth.
+    // When the limit is exceeded, the oldest entries are evicted (FIFO).
+    if (event.request.destination === 'image') {
+        event.respondWith(
+            caches.open(IMAGE_CACHE_NAME).then((cache) => {
+                return cache.match(event.request).then((cachedResponse) => {
+                    if (cachedResponse) {
+                        return cachedResponse;
+                    }
+                    return fetch(event.request).then((response) => {
+                        cache.put(event.request, response.clone());
+                        cache.keys().then((keys) => {
+                            if (keys.length > MAX_CACHED_IMAGES) {
+                                cache.delete(keys[0]);
+                            }
+                        });
+                        return response;
+                    });
+                });
+            })
+        );
+        return;
+    }
+
+    // Default: Stale-While-Revalidate
+    event.respondWith(
+        caches.match(event.request).then((cachedResponse) => {
+            const fetchPromise = fetch(event.request).then((networkResponse) => {
+                caches.open(CACHE_NAME).then((cache) => {
+                    cache.put(event.request, networkResponse.clone());
+                });
+                return networkResponse;
+            });
+            return cachedResponse || fetchPromise;
+        })
+    );
+});

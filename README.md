@@ -34,6 +34,7 @@ simple-gal is a solution born out of this pain. It aims to be useful, simple, an
   - **Page-based**: robust navigation with smooth transitions.
   - **Lightning fast**: ~9 KB per page (sans image files) and a simple render pipeline. It's instant.
   - **Mobile-first**: swipes and edge clicks that users have come to expect.
+  - **Installable**: every gallery is a PWA — add it to your home screen for app-like, offline-capable viewing.
 - **Design**:
   - **Minimal**: clean and good-looking. No distractions, no fads.
   - **Tweakable**: change colors, fonts, and other details via config.
@@ -108,6 +109,18 @@ source = "fonts/MyFont.woff2"   # path relative to site root
 ```
 
 Place the font file in `assets/fonts/` and it will be copied to `dist/fonts/` during build. When `source` is set, a `@font-face` declaration is generated and Google Fonts loading is skipped entirely.
+
+## PWA / Installable Gallery
+
+Every generated site is a Progressive Web App out of the box — no configuration needed. Visitors can "Add to Home Screen" on any device to get an app-like experience with:
+
+- **Offline viewing**: pages and images you've already visited are cached and available without internet.
+- **App-like display**: opens in standalone mode (no browser chrome), matching the gallery's clean aesthetic.
+- **Automatic updates**: when you rebuild and deploy, the service worker picks up the new version on the next visit.
+
+The gallery name on the home screen comes from `site_title` in your `config.toml`. Default PWA icons are provided; override them by placing `icon-192.png`, `icon-512.png`, or `apple-touch-icon.png` in your `assets/` directory.
+
+**Note**: the site must be deployed at the root of its domain (e.g. `photos.example.com/`, not `example.com/photos/`).
 
 ## Installation
 
