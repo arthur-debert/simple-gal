@@ -113,8 +113,7 @@ pub struct GeneratedVariant {
 
 const CSS_STATIC: &str = include_str!("../static/style.css");
 const JS: &str = include_str!("../static/nav.js");
-const MANIFEST: &str = include_str!("../static/site.webmanifest");
-const SW_JS: &str = include_str!("../static/sw.js");
+const SW_JS_TEMPLATE: &str = include_str!("../static/sw.js");
 // We embed default icons so every installation is a valid PWA out of the box.
 // Users can override these by placing files in their assets/ directory.
 const ICON_192: &[u8] = include_bytes!("../static/icon-192.png");
@@ -226,8 +225,43 @@ pub fn generate(
 
     // Write PWA assets (default implementation)
     // We write these *before* copying assets so user can override them
-    fs::write(output_dir.join("site.webmanifest"), MANIFEST)?;
-    fs::write(output_dir.join("sw.js"), SW_JS)?;
+
+    // 1. Dynamic Manifest (uses site title)
+    let manifest_json = serde_json::json!({
+        "name": manifest.config.site_title,
+        "short_name": manifest.config.site_title,
+        "icons": [
+            {
+                "src": "/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png"
+            },
+            {
+                "src": "/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png"
+            }
+        ],
+        "theme_color": "#ffffff",
+        "background_color": "#ffffff",
+        "display": "standalone",
+        "scope": "/",
+        "start_url": "/"
+    });
+    fs::write(
+        output_dir.join("site.webmanifest"),
+        serde_json::to_string_pretty(&manifest_json)?,
+    )?;
+
+    // 2. Dynamic Service Worker (uses package version for cache busting)
+    // We replace the default cache name with one including the build version.
+    let version = env!("CARGO_PKG_VERSION");
+    let sw_content = SW_JS_TEMPLATE.replace(
+        "const CACHE_NAME = 'simple-gal-v1';",
+        &format!("const CACHE_NAME = 'simple-gal-v{}';", version),
+    );
+    fs::write(output_dir.join("sw.js"), sw_content)?;
+
     fs::write(output_dir.join("icon-192.png"), ICON_192)?;
     fs::write(output_dir.join("icon-512.png"), ICON_512)?;
     fs::write(output_dir.join("apple-touch-icon.png"), APPLE_TOUCH_ICON)?;
