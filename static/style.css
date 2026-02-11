@@ -489,6 +489,27 @@ body.has-description .image-page {
     white-space: pre-line;
 }
 
+/* ===== Large Desktop: side-by-side description + thumbnails ===== */
+@media (min-width: 1200px) {
+    .album-page {
+        display: grid;
+        grid-template-columns: 2fr 5fr;
+        gap: 0 var(--thumbnail-gap);
+    }
+
+    .album-header {
+        position: sticky;
+        top: calc(var(--header-height) + 2rem);
+        align-self: start;
+        padding-left: var(--grid-padding);
+        padding-top: var(--grid-padding);
+    }
+
+    .album-description {
+        max-width: none;
+    }
+}
+
 /* ===== Mobile Styles ===== */
 @media (max-width: 768px) {
     .site-header {
