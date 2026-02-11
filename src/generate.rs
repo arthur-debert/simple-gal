@@ -179,6 +179,7 @@ pub fn generate(
     manifest_path: &Path,
     processed_dir: &Path,
     output_dir: &Path,
+    source_dir: &Path,
 ) -> Result<(), GenerateError> {
     let manifest_content = fs::read_to_string(manifest_path)?;
     let manifest: Manifest = serde_json::from_str(&manifest_content)?;
@@ -189,9 +190,11 @@ pub fn generate(
     //   1. Google Font <link>  → emitted in <head> BEFORE <style>
     //      (see base_document() — font_url becomes a <link rel="stylesheet">)
     //      DO NOT use @import inside <style>; browsers ignore/delay it.
+    //      For local fonts, this is skipped and @font-face is used instead.
     //
     //   2. Generated CSS vars  → config::generate_{color,theme,font}_css()
     //      Produces :root { --color-*, --frame-*, --font-*, … }
+    //      For local fonts, also includes @font-face declaration.
     //      Prepended to the <style> block so vars are defined before use.
     //
     //   3. Static CSS rules    → static/style.css (compiled in via include_str!)
@@ -212,11 +215,26 @@ pub fn generate(
 
     fs::create_dir_all(output_dir)?;
 
+    // Copy static assets (favicon, fonts, etc.) to output root
+    let assets_path = source_dir.join(&manifest.config.assets_dir);
+    if assets_path.is_dir() {
+        copy_dir_recursive(&assets_path, output_dir)?;
+        println!("Copied static assets from {}", assets_path.display());
+    }
+
     // Copy processed images to output
     copy_dir_recursive(processed_dir, output_dir)?;
 
+    // Detect favicon in output directory for <link rel="icon"> injection
+    let favicon_href = detect_favicon(output_dir);
+
     // Generate index page
-    let index_html = render_index(&manifest, &css, &font_url);
+    let index_html = render_index(
+        &manifest,
+        &css,
+        font_url.as_deref(),
+        favicon_href.as_deref(),
+    );
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
     println!("Generated index.html");
 
@@ -227,8 +245,9 @@ pub fn generate(
             &manifest.navigation,
             &manifest.pages,
             &css,
-            &font_url,
+            font_url.as_deref(),
             &manifest.config.site_title,
+            favicon_href.as_deref(),
         );
         let filename = format!("{}.html", page.slug);
         fs::write(output_dir.join(&filename), page_html.into_string())?;
@@ -245,8 +264,9 @@ pub fn generate(
             &manifest.navigation,
             &manifest.pages,
             &css,
-            &font_url,
+            font_url.as_deref(),
             &manifest.config.site_title,
+            favicon_href.as_deref(),
         );
         fs::write(album_dir.join("index.html"), album_html.into_string())?;
         println!("Generated {}/index.html", album.path);
@@ -268,8 +288,9 @@ pub fn generate(
                 &manifest.navigation,
                 &manifest.pages,
                 &css,
-                &font_url,
+                font_url.as_deref(),
                 &manifest.config.site_title,
+                favicon_href.as_deref(),
             );
             let image_dir_name =
                 image_page_url(idx + 1, album.images.len(), image.title.as_deref());
@@ -286,6 +307,31 @@ pub fn generate(
 
     println!("Site generated at {}", output_dir.display());
     Ok(())
+}
+
+/// Check the output directory for common favicon files and return the href if found.
+fn detect_favicon(output_dir: &Path) -> Option<String> {
+    for (filename, _mime) in &[
+        ("favicon.svg", "image/svg+xml"),
+        ("favicon.ico", "image/x-icon"),
+        ("favicon.png", "image/png"),
+    ] {
+        if output_dir.join(filename).exists() {
+            return Some(format!("/{}", filename));
+        }
+    }
+    None
+}
+
+/// Determine the MIME type for a favicon based on its extension.
+fn favicon_type(href: &str) -> &'static str {
+    if href.ends_with(".svg") {
+        "image/svg+xml"
+    } else if href.ends_with(".png") {
+        "image/png"
+    } else {
+        "image/x-icon"
+    }
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -311,15 +357,17 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 /// Renders the base HTML document structure.
 ///
-/// Font loading: the Google Font is loaded via a `<link>` tag, NOT via
+/// Font loading: for Google Fonts, loaded via a `<link>` tag, NOT via
 /// `@import` inside `<style>`. Browsers ignore or delay `@import` in
-/// inline `<style>` blocks. See the CSS assembly comment in `generate()`.
+/// inline `<style>` blocks. For local fonts, `@font-face` is in the CSS
+/// and `font_url` is `None`. See the CSS assembly comment in `generate()`.
 fn base_document(
     title: &str,
     css: &str,
     font_url: Option<&str>,
     body_class: Option<&str>,
     head_extra: Option<Markup>,
+    favicon_href: Option<&str>,
     content: Markup,
 ) -> Markup {
     html! {
@@ -329,6 +377,9 @@ fn base_document(
                 meta charset="UTF-8";
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { (title) }
+                @if let Some(href) = favicon_href {
+                    link rel="icon" type=(favicon_type(href)) href=(href);
+                }
                 // Google Font loaded as <link>, not @import — see generate().
                 @if let Some(url) = font_url {
                     link rel="preconnect" href="https://fonts.googleapis.com";
@@ -429,7 +480,12 @@ fn render_nav_item(item: &NavItem, current_path: &str) -> Markup {
 // ============================================================================
 
 /// Renders the index/home page with album grid
-fn render_index(manifest: &Manifest, css: &str, font_url: &str) -> Markup {
+fn render_index(
+    manifest: &Manifest,
+    css: &str,
+    font_url: Option<&str>,
+    favicon_href: Option<&str>,
+) -> Markup {
     let nav = render_nav(&manifest.navigation, "", &manifest.pages);
 
     let breadcrumb = html! {
@@ -453,9 +509,10 @@ fn render_index(manifest: &Manifest, css: &str, font_url: &str) -> Markup {
     base_document(
         &manifest.config.site_title,
         css,
-        Some(font_url),
+        font_url,
         None,
         None,
+        favicon_href,
         content,
     )
 }
@@ -466,8 +523,9 @@ fn render_album_page(
     navigation: &[NavItem],
     pages: &[Page],
     css: &str,
-    font_url: &str,
+    font_url: Option<&str>,
     site_title: &str,
+    favicon_href: Option<&str>,
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
@@ -504,7 +562,15 @@ fn render_album_page(
         }
     };
 
-    base_document(&album.title, css, Some(font_url), None, None, content)
+    base_document(
+        &album.title,
+        css,
+        font_url,
+        None,
+        None,
+        favicon_href,
+        content,
+    )
 }
 
 /// Format an image's display label for breadcrumbs and page titles.
@@ -538,8 +604,9 @@ fn render_image_page(
     navigation: &[NavItem],
     pages: &[Page],
     css: &str,
-    font_url: &str,
+    font_url: Option<&str>,
     site_title: &str,
+    favicon_href: Option<&str>,
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
@@ -710,9 +777,10 @@ fn render_image_page(
     base_document(
         &page_title,
         css,
-        Some(font_url),
+        font_url,
         Some(body_class),
         Some(head_extra),
+        favicon_href,
         content,
     )
 }
@@ -723,8 +791,9 @@ fn render_page(
     navigation: &[NavItem],
     pages: &[Page],
     css: &str,
-    font_url: &str,
+    font_url: Option<&str>,
     site_title: &str,
+    favicon_href: Option<&str>,
 ) -> Markup {
     let nav = render_nav(navigation, &page.slug, pages);
 
@@ -748,7 +817,15 @@ fn render_page(
         }
     };
 
-    base_document(&page.title, css, Some(font_url), None, None, content)
+    base_document(
+        &page.title,
+        css,
+        font_url,
+        None,
+        None,
+        favicon_href,
+        content,
+    )
 }
 
 // ============================================================================
@@ -871,14 +948,15 @@ mod tests {
     #[test]
     fn base_document_includes_doctype() {
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "body {}", None, None, None, content).into_string();
+        let doc = base_document("Test", "body {}", None, None, None, None, content).into_string();
         assert!(doc.starts_with("<!DOCTYPE html>"));
     }
 
     #[test]
     fn base_document_applies_body_class() {
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "", None, Some("image-view"), None, content).into_string();
+        let doc =
+            base_document("Test", "", None, Some("image-view"), None, None, content).into_string();
         assert!(html_contains_body_class(&doc, "image-view"));
     }
 
@@ -972,7 +1050,7 @@ mod tests {
     fn render_album_page_includes_title() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", "", "Gallery").into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
 
         assert!(html.contains("Test Album"));
         assert!(html.contains("<h1>"));
@@ -982,7 +1060,7 @@ mod tests {
     fn render_album_page_includes_description() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", "", "Gallery").into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
 
         assert!(html.contains("A test album description"));
         assert!(html.contains("album-description"));
@@ -992,7 +1070,7 @@ mod tests {
     fn render_album_page_thumbnail_links() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", "", "Gallery").into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
 
         // Should have links to image pages (1-Dawn/, 2/)
         assert!(html.contains("1-Dawn/"));
@@ -1005,7 +1083,7 @@ mod tests {
     fn render_album_page_breadcrumb() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", "", "Gallery").into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
 
         // Breadcrumb should link to gallery root
         assert!(html.contains(r#"href="/""#));
@@ -1025,8 +1103,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1048,8 +1127,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1072,8 +1152,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1097,8 +1178,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
         assert!(html1.contains(r#"class="nav-prev" href="../""#));
@@ -1113,8 +1195,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
         assert!(html2.contains(r#"class="nav-prev" href="../1-Dawn/""#));
@@ -1126,8 +1209,19 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0]; // 1600x1200 = 1.333...
         let nav = vec![];
-        let html = render_image_page(&album, image, None, None, &nav, &[], "", "", "Gallery")
-            .into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            None,
+            &nav,
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+        )
+        .into_string();
 
         // Should have aspect ratio CSS variable
         assert!(html.contains("--aspect-ratio:"));
@@ -1144,7 +1238,7 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "", "", "Gallery").into_string();
+        let html = render_page(&page, &[], &[], "", None, "Gallery", None).into_string();
 
         // Markdown should be converted to HTML
         assert!(html.contains("<strong>bold</strong>"));
@@ -1162,7 +1256,7 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "", "", "Gallery").into_string();
+        let html = render_page(&page, &[], &[], "", None, "Gallery", None).into_string();
 
         assert!(html.contains("<title>About Me</title>"));
         assert!(html.contains("class=\"page\""));
@@ -1212,8 +1306,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1235,8 +1330,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1259,8 +1355,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1280,8 +1377,9 @@ mod tests {
             &nav,
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1332,8 +1430,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1356,8 +1455,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1382,8 +1482,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1407,8 +1508,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1430,8 +1532,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1522,8 +1625,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1542,8 +1646,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1564,8 +1669,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1587,8 +1693,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1604,8 +1711,19 @@ mod tests {
         let album = create_test_album();
         let image = &album.images[0];
         // No prev, no next
-        let html =
-            render_image_page(&album, image, None, None, &[], &[], "", "", "Gallery").into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            None,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+        )
+        .into_string();
 
         // Should still have the render-blocking link
         assert!(html.contains(r#"rel="expect""#));
@@ -1629,7 +1747,7 @@ mod tests {
         let css = format!("{}\n{}\n{}", color_css, theme_css, font_css);
 
         let album = create_test_album();
-        let html = render_album_page(&album, &[], &[], &css, "", "Gallery").into_string();
+        let html = render_album_page(&album, &[], &[], &css, None, "Gallery", None).into_string();
 
         assert!(html.contains("--color-bg: #fafafa"));
         assert!(html.contains("--color-bg: #111111"));
@@ -1648,7 +1766,8 @@ mod tests {
 
         let theme_css = crate::config::generate_theme_css(&config.theme);
         let album = create_test_album();
-        let html = render_album_page(&album, &[], &[], &theme_css, "", "Gallery").into_string();
+        let html =
+            render_album_page(&album, &[], &[], &theme_css, None, "Gallery", None).into_string();
 
         assert!(html.contains("--thumbnail-gap: 0.5rem"));
         assert!(html.contains("--frame-width-x: clamp(1rem, 5vw, 2.5rem)"));
@@ -1667,8 +1786,16 @@ mod tests {
         let font_url = config.font.stylesheet_url();
 
         let album = create_test_album();
-        let html =
-            render_album_page(&album, &[], &[], &font_css, &font_url, "Gallery").into_string();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            &font_css,
+            font_url.as_deref(),
+            "Gallery",
+            None,
+        )
+        .into_string();
 
         assert!(html.contains("--font-family:"));
         assert!(html.contains("--font-weight: 300"));
@@ -1708,7 +1835,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", "").into_string();
+        let html = render_index(&manifest, "", None, None).into_string();
 
         assert!(html.contains("Visible"));
         assert!(!html.contains("Hidden"));
@@ -1723,7 +1850,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", "").into_string();
+        let html = render_index(&manifest, "", None, None).into_string();
 
         assert!(html.contains("album-grid"));
         assert!(html.contains("Gallery"));
@@ -1766,8 +1893,19 @@ mod tests {
         };
 
         let image = &album.images[0];
-        let html =
-            render_image_page(&album, image, None, None, &[], &[], "", "", "Gallery").into_string();
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            None,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+        )
+        .into_string();
 
         // Both prev and next should go back to album
         assert!(html.contains(r#"class="nav-prev" href="../""#));
@@ -1778,7 +1916,7 @@ mod tests {
     fn album_page_no_description() {
         let mut album = create_test_album();
         album.description = None;
-        let html = render_album_page(&album, &[], &[], "", "", "Gallery").into_string();
+        let html = render_album_page(&album, &[], &[], "", None, "Gallery", None).into_string();
 
         assert!(!html.contains("album-description"));
         assert!(html.contains("Test Album"));
@@ -1796,8 +1934,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1822,8 +1961,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "Gallery",
+            None,
         )
         .into_string();
 
@@ -1850,7 +1990,7 @@ mod tests {
             config,
         };
 
-        let html = render_index(&manifest, "", "").into_string();
+        let html = render_index(&manifest, "", None, None).into_string();
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
@@ -1860,7 +2000,8 @@ mod tests {
     #[test]
     fn album_page_breadcrumb_uses_custom_site_title() {
         let album = create_test_album();
-        let html = render_album_page(&album, &[], &[], "", "", "My Portfolio").into_string();
+        let html =
+            render_album_page(&album, &[], &[], "", None, "My Portfolio", None).into_string();
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
@@ -1878,8 +2019,9 @@ mod tests {
             &[],
             &[],
             "",
-            "",
+            None,
             "My Portfolio",
+            None,
         )
         .into_string();
 
@@ -1898,7 +2040,7 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "", "", "My Portfolio").into_string();
+        let html = render_page(&page, &[], &[], "", None, "My Portfolio", None).into_string();
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));

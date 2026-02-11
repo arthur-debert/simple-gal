@@ -135,7 +135,14 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
         None => base,
     };
 
-    scan_directory(root, root, &mut albums, &mut nav_items, &root_config)?;
+    scan_directory(
+        root,
+        root,
+        &mut albums,
+        &mut nav_items,
+        &root_config,
+        &root_config.assets_dir,
+    )?;
 
     // Strip number prefixes from output paths (used for URLs and output dirs).
     // Sorting has already happened with original paths, so this is safe.
@@ -252,8 +259,9 @@ fn scan_directory(
     albums: &mut Vec<Album>,
     nav_items: &mut Vec<NavItem>,
     inherited_config: &SiteConfig,
+    assets_dir: &str,
 ) -> Result<(), ScanError> {
-    let entries = collect_entries(path)?;
+    let entries = collect_entries(path, if path == root { Some(assets_dir) } else { None })?;
 
     let images = entries.iter().filter(|e| is_image(e)).collect::<Vec<_>>();
 
@@ -304,7 +312,14 @@ fn scan_directory(
         });
 
         for subdir in sorted_subdirs {
-            scan_directory(subdir, root, albums, &mut child_nav, &effective_config)?;
+            scan_directory(
+                subdir,
+                root,
+                albums,
+                &mut child_nav,
+                &effective_config,
+                assets_dir,
+            )?;
         }
 
         // If this directory is numbered, add it to nav with children
@@ -337,7 +352,7 @@ fn scan_directory(
     Ok(())
 }
 
-fn collect_entries(path: &Path) -> Result<Vec<PathBuf>, ScanError> {
+fn collect_entries(path: &Path, assets_dir: Option<&str>) -> Result<Vec<PathBuf>, ScanError> {
     let mut entries: Vec<PathBuf> = fs::read_dir(path)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -351,6 +366,7 @@ fn collect_entries(path: &Path) -> Result<Vec<PathBuf>, ScanError> {
                 && name != "processed"
                 && name != "dist"
                 && name != "manifest.json"
+                && assets_dir.is_none_or(|ad| *name != *ad)
         })
         .collect();
 
@@ -1315,5 +1331,67 @@ mod tests {
 
         let result = scan(tmp.path());
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Assets directory tests
+    // =========================================================================
+
+    #[test]
+    fn assets_dir_skipped_during_scan() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create a real album
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        // Create an assets directory with files that look like images
+        let assets = tmp.path().join("assets");
+        fs::create_dir_all(assets.join("fonts")).unwrap();
+        fs::write(assets.join("favicon.ico"), "icon data").unwrap();
+        fs::write(assets.join("001-should-not-scan.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        // Should only find the real album, not treat assets as an album
+        assert_eq!(manifest.albums.len(), 1);
+        assert_eq!(manifest.albums[0].title, "Test");
+    }
+
+    #[test]
+    fn custom_assets_dir_skipped_during_scan() {
+        let tmp = TempDir::new().unwrap();
+
+        // Configure a custom assets dir
+        fs::write(
+            tmp.path().join("config.toml"),
+            r#"assets_dir = "site-assets""#,
+        )
+        .unwrap();
+
+        // Create a real album
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        // Create the custom assets directory
+        let assets = tmp.path().join("site-assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("001-nope.jpg"), "fake image").unwrap();
+
+        // Also create a default "assets" dir — should NOT be skipped since config says "site-assets"
+        let default_assets = tmp.path().join("assets");
+        fs::create_dir_all(&default_assets).unwrap();
+        fs::write(default_assets.join("001-also.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        // "assets" dir should be scanned as an album (not skipped) since config overrides
+        // "site-assets" dir should be skipped
+        let album_titles: Vec<&str> = manifest.albums.iter().map(|a| a.title.as_str()).collect();
+        assert!(album_titles.contains(&"Test"));
+        assert!(album_titles.contains(&"assets"));
+        assert!(!album_titles.iter().any(|t| *t == "site-assets"));
     }
 }

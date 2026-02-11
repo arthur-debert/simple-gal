@@ -84,6 +84,7 @@ Content structure:
 
   content/
   ├── config.toml                  # Site config (optional, cascades to children)
+  ├── assets/                      # Static assets (favicon, fonts) → copied to output root
   ├── 040-about.md                 # Page (numbered = shown in nav)
   ├── 050-github.md                # Link page (URL-only .md → external nav link)
   ├── 010-Landscapes/              # Album (numbered = shown in nav)
@@ -168,7 +169,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Generate => {
             let processed_dir = cli.temp_dir.join("processed");
             let processed_manifest_path = processed_dir.join("manifest.json");
-            generate::generate(&processed_manifest_path, &processed_dir, &cli.output)?;
+            generate::generate(
+                &processed_manifest_path,
+                &processed_dir,
+                &cli.output,
+                &cli.source,
+            )?;
         }
         Command::Build => {
             // Resolve content root: check config.toml in source dir for content_root override
@@ -192,7 +198,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&processed_manifest_path, &json)?;
 
             println!("==> Stage 3: Generating HTML");
-            generate::generate(&processed_manifest_path, &processed_dir, &cli.output)?;
+            generate::generate(
+                &processed_manifest_path,
+                &processed_dir,
+                &cli.output,
+                &source,
+            )?;
 
             println!("==> Build complete: {}", cli.output.display());
         }

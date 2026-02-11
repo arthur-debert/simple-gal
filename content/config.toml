@@ -84,7 +84,7 @@ link_hover = "#ffffff"
 # ---------------------------------------------------------------------------
 [font]
 # Google Fonts family name.
-font = "Noto Sants"
+font = "Noto Sans"
 
 # Font weight to load from Google Fonts.
 weight = "400"

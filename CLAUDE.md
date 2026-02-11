@@ -19,7 +19,7 @@ cargo test --test browser_layout -- --ignored       # browser layout tests (need
 
 **Principles:** unit-test first; all pipeline logic is pure functions on data — no integration tests needed for correctness. Browser tests for CSS layout only. See `docs/dev/testing.md` for the full guide.
 
-**Shared fixtures:** `fixtures/content/` exercises the full feature set (config chain, sidecars, markdown priority, nested albums, pages, link pages, hidden dirs). Tests copy it to a temp dir via `setup_fixtures()`.
+**Shared fixtures:** `fixtures/content/` exercises the full feature set (config chain, sidecars, markdown priority, nested albums, pages, link pages, hidden dirs, assets directory). Tests copy it to a temp dir via `setup_fixtures()`.
 
 **Test helpers:** `src/test_helpers.rs` — lookup helpers (`find_album`, `find_image`, `find_page`), bulk extractors (`album_titles`, `image_titles`), nav assertions (`assert_nav_shape`). Use these instead of writing ad-hoc fixture setup.
 
