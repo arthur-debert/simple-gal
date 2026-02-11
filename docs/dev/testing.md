@@ -17,6 +17,7 @@
 ```bash
 cargo test                                          # 253 unit + integration tests
 cargo test --test browser_layout -- --ignored       # 12 browser layout tests (needs Chrome)
+cargo test --test browser_pwa -- --ignored          # Browser PWA tests (needs Chrome)
 ```
 
 ## Shared fixtures

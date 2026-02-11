@@ -2113,4 +2113,20 @@ mod tests {
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
     }
+
+    #[test]
+    fn pwa_assets_present() {
+        let manifest = Manifest {
+            navigation: vec![],
+            albums: vec![],
+            pages: vec![],
+            config: SiteConfig::default(),
+        };
+
+        let html = render_index(&manifest, "", None, None).into_string();
+
+        assert!(html.contains(r#"<link rel="manifest" href="/site.webmanifest">"#));
+        assert!(html.contains(r#"<link rel="apple-touch-icon" href="/apple-touch-icon.png">"#));
+        assert!(html.contains("navigator.serviceWorker.register('/sw.js');"));
+    }
 }
