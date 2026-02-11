@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local font support: `source` field in `[font]` config generates `@font-face` CSS instead of loading from Google Fonts
 - Favicon auto-detection: `favicon.ico`, `.svg`, or `.png` in assets directory automatically gets a `<link rel="icon">` tag
 - Print view shows "Album › Photo Title" credit line below the image
+- PWA support: galleries are installable as home-screen apps for offline-capable, app-like viewing
+  - Web App Manifest generated dynamically from `site_title`
+  - Service worker with network-first HTML, cache-first images, stale-while-revalidate default
+  - Bounded image cache (200 entries, FIFO eviction) to prevent unbounded storage growth
+  - Offline fallback page when a requested page isn't cached
+  - Default icons (192px, 512px, apple-touch-icon) — overridable via `assets/`
+  - Cache versioned to package version for automatic updates on new builds
 
 ### Changed
 - Replaced click-zone JavaScript with pure HTML/CSS `<a>` overlays, reducing nav.js from ~90 to ~30 lines
