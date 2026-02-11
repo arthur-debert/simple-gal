@@ -446,7 +446,7 @@ fn base_document(
                 }
                 script {
                     (PreEscaped(r#"
-                        if ('serviceWorker' in navigator) {
+                        if ('serviceWorker' in navigator && location.protocol !== 'file:') {
                             window.addEventListener('load', () => {
                                 navigator.serviceWorker.register('/sw.js');
                             });
