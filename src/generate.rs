@@ -223,8 +223,17 @@ pub fn generate(
 
     fs::create_dir_all(output_dir)?;
 
-    // Write PWA assets (default implementation)
-    // We write these *before* copying assets so user can override them
+    // ── PWA assets ────────────────────────────────────────────────────
+    // Written *before* copying user assets so the user can override any
+    // of them by placing files in their assets/ directory.
+    //
+    // IMPORTANT: All PWA paths are absolute from the domain root
+    // (/sw.js, /site.webmanifest, /icon-*.png, scope "/", start_url "/").
+    // The generated site MUST be deployed at the root of its domain.
+    // Subdirectory deployment (e.g. example.com/gallery/) is not supported
+    // because the service worker scope, manifest paths, and cached asset
+    // URLs would all need to be rewritten with the subpath prefix.
+    // ────────────────────────────────────────────────────────────────────
 
     // 1. Dynamic Manifest (uses site title)
     let manifest_json = serde_json::json!({
@@ -433,6 +442,7 @@ fn base_document(
                 meta charset="UTF-8";
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { (title) }
+                // PWA links — absolute paths, requires root deployment (see PWA comment in generate())
                 link rel="manifest" href="/site.webmanifest";
                 link rel="apple-touch-icon" href="/apple-touch-icon.png";
                 @if let Some(href) = favicon_href {
