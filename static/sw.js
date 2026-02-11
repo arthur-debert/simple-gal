@@ -1,9 +1,11 @@
+const CACHE_NAME = 'simple-gal-v1';
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
     '/site.webmanifest',
     '/icon-192.png',
-    '/icon-512.png'
+    '/icon-512.png',
+    '/apple-touch-icon.png'
 ];
 
 // Install event: cache core assets
