@@ -1,4 +1,6 @@
 const CACHE_NAME = 'simple-gal-v1';
+const IMAGE_CACHE_NAME = CACHE_NAME + '-images';
+const MAX_CACHED_IMAGES = 200;
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
@@ -7,14 +9,6 @@ const ASSETS_TO_CACHE = [
     '/icon-512.png',
     '/apple-touch-icon.png'
 ];
-
-// Note: This service worker uses a Cache-First strategy for images.
-// Currently, there is no eviction policy (LRU) implemented for the image cache.
-// On devices with limited storage, this could potentially grow large if the user
-// browses thousands of images. The browser's storage quota management will eventually
-// evict the origin's data if space is needed.
-//
-// Future improvement: Implement a bounded cache for images (e.g. keep last 50).
 
 // Install event: cache core assets
 self.addEventListener('install', (event) => {
@@ -27,14 +21,13 @@ self.addEventListener('install', (event) => {
 
 // Activate event: clean up old caches
 self.addEventListener('activate', (event) => {
+    const keep = new Set([CACHE_NAME, IMAGE_CACHE_NAME]);
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(
-                cacheNames.map((cacheName) => {
-                    if (cacheName !== CACHE_NAME) {
-                        return caches.delete(cacheName);
-                    }
-                })
+                cacheNames
+                    .filter((name) => !keep.has(name))
+                    .map((name) => caches.delete(name))
             );
         })
     );
@@ -62,15 +55,22 @@ self.addEventListener('fetch', (event) => {
     }
 
     // Image requests - Cache First, fall back to network
+    // Uses a separate bounded cache (MAX_CACHED_IMAGES) to prevent unbounded storage growth.
+    // When the limit is exceeded, the oldest entries are evicted (FIFO).
     if (event.request.destination === 'image') {
         event.respondWith(
-            caches.match(event.request).then((cachedResponse) => {
-                if (cachedResponse) {
-                    return cachedResponse;
-                }
-                return fetch(event.request).then((response) => {
-                    return caches.open(CACHE_NAME).then((cache) => {
+            caches.open(IMAGE_CACHE_NAME).then((cache) => {
+                return cache.match(event.request).then((cachedResponse) => {
+                    if (cachedResponse) {
+                        return cachedResponse;
+                    }
+                    return fetch(event.request).then((response) => {
                         cache.put(event.request, response.clone());
+                        cache.keys().then((keys) => {
+                            if (keys.length > MAX_CACHED_IMAGES) {
+                                cache.delete(keys[0]);
+                            }
+                        });
                         return response;
                     });
                 });
