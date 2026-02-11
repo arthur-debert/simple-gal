@@ -8,6 +8,14 @@ const ASSETS_TO_CACHE = [
     '/apple-touch-icon.png'
 ];
 
+// Note: This service worker uses a Cache-First strategy for images.
+// Currently, there is no eviction policy (LRU) implemented for the image cache.
+// On devices with limited storage, this could potentially grow large if the user
+// browses thousands of images. The browser's storage quota management will eventually
+// evict the origin's data if space is needed.
+//
+// Future improvement: Implement a bounded cache for images (e.g. keep last 50).
+
 // Install event: cache core assets
 self.addEventListener('install', (event) => {
     event.waitUntil(
