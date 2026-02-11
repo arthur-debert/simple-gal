@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Static assets directory: `assets/` contents are copied verbatim to the output root (favicon, fonts, robots.txt, etc.)
+- Local font support: `source` field in `[font]` config generates `@font-face` CSS instead of loading from Google Fonts
+- Favicon auto-detection: `favicon.ico`, `.svg`, or `.png` in assets directory automatically gets a `<link rel="icon">` tag
 - Print view shows "Album › Photo Title" credit line below the image
 
 ### Changed

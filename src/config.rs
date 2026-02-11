@@ -121,6 +121,10 @@ pub struct SiteConfig {
     /// Site title used in breadcrumbs and the browser tab for the home page.
     #[serde(default = "default_site_title")]
     pub site_title: String,
+    /// Directory for static assets (favicon, fonts, etc.), relative to content root.
+    /// Contents are copied verbatim to the output root during generation.
+    #[serde(default = "default_assets_dir")]
+    pub assets_dir: String,
     /// Color schemes for light and dark modes.
     pub colors: ColorConfig,
     /// Thumbnail generation settings (aspect ratio).
@@ -129,7 +133,7 @@ pub struct SiteConfig {
     pub images: ImagesConfig,
     /// Theme/layout settings (frame padding, grid spacing).
     pub theme: ThemeConfig,
-    /// Font configuration (Google Fonts family, weight, type).
+    /// Font configuration (Google Fonts or local font file).
     pub font: FontConfig,
     /// Parallel processing settings.
     pub processing: ProcessingConfig,
@@ -143,6 +147,7 @@ pub struct SiteConfig {
 pub struct PartialSiteConfig {
     pub content_root: Option<String>,
     pub site_title: Option<String>,
+    pub assets_dir: Option<String>,
     pub colors: Option<PartialColorConfig>,
     pub thumbnails: Option<PartialThumbnailsConfig>,
     pub images: Option<PartialImagesConfig>,
@@ -160,11 +165,16 @@ fn default_site_title() -> String {
     "Gallery".to_string()
 }
 
+fn default_assets_dir() -> String {
+    "assets".to_string()
+}
+
 impl Default for SiteConfig {
     fn default() -> Self {
         Self {
             content_root: default_content_root(),
             site_title: default_site_title(),
+            assets_dir: default_assets_dir(),
             colors: ColorConfig::default(),
             thumbnails: ThumbnailsConfig::default(),
             images: ImagesConfig::default(),
@@ -204,6 +214,9 @@ impl SiteConfig {
         }
         if let Some(st) = other.site_title {
             self.site_title = st;
+        }
+        if let Some(ad) = other.assets_dir {
+            self.assets_dir = ad;
         }
         if let Some(c) = other.colors {
             self.colors = self.colors.merge(c);
@@ -316,25 +329,39 @@ pub enum FontType {
 
 /// Font configuration for the site.
 ///
-/// The `font` field should be a Google Fonts family name. The generated CSS
-/// loads it via `@import` and builds a font stack with appropriate fallbacks
-/// based on `font_type`.
+/// By default, the font is loaded from Google Fonts via a `<link>` tag.
+/// Set `source` to a local font file path (relative to site root) to use
+/// a self-hosted font instead — this generates a `@font-face` declaration
+/// and skips the Google Fonts request entirely.
 ///
 /// ```toml
+/// # Google Fonts (default)
 /// [font]
 /// font = "Space Grotesk"
 /// weight = "600"
 /// font_type = "sans"
+///
+/// # Local font (put the file in your assets directory)
+/// [font]
+/// font = "My Custom Font"
+/// weight = "400"
+/// font_type = "sans"
+/// source = "fonts/MyFont.woff2"
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct FontConfig {
-    /// Google Fonts family name (e.g. `"Space Grotesk"`).
+    /// Font family name (Google Fonts family or custom name for local fonts).
     pub font: String,
     /// Font weight to load (e.g. `"600"`).
     pub weight: String,
     /// Font category: `"sans"` or `"serif"` — determines fallback fonts.
     pub font_type: FontType,
+    /// Path to a local font file, relative to the site root (e.g. `"fonts/MyFont.woff2"`).
+    /// When set, generates `@font-face` CSS instead of loading from Google Fonts.
+    /// The file should be placed in the assets directory so it gets copied to the output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -343,6 +370,7 @@ pub struct PartialFontConfig {
     pub font: Option<String>,
     pub weight: Option<String>,
     pub font_type: Option<FontType>,
+    pub source: Option<String>,
 }
 
 impl Default for FontConfig {
@@ -351,6 +379,7 @@ impl Default for FontConfig {
             font: "Space Grotesk".to_string(),
             weight: "600".to_string(),
             font_type: FontType::Sans,
+            source: None,
         }
     }
 }
@@ -366,16 +395,44 @@ impl FontConfig {
         if let Some(t) = other.font_type {
             self.font_type = t;
         }
+        if other.source.is_some() {
+            self.source = other.source;
+        }
         self
     }
 
+    /// Whether this font is loaded from a local file (vs. Google Fonts).
+    pub fn is_local(&self) -> bool {
+        self.source.is_some()
+    }
+
     /// Google Fonts stylesheet URL for use in a `<link>` element.
-    pub fn stylesheet_url(&self) -> String {
+    /// Returns `None` for local fonts.
+    pub fn stylesheet_url(&self) -> Option<String> {
+        if self.is_local() {
+            return None;
+        }
         let family = self.font.replace(' ', "+");
-        format!(
+        Some(format!(
             "https://fonts.googleapis.com/css2?family={}:wght@{}&display=swap",
             family, self.weight
-        )
+        ))
+    }
+
+    /// Generate `@font-face` CSS for a local font.
+    /// Returns `None` for Google Fonts.
+    pub fn font_face_css(&self) -> Option<String> {
+        let src = self.source.as_ref()?;
+        let format = font_format_from_extension(src);
+        Some(format!(
+            r#"@font-face {{
+    font-family: "{}";
+    src: url("/{}") format("{}");
+    font-weight: {};
+    font-display: swap;
+}}"#,
+            self.font, src, format, self.weight
+        ))
     }
 
     /// CSS `font-family` value with fallbacks based on `font_type`.
@@ -385,6 +442,17 @@ impl FontConfig {
             FontType::Sans => "Helvetica, Verdana, sans-serif",
         };
         format!(r#""{}", {}"#, self.font, fallbacks)
+    }
+}
+
+/// Determine the CSS font format string from a file extension.
+fn font_format_from_extension(path: &str) -> &'static str {
+    match path.rsplit('.').next().map(|e| e.to_lowercase()).as_deref() {
+        Some("woff2") => "woff2",
+        Some("woff") => "woff",
+        Some("ttf") => "truetype",
+        Some("otf") => "opentype",
+        _ => "woff2", // sensible default
     }
 }
 
@@ -766,6 +834,11 @@ content_root = "content"
 # Site title shown in breadcrumbs and the browser tab for the home page.
 site_title = "Gallery"
 
+# Directory for static assets (favicon, fonts, etc.), relative to content root.
+# Contents are copied verbatim to the output root during generation.
+# If the directory doesn't exist, it is silently skipped.
+assets_dir = "assets"
+
 # ---------------------------------------------------------------------------
 # Thumbnail generation
 # ---------------------------------------------------------------------------
@@ -847,6 +920,12 @@ weight = "600"
 # sans  -> Helvetica, Verdana, sans-serif
 # serif -> Georgia, "Times New Roman", serif
 font_type = "sans"
+
+# Local font file path, relative to the site root (e.g. "fonts/MyFont.woff2").
+# When set, generates @font-face CSS instead of loading from Google Fonts.
+# Place the font file in your assets directory so it gets copied to the output.
+# Supported formats: .woff2, .woff, .ttf, .otf
+# source = "fonts/MyFont.woff2"
 
 # ---------------------------------------------------------------------------
 # Processing
@@ -931,15 +1010,21 @@ pub fn generate_theme_css(theme: &ThemeConfig) -> String {
 }
 
 /// Generate CSS custom properties from font config.
+///
+/// For local fonts, also includes the `@font-face` declaration.
 pub fn generate_font_css(font: &FontConfig) -> String {
-    format!(
+    let vars = format!(
         r#":root {{
     --font-family: {family};
     --font-weight: {weight};
 }}"#,
         family = font.font_family_css(),
         weight = font.weight,
-    )
+    );
+    match font.font_face_css() {
+        Some(face) => format!("{}\n\n{}", face, vars),
+        None => vars,
+    }
 }
 
 #[cfg(test)]
@@ -1665,5 +1750,130 @@ quality = 200
         assert_eq!(config.images.quality, 90);
         assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
         assert_eq!(config.theme.frame_x.size, "3vw");
+    }
+
+    // =========================================================================
+    // Assets directory tests
+    // =========================================================================
+
+    #[test]
+    fn default_assets_dir() {
+        let config = SiteConfig::default();
+        assert_eq!(config.assets_dir, "assets");
+    }
+
+    #[test]
+    fn parse_custom_assets_dir() {
+        let toml = r#"assets_dir = "site-assets""#;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.assets_dir, "site-assets");
+    }
+
+    #[test]
+    fn merge_preserves_default_assets_dir() {
+        let partial: PartialSiteConfig = toml::from_str("[images]\nquality = 70\n").unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.assets_dir, "assets");
+    }
+
+    // =========================================================================
+    // Local font tests
+    // =========================================================================
+
+    #[test]
+    fn default_font_is_google() {
+        let config = FontConfig::default();
+        assert!(!config.is_local());
+        assert!(config.stylesheet_url().is_some());
+        assert!(config.font_face_css().is_none());
+    }
+
+    #[test]
+    fn local_font_has_no_stylesheet_url() {
+        let config = FontConfig {
+            source: Some("fonts/MyFont.woff2".to_string()),
+            ..FontConfig::default()
+        };
+        assert!(config.is_local());
+        assert!(config.stylesheet_url().is_none());
+    }
+
+    #[test]
+    fn local_font_generates_font_face_css() {
+        let config = FontConfig {
+            font: "My Custom Font".to_string(),
+            weight: "400".to_string(),
+            font_type: FontType::Sans,
+            source: Some("fonts/MyFont.woff2".to_string()),
+        };
+        let css = config.font_face_css().unwrap();
+        assert!(css.contains("@font-face"));
+        assert!(css.contains(r#"font-family: "My Custom Font""#));
+        assert!(css.contains(r#"url("/fonts/MyFont.woff2")"#));
+        assert!(css.contains(r#"format("woff2")"#));
+        assert!(css.contains("font-weight: 400"));
+        assert!(css.contains("font-display: swap"));
+    }
+
+    #[test]
+    fn parse_font_with_source() {
+        let toml = r#"
+[font]
+font = "My Font"
+weight = "400"
+source = "fonts/myfont.woff2"
+"#;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.font.font, "My Font");
+        assert_eq!(config.font.source.as_deref(), Some("fonts/myfont.woff2"));
+        assert!(config.font.is_local());
+    }
+
+    #[test]
+    fn merge_font_source_preserves_other_fields() {
+        let partial: PartialSiteConfig = toml::from_str(
+            r#"
+[font]
+source = "fonts/custom.woff2"
+"#,
+        )
+        .unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.font.font, "Space Grotesk"); // default preserved
+        assert_eq!(config.font.weight, "600"); // default preserved
+        assert_eq!(config.font.source.as_deref(), Some("fonts/custom.woff2"));
+    }
+
+    #[test]
+    fn font_format_detection() {
+        assert_eq!(font_format_from_extension("font.woff2"), "woff2");
+        assert_eq!(font_format_from_extension("font.woff"), "woff");
+        assert_eq!(font_format_from_extension("font.ttf"), "truetype");
+        assert_eq!(font_format_from_extension("font.otf"), "opentype");
+        assert_eq!(font_format_from_extension("font.unknown"), "woff2");
+    }
+
+    #[test]
+    fn generate_font_css_includes_font_face_for_local() {
+        let font = FontConfig {
+            font: "Local Font".to_string(),
+            weight: "700".to_string(),
+            font_type: FontType::Serif,
+            source: Some("fonts/local.woff2".to_string()),
+        };
+        let css = generate_font_css(&font);
+        assert!(css.contains("@font-face"));
+        assert!(css.contains("--font-family:"));
+        assert!(css.contains("--font-weight: 700"));
+    }
+
+    #[test]
+    fn generate_font_css_no_font_face_for_google() {
+        let font = FontConfig::default();
+        let css = generate_font_css(&font);
+        assert!(!css.contains("@font-face"));
+        assert!(css.contains("--font-family:"));
     }
 }

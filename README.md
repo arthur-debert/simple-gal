@@ -58,6 +58,9 @@ Any `NNN-<name>.md` file in the content root is added as a page in the navigatio
 ```text
 content/
 ├── config.toml                    # Site configuration (optional)
+├── assets/                        # Static assets → copied to output root
+│   ├── favicon.ico                # Auto-detected, injected into <head>
+│   └── fonts/                     # Custom fonts (referenced in config.toml)
 ├── 040-about.md                   # Page (numbered = shown in nav)
 ├── 050-github.md                  # Link page (URL-only .md file)
 ├── 010-Landscapes/                # Album (numbered = shown in nav)
@@ -87,6 +90,24 @@ Key points:
 - Items without a prefix are processed but hidden from navigation and thumbnail grids; they remain accessible by direct URL.
 - Metadata can come from the image's IPTC tags, sidecar files, or filenames.
 - Configuration cascades: root > group > gallery. Only overridden values need to be specified.
+
+## Static Assets
+
+The `assets/` directory (configurable via `assets_dir` in `config.toml`) is copied verbatim to the output root. Use it for favicons, custom fonts, or any other static files your site needs.
+
+Favicon files (`favicon.ico`, `favicon.svg`, `favicon.png`) are auto-detected and injected as `<link rel="icon">` in every page.
+
+To use a custom/downloaded font instead of Google Fonts:
+
+```toml
+[font]
+font = "My Custom Font"
+weight = "400"
+font_type = "sans"
+source = "fonts/MyFont.woff2"   # path relative to site root
+```
+
+Place the font file in `assets/fonts/` and it will be copied to `dist/fonts/` during build. When `source` is set, a `@font-face` declaration is generated and Google Fonts loading is skipped entirely.
 
 ## Installation
 
