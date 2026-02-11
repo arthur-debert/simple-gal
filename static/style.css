@@ -297,7 +297,8 @@ main {
 }
 
 .album-header {
-    margin-bottom: 2rem;
+    padding-left: var(--grid-padding);
+    margin-bottom: 0;
 }
 
 .album-header h1 {
@@ -307,9 +308,15 @@ main {
 }
 
 .album-description {
-    color: var(--color-text);
+    color: var(--color-text-muted);
+    font-size: var(--font-size-small);
+    line-height: 1.6;
     max-width: 600px;
 }
+
+/* Hidden checkbox for description expand/collapse toggle */
+.desc-toggle { display: none; }
+.desc-expand { display: none; }
 
 .thumbnail-grid {
     display: grid;
@@ -503,6 +510,44 @@ body.has-description .image-page {
     .thumbnail-grid {
         grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
     }
+
+    /* Truncate long album descriptions with expand toggle */
+    .album-description {
+        max-height: 6.4em;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .album-description::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 2em;
+        background: linear-gradient(transparent, var(--color-bg));
+    }
+
+    .desc-expand {
+        display: inline-block;
+        color: var(--color-text-muted);
+        font-size: var(--font-size-small);
+        cursor: pointer;
+        margin-top: 0.25rem;
+    }
+
+    .desc-expand .expand-less { display: none; }
+
+    .desc-toggle:checked ~ .album-description {
+        max-height: none;
+    }
+
+    .desc-toggle:checked ~ .album-description::after {
+        display: none;
+    }
+
+    .desc-toggle:checked ~ .desc-expand .expand-more { display: none; }
+    .desc-toggle:checked ~ .desc-expand .expand-less { display: inline; }
 }
 
 /* ===== Print Credit (hidden on screen, visible in print) ===== */
