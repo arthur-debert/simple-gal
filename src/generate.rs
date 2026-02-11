@@ -549,7 +549,12 @@ fn render_album_page(
             header.album-header {
                 h1 { (album.title) }
                 @if let Some(desc) = &album.description {
+                    input.desc-toggle type="checkbox" id="desc-toggle";
                     div.album-description { (PreEscaped(desc)) }
+                    label.desc-expand for="desc-toggle" {
+                        span.expand-more { "Read more" }
+                        span.expand-less { "Show less" }
+                    }
                 }
             }
             div.thumbnail-grid {
