@@ -4,6 +4,7 @@ const MAX_CACHED_IMAGES = 200;
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
+    '/offline.html',
     '/site.webmanifest',
     '/icon-192.png',
     '/icon-512.png',
@@ -48,7 +49,9 @@ self.addEventListener('fetch', (event) => {
                     });
                 })
                 .catch(() => {
-                    return caches.match(event.request);
+                    return caches.match(event.request).then((cached) => {
+                        return cached || caches.match('/offline.html');
+                    });
                 })
         );
         return;
