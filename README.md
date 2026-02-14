@@ -122,15 +122,72 @@ The gallery name on the home screen comes from `site_title` in your `config.toml
 
 **Note**: the site must be deployed at the root of its domain (e.g. `photos.example.com/`, not `example.com/photos/`).
 
-## Installation
+## Quick Start — GitHub Action
+
+The easiest way to use simple-gal: create a repo with your images and a deploy workflow. No installation needed.
+
+1. Create a new GitHub repo
+2. Add your images under `content/` (see [Structuring Your Galleries](#structuring-your-galleries) above)
+3. Enable GitHub Pages (Settings → Pages → Source: GitHub Actions)
+4. Add this workflow as `.github/workflows/deploy.yml`:
+
+```yaml
+name: Deploy Gallery
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build gallery
+        uses: arthur-debert/simple-gal@main
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+Push to `main` and your gallery is live. Use `workflow_dispatch` to manually re-deploy (e.g. after a new simple-gal release).
+
+**Custom domain**: add a `CNAME` file at the repo root with your domain, and add a step to copy it into the output: `run: cp CNAME dist/` (before the upload step).
+
+### Action inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `source` | `./content` | Path to content directory |
+| `output` | `./dist` | Path to output directory |
+| `version` | `latest` | Release version (e.g. `v0.2.0` or `latest`) |
+
+## Local Usage
 
 Grab a pre-built binary from the [releases page](https://github.com/arthur-debert/simple-gal/releases), or install via Cargo:
 
 ```bash
 cargo install simple-gal
 ```
-
-## Running simple-gal
 
 By default, the content root is `content/` and the output is `dist/`, both relative to the current directory.
 
@@ -149,46 +206,3 @@ simple-gal generate            # Uses manifest + processed images to produce fin
 # Generate a stock config.toml with all options documented
 simple-gal gen-config
 ```
-
-## GitHub Action
-
-simple-gal is available as a reusable GitHub Action. Create a content repo with your images and a workflow:
-
-```yaml
-name: Deploy Gallery
-
-on:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build gallery
-        uses: arthur-debert/simple-gal@main
-        with:
-          source: ./content   # default
-          output: ./dist      # default
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-      - uses: actions/deploy-pages@v4
-```
-
-### Action inputs
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `source` | `./content` | Path to content directory |
-| `output` | `./dist` | Path to output directory |
-| `version` | `latest` | Release version (e.g. `v0.1.1` or `latest`) |
