@@ -465,6 +465,7 @@ fn base_document(
                                 navigator.serviceWorker.register('/sw.js');
                             });
                         }
+                        window.addEventListener('beforeinstallprompt', e => e.preventDefault());
                     "#))
                 }
             }
@@ -2162,5 +2163,6 @@ mod tests {
         assert!(html.contains(r#"<link rel="manifest" href="/site.webmanifest">"#));
         assert!(html.contains(r#"<link rel="apple-touch-icon" href="/apple-touch-icon.png">"#));
         assert!(html.contains("navigator.serviceWorker.register('/sw.js');"));
+        assert!(html.contains("beforeinstallprompt"));
     }
 }
