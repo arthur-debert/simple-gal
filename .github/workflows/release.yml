@@ -188,9 +188,10 @@ jobs:
 
       - name: Publish to crates.io
         env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
           VERSION: ${{ needs.create-release.outputs.version }}
         run: |
-          cargo publish --token ${{ secrets.CRATES_IO_KEY }} 2>&1 || {
+          cargo publish 2>&1 || {
             if cargo search simple-gal --limit 1 2>/dev/null | grep -q "simple-gal.*\"$VERSION\""; then
               echo "simple-gal@$VERSION already published, skipping"
             else
