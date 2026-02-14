@@ -122,64 +122,9 @@ The gallery name on the home screen comes from `site_title` in your `config.toml
 
 **Note**: the site must be deployed at the root of its domain (e.g. `photos.example.com/`, not `example.com/photos/`).
 
-## Quick Start — GitHub Action
+## GitHub Action
 
-The easiest way to use simple-gal: create a repo with your images and a deploy workflow. No installation needed.
-
-1. Create a new GitHub repo
-2. Add your images under `content/` (see [Structuring Your Galleries](#structuring-your-galleries) above)
-3. Enable GitHub Pages (Settings → Pages → Source: GitHub Actions)
-4. Add this workflow as `.github/workflows/deploy.yml`:
-
-```yaml
-name: Deploy Gallery
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build gallery
-        uses: arthur-debert/simple-gal@main
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-Push to `main` and your gallery is live. Use `workflow_dispatch` to manually re-deploy (e.g. after a new simple-gal release).
-
-**Custom domain**: add a `CNAME` file at the repo root with your domain, and add a step to copy it into the output: `run: cp CNAME dist/` (before the upload step).
-
-### Action inputs
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `source` | `./content` | Path to content directory |
-| `output` | `./dist` | Path to output directory |
-| `version` | `latest` | Release version (e.g. `v0.2.0` or `latest`) |
+The easiest way to use simple-gal — no installation needed. See [simple-gal-action](https://github.com/arthur-debert/simple-gal-action) for setup instructions and a complete deploy workflow.
 
 ## Local Usage
 
