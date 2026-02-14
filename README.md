@@ -150,8 +150,45 @@ simple-gal generate            # Uses manifest + processed images to produce fin
 simple-gal gen-config
 ```
 
-## GitHub Actions / Pages Integration
+## GitHub Action
 
-simple-gal includes a GitHub Actions workflow that, on every push to `main`, builds the site and deploys it to GitHub Pages.
+simple-gal is available as a reusable GitHub Action. Create a content repo with your images and a workflow:
 
-To use it: fork this repo, replace the `content/` directory with your own images, and push.
+```yaml
+name: Deploy Gallery
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build gallery
+        uses: arthur-debert/simple-gal@main
+        with:
+          source: ./content   # default
+          output: ./dist      # default
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - uses: actions/deploy-pages@v4
+```
+
+### Action inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `source` | `./content` | Path to content directory |
+| `output` | `./dist` | Path to output directory |
+| `version` | `latest` | Release version (e.g. `v0.1.1` or `latest`) |
