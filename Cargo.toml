@@ -8,7 +8,7 @@ repository = "https://github.com/arthur-debert/simple-gal"
 keywords = ["photography", "gallery", "static-site", "portfolio"]
 categories = ["command-line-utilities"]
 build = "build.rs"
-exclude = ["content/", "fixtures/", "tests/", "scripts/", "*.config.*", "package.json", "package-lock.json", "CNAME", "DEPENDENCIES.md", "local-build-and-serve.sh"]
+exclude = ["fixtures/", "tests/", "scripts/", "*.config.*", "package.json", "package-lock.json", "DEPENDENCIES.md", "local-build-and-serve.sh"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

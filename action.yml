@@ -1,0 +1,57 @@
+name: 'simple-gal'
+description: 'Build a photography gallery with simple-gal'
+
+inputs:
+  source:
+    description: 'Path to content directory'
+    required: false
+    default: './content'
+  output:
+    description: 'Path to output directory'
+    required: false
+    default: './dist'
+  version:
+    description: 'simple-gal release version (e.g. "v0.1.1" or "latest")'
+    required: false
+    default: 'latest'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install system dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq imagemagick webp libavif-bin
+
+    - name: Resolve version
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        VERSION="${{ inputs.version }}"
+        if [ "$VERSION" = "latest" ]; then
+          VERSION=$(gh api repos/arthur-debert/simple-gal/releases/latest --jq '.tag_name')
+          echo "Resolved latest → $VERSION"
+        fi
+        if [[ "$VERSION" != v* ]]; then
+          VERSION="v$VERSION"
+        fi
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Download simple-gal binary
+      shell: bash
+      run: |
+        VERSION="${{ steps.resolve.outputs.version }}"
+        URL="https://github.com/arthur-debert/simple-gal/releases/download/${VERSION}/simple-gal-x86_64-linux-gnu.tar.gz"
+        echo "Downloading simple-gal ${VERSION}"
+        curl -fsSL "$URL" -o /tmp/simple-gal.tar.gz
+        tar -xzf /tmp/simple-gal.tar.gz -C /tmp
+        chmod +x /tmp/simple-gal-x86_64-linux-gnu
+        sudo mv /tmp/simple-gal-x86_64-linux-gnu /usr/local/bin/simple-gal
+        rm /tmp/simple-gal.tar.gz
+
+    - name: Build gallery
+      shell: bash
+      run: simple-gal build --source "${{ inputs.source }}" --output "${{ inputs.output }}"
