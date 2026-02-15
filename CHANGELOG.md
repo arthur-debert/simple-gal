@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Removed WebP output format — all responsive images and thumbnails are now AVIF-only (AVIF has had full browser support since September 2022)
+- Simplified image pages from `<picture>` with AVIF/WebP srcsets to plain `<img>` with AVIF srcset
+- Removed `webp` crate dependency, eliminating the last C build dependency (libwebp-sys)
+- Removed ImageMagick backend — pure Rust image processing only, zero system dependencies
+- Removed `[backend]` config section (was selecting between ImageMagick and Rust backends)
+
 ### Fixed
 - Photo page layout: added bottom mat, description scrolls with photo instead of independently, teaser peeks above nav dots
 - Renamed `frame_width` config to `mat` (breaking: update `config.toml` sections from `[theme.frame_x]`/`[theme.frame_y]` to `[theme.mat_x]`/`[theme.mat_y]`)
@@ -48,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Three-stage build pipeline: scan, process, generate
 - Responsive image processing with multiple output sizes
 - Thumbnail generation with configurable dimensions
-- AVIF and WebP format support
+- AVIF format support
 - Hierarchical configuration system via `config.toml`
 - `gen-config` command for stock config generation
 - Album descriptions from `description.txt` with markdown support

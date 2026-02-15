@@ -24,7 +24,7 @@ simple-gal is a solution born out of this pain. It aims to be useful, simple, an
 - **Future-proof / Resilient**:
   - **The tool**: no external deps, pre-compiled binaries. As long as you can run a Unix program, it works.
   - **The output**: tried-and-true HTML elements and established CSS, with only ~30 lines of vanilla JavaScript (keyboard and swipe only — click navigation is pure HTML/CSS). No dependencies, no front-end toolchain. Unless browsers break fundamental HTML support, you're good.
-  - **Formats**: TIFF, JPEG, AVIF, and WebP fallback.
+  - **Formats**: TIFF, JPEG, and AVIF output.
   - **Hosting**: just drop the generated directory onto any file server. No configuration required.
 - **Photographic Control**:
   - **Image quality**: fine-tune compression and sharpening, per size.

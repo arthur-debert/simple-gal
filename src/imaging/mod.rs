@@ -4,7 +4,6 @@
 //! |---|---|
 //! | **Identify** | `image::image_dimensions` |
 //! | **IPTC metadata** | custom parser (JPEG APP13 + TIFF IFD) |
-//! | **Resize → WebP** | Lanczos3 + `webp` crate (vendored libwebp) |
 //! | **Resize → AVIF** | Lanczos3 + rav1e encoder |
 //! | **Thumbnail** | `resize_to_fill` + `unsharpen` |
 //!

@@ -10,7 +10,7 @@
 //! ## Output Formats
 //!
 //! For each source image, generates:
-//! - **Responsive images**: Multiple sizes in AVIF and WebP formats
+//! - **Responsive images**: Multiple sizes in AVIF format
 //! - **Thumbnails**: Fixed aspect ratio crops for gallery grids
 //!
 //! ## Default Configuration
@@ -29,12 +29,9 @@
 //! ├── manifest.json              # Updated manifest with generated paths
 //! ├── 010-Landscapes/
 //! │   ├── 001-dawn-800.avif      # Responsive sizes
-//! │   ├── 001-dawn-800.webp
 //! │   ├── 001-dawn-1400.avif
-//! │   ├── 001-dawn-1400.webp
 //! │   ├── 001-dawn-2080.avif
-//! │   ├── 001-dawn-2080.webp
-//! │   └── 001-dawn-thumb.webp    # 4:5 center-cropped thumbnail
+//! │   └── 001-dawn-thumb.avif    # 4:5 center-cropped thumbnail
 //! └── ...
 //! ```
 //!
@@ -158,7 +155,7 @@ pub struct OutputImage {
     pub description: Option<String>,
     /// Original dimensions (width, height)
     pub dimensions: (u32, u32),
-    /// Generated responsive images: { "800": { "avif": "path", "webp": "path" }, ... }
+    /// Generated responsive images: { "800": { "avif": "path" }, ... }
     pub generated: std::collections::BTreeMap<String, GeneratedVariant>,
     /// Thumbnail path
     pub thumbnail: String,
@@ -167,7 +164,6 @@ pub struct OutputImage {
 #[derive(Debug, Serialize)]
 pub struct GeneratedVariant {
     pub avif: String,
-    pub webp: String,
     pub width: u32,
     pub height: u32,
 }
@@ -271,7 +267,6 @@ pub fn process_with_backend(
                             v.target_size.to_string(),
                             GeneratedVariant {
                                 avif: v.avif_path,
-                                webp: v.webp_path,
                                 width: v.width,
                                 height: v.height,
                             },
@@ -559,8 +554,8 @@ mod tests {
         use crate::imaging::backend::tests::RecordedOp;
         let ops = backend.get_operations();
 
-        // Should have: 1 identify + 1 read_metadata + 4 resizes (2 sizes × 2 formats) + 1 thumbnail = 7 ops
-        assert_eq!(ops.len(), 7);
+        // Should have: 1 identify + 1 read_metadata + 2 resizes (2 sizes × AVIF) + 1 thumbnail = 5 ops
+        assert_eq!(ops.len(), 5);
 
         // First is identify
         assert!(matches!(&ops[0], RecordedOp::Identify(_)));
@@ -569,12 +564,12 @@ mod tests {
         assert!(matches!(&ops[1], RecordedOp::ReadMetadata(_)));
 
         // Then resizes with correct quality
-        for op in &ops[2..6] {
+        for op in &ops[2..4] {
             assert!(matches!(op, RecordedOp::Resize { quality: 85, .. }));
         }
 
         // Last is thumbnail
-        assert!(matches!(&ops[6], RecordedOp::Thumbnail { .. }));
+        assert!(matches!(&ops[4], RecordedOp::Thumbnail { .. }));
     }
 
     #[test]

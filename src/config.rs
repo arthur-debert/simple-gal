@@ -35,7 +35,7 @@
 //!
 //! [images]
 //! sizes = [800, 1400, 2080] # Responsive sizes to generate
-//! quality = 90              # AVIF/WebP quality (0-100)
+//! quality = 90              # AVIF quality (0-100)
 //!
 //! [theme]
 //! thumbnail_gap = "1rem"    # Gap between thumbnails in grids
@@ -452,7 +452,7 @@ impl Default for ThumbnailsConfig {
 pub struct ImagesConfig {
     /// Pixel widths (longer edge) to generate for responsive `<picture>` elements.
     pub sizes: Vec<u32>,
-    /// AVIF/WebP encoding quality (0 = worst, 100 = best).
+    /// AVIF encoding quality (0 = worst, 100 = best).
     pub quality: u32,
 }
 
@@ -798,7 +798,7 @@ size = 400
 # Pixel widths (longer edge) to generate for responsive <picture> elements.
 sizes = [800, 1400, 2080]
 
-# AVIF/WebP encoding quality (0 = worst, 100 = best).
+# AVIF encoding quality (0 = worst, 100 = best).
 quality = 90
 
 # ---------------------------------------------------------------------------
