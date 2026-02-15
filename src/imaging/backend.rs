@@ -1,20 +1,14 @@
-//! Image processing backend trait and ImageMagick implementation.
+//! Image processing backend trait and shared types.
 //!
 //! The [`ImageBackend`] trait defines the four operations every backend must
-//! support: identify, read_metadata, resize, and thumbnail. Two production
-//! implementations exist:
+//! support: identify, read_metadata, resize, and thumbnail.
 //!
-//! - [`ImageMagickBackend`] (this module) — shells out to `convert`/`identify`.
-//!   Requires ImageMagick installed on the system.
-//! - [`RustBackend`](super::rust_backend::RustBackend) — pure Rust, zero
-//!   external dependencies. See the [`rust_backend`](super::rust_backend) module.
-//!
-//! Both backends have full operation parity. The active backend is chosen at
-//! runtime via [`BackendName`](crate::config::BackendName) in `config.toml`.
+//! The production implementation is
+//! [`RustBackend`](super::rust_backend::RustBackend) — pure Rust, zero
+//! external dependencies. Everything is statically linked into the binary.
 
 use super::params::{ResizeParams, ThumbnailParams};
 use std::path::Path;
-use std::process::Command;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -23,8 +17,6 @@ pub enum BackendError {
     Io(#[from] std::io::Error),
     #[error("Processing failed: {0}")]
     ProcessingFailed(String),
-    #[error("Invalid output: {0}")]
-    InvalidOutput(String),
 }
 
 /// Result of an identify operation.
@@ -64,173 +56,6 @@ pub trait ImageBackend: Sync {
 
     /// Execute a thumbnail operation (resize + center crop).
     fn thumbnail(&self, params: &ThumbnailParams) -> Result<(), BackendError>;
-}
-
-/// ImageMagick backend — shells out to `convert` and `identify`.
-///
-/// Requires ImageMagick 6+ installed on the system (`convert`, `identify` on
-/// `$PATH`). This is the default backend and the proven production path.
-///
-/// For a zero-dependency alternative, see
-/// [`RustBackend`](super::rust_backend::RustBackend).
-pub struct ImageMagickBackend;
-
-impl ImageMagickBackend {
-    pub fn new() -> Self {
-        Self
-    }
-
-    fn run_convert(&self, args: &[&str]) -> Result<(), BackendError> {
-        let output = Command::new("convert").args(args).output()?;
-
-        if !output.status.success() {
-            return Err(BackendError::ProcessingFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-impl Default for ImageMagickBackend {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ImageBackend for ImageMagickBackend {
-    fn identify(&self, path: &Path) -> Result<Dimensions, BackendError> {
-        let output = Command::new("identify")
-            .args(["-format", "%w %h", path.to_str().unwrap()])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(BackendError::ProcessingFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        let dims = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = dims.split_whitespace().collect();
-
-        if parts.len() != 2 {
-            return Err(BackendError::InvalidOutput(format!(
-                "Expected 'width height', got: {}",
-                dims
-            )));
-        }
-
-        let width: u32 = parts[0]
-            .parse()
-            .map_err(|_| BackendError::InvalidOutput(format!("Invalid width: {}", parts[0])))?;
-        let height: u32 = parts[1]
-            .parse()
-            .map_err(|_| BackendError::InvalidOutput(format!("Invalid height: {}", parts[1])))?;
-
-        Ok(Dimensions { width, height })
-    }
-
-    fn read_metadata(&self, path: &Path) -> Result<ImageMetadata, BackendError> {
-        let output = Command::new("identify")
-            .args([
-                "-format",
-                "%[IPTC:2:05]\t%[IPTC:2:120]\t%[IPTC:2:25]",
-                path.to_str().unwrap(),
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(BackendError::ProcessingFailed(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        let raw = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = raw.splitn(3, '\t').collect();
-
-        let to_opt = |s: &str| {
-            let trimmed = s.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        };
-
-        let keywords: Vec<String> = parts
-            .get(2)
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.split(';').map(|k| k.trim().to_string()).collect())
-            .unwrap_or_default();
-
-        Ok(ImageMetadata {
-            title: parts.first().and_then(|s| to_opt(s)),
-            description: parts.get(1).and_then(|s| to_opt(s)),
-            keywords,
-        })
-    }
-
-    fn resize(&self, params: &ResizeParams) -> Result<(), BackendError> {
-        let size = format!("{}x{}", params.width, params.height);
-        let quality = params.quality.value().to_string();
-
-        // Determine output format and add format-specific options
-        let output_path = params.output.to_str().unwrap();
-        let is_avif = output_path.ends_with(".avif");
-
-        let mut args = vec![
-            params.source.to_str().unwrap(),
-            "-resize",
-            &size,
-            "-quality",
-            &quality,
-        ];
-
-        // AVIF-specific: speed setting for faster encoding
-        let heic_speed;
-        if is_avif {
-            heic_speed = "heic:speed=6".to_string();
-            args.push("-define");
-            args.push(&heic_speed);
-        }
-
-        args.push(output_path);
-
-        self.run_convert(&args)
-    }
-
-    fn thumbnail(&self, params: &ThumbnailParams) -> Result<(), BackendError> {
-        // The ^ modifier does minimum-fit resize: the image covers the target area
-        let fill_size = format!("{}x{}^", params.crop_width, params.crop_height);
-        let crop_size = format!("{}x{}", params.crop_width, params.crop_height);
-        let quality = params.quality.value().to_string();
-
-        let mut args = vec![
-            params.source.to_str().unwrap(),
-            "-resize",
-            &fill_size,
-            "-gravity",
-            "center",
-            "-extent",
-            &crop_size,
-            "-quality",
-            &quality,
-        ];
-
-        // Optional sharpening (radius=0 means auto-select from sigma)
-        let sharpen_str;
-        if let Some(sharpening) = params.sharpening {
-            sharpen_str = format!("0x{}", sharpening.sigma);
-            args.push("-sharpen");
-            args.push(&sharpen_str);
-        }
-
-        args.push(params.output.to_str().unwrap());
-
-        self.run_convert(&args)
-    }
 }
 
 #[cfg(test)]
@@ -306,7 +131,7 @@ pub mod tests {
                 .lock()
                 .unwrap()
                 .pop()
-                .ok_or_else(|| BackendError::InvalidOutput("No mock dimensions".to_string()))
+                .ok_or_else(|| BackendError::ProcessingFailed("No mock dimensions".to_string()))
         }
 
         fn read_metadata(&self, path: &Path) -> Result<ImageMetadata, BackendError> {

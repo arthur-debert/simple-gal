@@ -419,7 +419,7 @@ mod tests {
             return;
         }
         let result = read_iptc(path);
-        // This JPEG has keywords but no title/caption (verified via ImageMagick)
+        // This JPEG has keywords but no title/caption
         assert!(
             !result.keywords.is_empty(),
             "Expected keywords in JPEG, got: {:?}",
