@@ -13,12 +13,12 @@ quality = 85
 thumbnail_gap = "0.75rem"
 grid_padding = "1.5rem"
 
-[theme.frame_x]
+[theme.mat_x]
 size = "4vw"
 min = "0.5rem"
 max = "3rem"
 
-[theme.frame_y]
+[theme.mat_y]
 size = "5vw"
 min = "1.5rem"
 max = "4rem"

@@ -197,7 +197,7 @@ fn short_caption_below_frame() {
 
 #[test]
 #[ignore]
-fn short_caption_within_frame_width_portrait() {
+fn short_caption_within_mat_width_portrait() {
     let tab = load_page(page::with_caption::PORTRAIT, &[]);
     let frame = bounding_box(&tab, ".image-frame");
     let caption = bounding_box(&tab, ".image-caption");
