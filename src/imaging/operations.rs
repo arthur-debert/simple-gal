@@ -24,7 +24,6 @@ pub fn get_dimensions(backend: &impl ImageBackend, path: &Path) -> Result<(u32, 
 pub struct GeneratedVariant {
     pub target_size: u32,
     pub avif_path: String,
-    pub webp_path: String,
     pub width: u32,
     pub height: u32,
 }
@@ -38,7 +37,7 @@ pub struct ResponsiveConfig {
 
 /// Create responsive images at multiple sizes.
 ///
-/// Generates AVIF and WebP variants for each applicable size.
+/// Generates AVIF variants for each applicable size.
 /// Sizes larger than the original are skipped.
 pub fn create_responsive_images(
     backend: &impl ImageBackend,
@@ -58,23 +57,11 @@ pub fn create_responsive_images(
     } in sizes
     {
         let avif_name = format!("{}-{}.avif", filename_stem, target);
-        let webp_name = format!("{}-{}.webp", filename_stem, target);
         let avif_path = output_dir.join(&avif_name);
-        let webp_path = output_dir.join(&webp_name);
 
-        // Generate AVIF
         backend.resize(&ResizeParams {
             source: source.to_path_buf(),
             output: avif_path.clone(),
-            width,
-            height,
-            quality: config.quality,
-        })?;
-
-        // Generate WebP
-        backend.resize(&ResizeParams {
-            source: source.to_path_buf(),
-            output: webp_path.clone(),
             width,
             height,
             quality: config.quality,
@@ -89,7 +76,6 @@ pub fn create_responsive_images(
         variants.push(GeneratedVariant {
             target_size: target,
             avif_path: format!("{}/{}", relative_dir, avif_name),
-            webp_path: format!("{}/{}", relative_dir, webp_name),
             width,
             height,
         });
@@ -148,7 +134,7 @@ pub fn create_thumbnail(
     filename_stem: &str,
     config: &ThumbnailConfig,
 ) -> Result<String> {
-    let thumb_name = format!("{}-thumb.webp", filename_stem);
+    let thumb_name = format!("{}-thumb.avif", filename_stem);
     let thumb_path = output_dir.join(&thumb_name);
 
     let params = plan_thumbnail(source, &thumb_path, config);
@@ -184,7 +170,7 @@ mod tests {
         // 4:5 portrait thumb at 400 short edge → crop 400x500
         let params = plan_thumbnail(
             Path::new("/source.jpg"),
-            Path::new("/thumb.webp"),
+            Path::new("/thumb.avif"),
             &ThumbnailConfig::default(),
         );
 
@@ -199,7 +185,7 @@ mod tests {
             short_edge: 180,
             ..ThumbnailConfig::default()
         };
-        let params = plan_thumbnail(Path::new("/source.jpg"), Path::new("/thumb.webp"), &config);
+        let params = plan_thumbnail(Path::new("/source.jpg"), Path::new("/thumb.avif"), &config);
 
         assert_eq!(params.crop_width, 320);
         assert_eq!(params.crop_height, 180);
@@ -219,7 +205,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result, "output/001-test-thumb.webp");
+        assert_eq!(result, "output/001-test-thumb.avif");
 
         let ops = backend.get_operations();
         assert_eq!(ops.len(), 1);
@@ -255,13 +241,12 @@ mod tests {
         assert_eq!(variants.len(), 1);
         assert_eq!(variants[0].target_size, 800);
 
-        // Should have 2 operations (AVIF + WebP)
         let ops = backend.get_operations();
-        assert_eq!(ops.len(), 2);
+        assert_eq!(ops.len(), 1);
     }
 
     #[test]
-    fn create_responsive_generates_all_formats() {
+    fn create_responsive_generates_avif() {
         let backend = MockBackend::new();
         let config = ResponsiveConfig {
             sizes: vec![800],
@@ -279,18 +264,11 @@ mod tests {
         .unwrap();
 
         let ops = backend.get_operations();
-        assert_eq!(ops.len(), 2);
+        assert_eq!(ops.len(), 1);
 
-        // First should be AVIF
         assert!(matches!(
             &ops[0],
             RecordedOp::Resize { output, quality: 85, .. } if output.ends_with(".avif")
-        ));
-
-        // Second should be WebP
-        assert!(matches!(
-            &ops[1],
-            RecordedOp::Resize { output, quality: 85, .. } if output.ends_with(".webp")
         ));
     }
 

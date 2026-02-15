@@ -12,7 +12,7 @@
 //!
 //! ## Features
 //!
-//! - **Responsive images**: Uses `<picture>` with AVIF and WebP srcsets
+//! - **Responsive images**: Uses AVIF srcset for responsive images
 //! - **Collapsible navigation**: Details/summary for mobile-friendly nav
 //! - **Keyboard navigation**: Arrow keys and swipe gestures for image browsing
 //! - **View transitions**: Smooth page-to-page animations (where supported)
@@ -29,7 +29,6 @@
 //! │   ├── 1-dawn.html            # Image viewer pages
 //! │   ├── 2-sunset.html
 //! │   ├── 001-dawn-800.avif      # Processed images (copied)
-//! │   ├── 001-dawn-800.webp
 //! │   └── ...
 //! └── Travel/
 //!     └── ...
@@ -104,7 +103,6 @@ pub struct Image {
 #[derive(Debug, Deserialize)]
 pub struct GeneratedVariant {
     pub avif: String,
-    pub webp: String,
     #[allow(dead_code)]
     pub width: u32,
     #[allow(dead_code)]
@@ -711,21 +709,15 @@ fn render_image_page(
             .join(", ")
     };
 
-    // Build srcsets
+    // Build srcset
     let sizes: Vec<_> = image.generated.iter().collect();
 
     let srcset_avif: String = avif_srcset_for(image);
 
-    let srcset_webp: String = sizes
-        .iter()
-        .map(|(size, variant)| format!("{} {}w", strip_prefix(&variant.webp), size))
-        .collect::<Vec<_>>()
-        .join(", ");
-
     // Use middle size as default
     let default_src = sizes
         .get(sizes.len() / 2)
-        .map(|(_, v)| strip_prefix(&v.webp))
+        .map(|(_, v)| strip_prefix(&v.avif))
         .unwrap_or_default();
 
     // Pick a single middle-size AVIF URL for adjacent image prefetch
@@ -824,11 +816,7 @@ fn render_image_page(
         main style=(aspect_style) {
             div.image-page {
                 figure.image-frame {
-                    picture {
-                        source type="image/avif" srcset=(srcset_avif) sizes=(IMAGE_SIZES);
-                        source type="image/webp" srcset=(srcset_webp) sizes=(IMAGE_SIZES);
-                        img #main-image src=(default_src) alt=(alt_text);
-                    }
+                    img #main-image src=(default_src) srcset=(srcset_avif) sizes=(IMAGE_SIZES) alt=(alt_text);
                 }
                 p.print-credit {
                     (album.title) " › " (image_label)
@@ -1090,7 +1078,7 @@ mod tests {
             path: "test".to_string(),
             title: "Test Album".to_string(),
             description: Some("<p>A test album description</p>".to_string()),
-            thumbnail: "test/001-image-thumb.webp".to_string(),
+            thumbnail: "test/001-image-thumb.avif".to_string(),
             images: vec![
                 Image {
                     number: 1,
@@ -1104,7 +1092,6 @@ mod tests {
                             "800".to_string(),
                             GeneratedVariant {
                                 avif: "test/001-dawn-800.avif".to_string(),
-                                webp: "test/001-dawn-800.webp".to_string(),
                                 width: 800,
                                 height: 600,
                             },
@@ -1113,14 +1100,13 @@ mod tests {
                             "1400".to_string(),
                             GeneratedVariant {
                                 avif: "test/001-dawn-1400.avif".to_string(),
-                                webp: "test/001-dawn-1400.webp".to_string(),
                                 width: 1400,
                                 height: 1050,
                             },
                         );
                         map
                     },
-                    thumbnail: "test/001-dawn-thumb.webp".to_string(),
+                    thumbnail: "test/001-dawn-thumb.avif".to_string(),
                 },
                 Image {
                     number: 2,
@@ -1134,14 +1120,13 @@ mod tests {
                             "800".to_string(),
                             GeneratedVariant {
                                 avif: "test/002-night-800.avif".to_string(),
-                                webp: "test/002-night-800.webp".to_string(),
                                 width: 600,
                                 height: 800,
                             },
                         );
                         map
                     },
-                    thumbnail: "test/002-night-thumb.webp".to_string(),
+                    thumbnail: "test/002-night-thumb.avif".to_string(),
                 },
             ],
             in_nav: true,
@@ -1179,7 +1164,7 @@ mod tests {
         assert!(html.contains("1-Dawn/"));
         assert!(html.contains("2/"));
         // Thumbnails should have paths relative to album dir
-        assert!(html.contains("001-dawn-thumb.webp"));
+        assert!(html.contains("001-dawn-thumb.avif"));
     }
 
     #[test]
@@ -1194,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn render_image_page_includes_picture_element() {
+    fn render_image_page_includes_img_with_srcset() {
         let album = create_test_album();
         let image = &album.images[0];
         let nav = vec![];
@@ -1212,9 +1197,10 @@ mod tests {
         )
         .into_string();
 
-        assert!(html.contains("<picture>"));
-        assert!(html.contains("image/avif"));
-        assert!(html.contains("image/webp"));
+        assert!(html.contains("<img"));
+        assert!(html.contains("srcset="));
+        assert!(html.contains(".avif"));
+        assert!(!html.contains("<picture>"));
     }
 
     #[test]
@@ -1919,7 +1905,7 @@ mod tests {
                     path: "visible".to_string(),
                     title: "Visible".to_string(),
                     description: None,
-                    thumbnail: "visible/thumb.webp".to_string(),
+                    thumbnail: "visible/thumb.avif".to_string(),
                     images: vec![],
                     in_nav: true,
                     config: SiteConfig::default(),
@@ -1928,7 +1914,7 @@ mod tests {
                     path: "hidden".to_string(),
                     title: "Hidden".to_string(),
                     description: None,
-                    thumbnail: "hidden/thumb.webp".to_string(),
+                    thumbnail: "hidden/thumb.avif".to_string(),
                     images: vec![],
                     in_nav: false,
                     config: SiteConfig::default(),
@@ -1969,7 +1955,7 @@ mod tests {
             path: "solo".to_string(),
             title: "Solo Album".to_string(),
             description: None,
-            thumbnail: "solo/001-thumb.webp".to_string(),
+            thumbnail: "solo/001-thumb.avif".to_string(),
             images: vec![Image {
                 number: 1,
                 source_path: "solo/001-photo.jpg".to_string(),
@@ -1982,14 +1968,13 @@ mod tests {
                         "800".to_string(),
                         GeneratedVariant {
                             avif: "solo/001-photo-800.avif".to_string(),
-                            webp: "solo/001-photo-800.webp".to_string(),
                             width: 800,
                             height: 600,
                         },
                     );
                     map
                 },
-                thumbnail: "solo/001-photo-thumb.webp".to_string(),
+                thumbnail: "solo/001-photo-thumb.avif".to_string(),
             }],
             in_nav: true,
             config: SiteConfig::default(),
