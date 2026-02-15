@@ -201,7 +201,7 @@ pub fn generate(
     //      For local fonts, this is skipped and @font-face is used instead.
     //
     //   2. Generated CSS vars  → config::generate_{color,theme,font}_css()
-    //      Produces :root { --color-*, --frame-*, --font-*, … }
+    //      Produces :root { --color-*, --mat-*, --font-*, … }
     //      For local fonts, also includes @font-face declaration.
     //      Prepended to the <style> block so vars are defined before use.
     //
@@ -1865,7 +1865,7 @@ mod tests {
     fn rendered_html_contains_theme_css_variables() {
         let mut config = SiteConfig::default();
         config.theme.thumbnail_gap = "0.5rem".to_string();
-        config.theme.frame_x.size = "5vw".to_string();
+        config.theme.mat_x.size = "5vw".to_string();
 
         let theme_css = crate::config::generate_theme_css(&config.theme);
         let album = create_test_album();
@@ -1873,8 +1873,8 @@ mod tests {
             render_album_page(&album, &[], &[], &theme_css, None, "Gallery", None).into_string();
 
         assert!(html.contains("--thumbnail-gap: 0.5rem"));
-        assert!(html.contains("--frame-width-x: clamp(1rem, 5vw, 2.5rem)"));
-        assert!(html.contains("--frame-width-y:"));
+        assert!(html.contains("--mat-x: clamp(1rem, 5vw, 2.5rem)"));
+        assert!(html.contains("--mat-y:"));
         assert!(html.contains("--grid-padding:"));
     }
 

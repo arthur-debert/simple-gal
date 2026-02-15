@@ -163,7 +163,7 @@ sticky at the bottom.
 | `.site-header` | Site Header | |
 | `.image-nav` | Image Nav | |
 | `body.image-view main` | Photo Viewport | |
-| `--mat-x`, `--mat-y` | Mat | Renamed from `--frame-width-x/y` |
+| `--mat-x`, `--mat-y` | Mat | User-controlled whitespace around the photo |
 | `.image-frame` | Photo | Aspect-ratio constrained container |
 | `.image-caption` | Caption | ≤160 chars, inside mat |
 | `.image-description` | Description | >160 chars, below mat |

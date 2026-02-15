@@ -41,15 +41,15 @@
 //! thumbnail_gap = "1rem"    # Gap between thumbnails in grids
 //! grid_padding = "2rem"     # Padding around thumbnail grids
 //!
-//! [theme.frame_x]
-//! size = "3vw"              # Preferred horizontal frame size
-//! min = "1rem"              # Minimum horizontal frame size
-//! max = "2.5rem"            # Maximum horizontal frame size
+//! [theme.mat_x]
+//! size = "3vw"              # Preferred horizontal mat size
+//! min = "1rem"              # Minimum horizontal mat size
+//! max = "2.5rem"            # Maximum horizontal mat size
 //!
-//! [theme.frame_y]
-//! size = "6vw"              # Preferred vertical frame size
-//! min = "2rem"              # Minimum vertical frame size
-//! max = "5rem"              # Maximum vertical frame size
+//! [theme.mat_y]
+//! size = "6vw"              # Preferred vertical mat size
+//! min = "2rem"              # Minimum vertical mat size
+//! max = "5rem"              # Maximum vertical mat size
 //!
 //! [colors.light]
 //! background = "#ffffff"
@@ -595,10 +595,10 @@ impl ClampSize {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
-    /// Horizontal frame padding around images (left/right).
-    pub frame_x: ClampSize,
-    /// Vertical frame padding around images (top/bottom).
-    pub frame_y: ClampSize,
+    /// Horizontal mat around images (left/right). See docs/dev/photo-page-layout.md.
+    pub mat_x: ClampSize,
+    /// Vertical mat around images (top/bottom). See docs/dev/photo-page-layout.md.
+    pub mat_y: ClampSize,
     /// Gap between thumbnails in both album and image grids (CSS value).
     pub thumbnail_gap: String,
     /// Padding around the thumbnail grid container (CSS value).
@@ -608,19 +608,19 @@ pub struct ThemeConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PartialThemeConfig {
-    pub frame_x: Option<PartialClampSize>,
-    pub frame_y: Option<PartialClampSize>,
+    pub mat_x: Option<PartialClampSize>,
+    pub mat_y: Option<PartialClampSize>,
     pub thumbnail_gap: Option<String>,
     pub grid_padding: Option<String>,
 }
 
 impl ThemeConfig {
     pub fn merge(mut self, other: PartialThemeConfig) -> Self {
-        if let Some(x) = other.frame_x {
-            self.frame_x = self.frame_x.merge(x);
+        if let Some(x) = other.mat_x {
+            self.mat_x = self.mat_x.merge(x);
         }
-        if let Some(y) = other.frame_y {
-            self.frame_y = self.frame_y.merge(y);
+        if let Some(y) = other.mat_y {
+            self.mat_y = self.mat_y.merge(y);
         }
         if let Some(g) = other.thumbnail_gap {
             self.thumbnail_gap = g;
@@ -635,12 +635,12 @@ impl ThemeConfig {
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            frame_x: ClampSize {
+            mat_x: ClampSize {
                 size: "3vw".to_string(),
                 min: "1rem".to_string(),
                 max: "2.5rem".to_string(),
             },
-            frame_y: ClampSize {
+            mat_y: ClampSize {
                 size: "6vw".to_string(),
                 min: "2rem".to_string(),
                 max: "5rem".to_string(),
@@ -870,14 +870,15 @@ thumbnail_gap = "1rem"
 # Padding around the thumbnail grid container (CSS value).
 grid_padding = "2rem"
 
-# Horizontal frame padding around images, as CSS clamp(min, size, max).
-[theme.frame_x]
+# Horizontal mat around images, as CSS clamp(min, size, max).
+# See docs/dev/photo-page-layout.md for the layout spec.
+[theme.mat_x]
 size = "3vw"
 min = "1rem"
 max = "2.5rem"
 
-# Vertical frame padding around images, as CSS clamp(min, size, max).
-[theme.frame_y]
+# Vertical mat around images, as CSS clamp(min, size, max).
+[theme.mat_y]
 size = "6vw"
 min = "2rem"
 max = "5rem"
@@ -997,13 +998,13 @@ pub fn generate_color_css(colors: &ColorConfig) -> String {
 pub fn generate_theme_css(theme: &ThemeConfig) -> String {
     format!(
         r#":root {{
-    --frame-width-x: {frame_x};
-    --frame-width-y: {frame_y};
+    --mat-x: {mat_x};
+    --mat-y: {mat_y};
     --thumbnail-gap: {thumbnail_gap};
     --grid-padding: {grid_padding};
 }}"#,
-        frame_x = theme.frame_x.to_css(),
-        frame_y = theme.frame_y.to_css(),
+        mat_x = theme.mat_x.to_css(),
+        mat_y = theme.mat_y.to_css(),
         thumbnail_gap = theme.thumbnail_gap,
         grid_padding = theme.grid_padding,
     )
@@ -1065,8 +1066,8 @@ mod tests {
         assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
         assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
         assert_eq!(config.images.quality, 90);
-        assert_eq!(config.theme.frame_x.to_css(), "clamp(1rem, 3vw, 2.5rem)");
-        assert_eq!(config.theme.frame_y.to_css(), "clamp(2rem, 6vw, 5rem)");
+        assert_eq!(config.theme.mat_x.to_css(), "clamp(1rem, 3vw, 2.5rem)");
+        assert_eq!(config.theme.mat_y.to_css(), "clamp(2rem, 6vw, 5rem)");
     }
 
     #[test]
@@ -1265,11 +1266,11 @@ link_hover = "#f88"
     }
 
     #[test]
-    fn generate_theme_css_includes_frame_variables() {
+    fn generate_theme_css_includes_mat_variables() {
         let theme = ThemeConfig::default();
         let css = generate_theme_css(&theme);
-        assert!(css.contains("--frame-width-x: clamp(1rem, 3vw, 2.5rem)"));
-        assert!(css.contains("--frame-width-y: clamp(2rem, 6vw, 5rem)"));
+        assert!(css.contains("--mat-x: clamp(1rem, 3vw, 2.5rem)"));
+        assert!(css.contains("--mat-y: clamp(2rem, 6vw, 5rem)"));
         assert!(css.contains("--thumbnail-gap: 1rem"));
         assert!(css.contains("--grid-padding: 2rem"));
     }
@@ -1571,8 +1572,8 @@ quality = 200
         assert!(content.contains("[thumbnails]"));
         assert!(content.contains("[images]"));
         assert!(content.contains("[theme]"));
-        assert!(content.contains("[theme.frame_x]"));
-        assert!(content.contains("[theme.frame_y]"));
+        assert!(content.contains("[theme.mat_x]"));
+        assert!(content.contains("[theme.mat_y]"));
         assert!(content.contains("[colors.light]"));
         assert!(content.contains("[colors.dark]"));
         assert!(content.contains("[processing]"));
@@ -1652,10 +1653,10 @@ quality = 200
     // =========================================================================
 
     #[test]
-    fn merge_partial_theme_frame_x_only() {
+    fn merge_partial_theme_mat_x_only() {
         let partial: PartialSiteConfig = toml::from_str(
             r#"
-            [theme.frame_x]
+            [theme.mat_x]
             size = "5vw"
         "#,
         )
@@ -1663,14 +1664,14 @@ quality = 200
         let config = SiteConfig::default().merge(partial);
 
         // Overridden
-        assert_eq!(config.theme.frame_x.size, "5vw");
+        assert_eq!(config.theme.mat_x.size, "5vw");
         // Preserved from defaults
-        assert_eq!(config.theme.frame_x.min, "1rem");
-        assert_eq!(config.theme.frame_x.max, "2.5rem");
-        // frame_y entirely untouched
-        assert_eq!(config.theme.frame_y.size, "6vw");
-        assert_eq!(config.theme.frame_y.min, "2rem");
-        assert_eq!(config.theme.frame_y.max, "5rem");
+        assert_eq!(config.theme.mat_x.min, "1rem");
+        assert_eq!(config.theme.mat_x.max, "2.5rem");
+        // mat_y entirely untouched
+        assert_eq!(config.theme.mat_y.size, "6vw");
+        assert_eq!(config.theme.mat_y.min, "2rem");
+        assert_eq!(config.theme.mat_y.max, "5rem");
         // Other theme fields untouched
         assert_eq!(config.theme.thumbnail_gap, "1rem");
         assert_eq!(config.theme.grid_padding, "2rem");
@@ -1749,7 +1750,7 @@ quality = 200
         // Sections not mentioned at all → full defaults
         assert_eq!(config.images.quality, 90);
         assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
-        assert_eq!(config.theme.frame_x.size, "3vw");
+        assert_eq!(config.theme.mat_x.size, "3vw");
     }
 
     // =========================================================================

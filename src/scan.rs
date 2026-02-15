@@ -959,8 +959,8 @@ mod tests {
         assert_eq!(manifest.config.images.quality, 85);
         assert_eq!(manifest.config.images.sizes, vec![600, 1200, 1800]);
         assert_eq!(manifest.config.theme.thumbnail_gap, "0.75rem");
-        assert_eq!(manifest.config.theme.frame_x.size, "4vw");
-        assert_eq!(manifest.config.theme.frame_y.min, "1.5rem");
+        assert_eq!(manifest.config.theme.mat_x.size, "4vw");
+        assert_eq!(manifest.config.theme.mat_y.min, "1.5rem");
         assert_eq!(manifest.config.colors.light.background, "#fafafa");
         assert_eq!(manifest.config.colors.dark.text_muted, "#888888");
         assert_eq!(manifest.config.font.font, "Playfair Display");
@@ -1199,12 +1199,12 @@ mod tests {
         // Inherited from root config — theme
         assert_eq!(ls.config.theme.thumbnail_gap, "0.75rem");
         assert_eq!(ls.config.theme.grid_padding, "1.5rem");
-        assert_eq!(ls.config.theme.frame_x.size, "4vw");
-        assert_eq!(ls.config.theme.frame_x.min, "0.5rem");
-        assert_eq!(ls.config.theme.frame_x.max, "3rem");
-        assert_eq!(ls.config.theme.frame_y.size, "5vw");
-        assert_eq!(ls.config.theme.frame_y.min, "1.5rem");
-        assert_eq!(ls.config.theme.frame_y.max, "4rem");
+        assert_eq!(ls.config.theme.mat_x.size, "4vw");
+        assert_eq!(ls.config.theme.mat_x.min, "0.5rem");
+        assert_eq!(ls.config.theme.mat_x.max, "3rem");
+        assert_eq!(ls.config.theme.mat_y.size, "5vw");
+        assert_eq!(ls.config.theme.mat_y.min, "1.5rem");
+        assert_eq!(ls.config.theme.mat_y.max, "4rem");
 
         // Inherited from root config — colors
         assert_eq!(ls.config.colors.light.background, "#fafafa");

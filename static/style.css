@@ -49,7 +49,7 @@
  * GENERATED VARIABLES — defined in config.rs, injected before this file:
  *   --color-bg, --color-text, --color-text-muted, --color-border,
  *   --color-link, --color-link-hover, --color-separator
- *   --frame-width-x, --frame-width-y, --thumbnail-gap, --grid-padding
+ *   --mat-x, --mat-y, --thumbnail-gap, --grid-padding
  *   --font-family, --font-weight
  *
  * The Google Font itself is loaded via a <link> tag in <head>, NOT here.
@@ -369,7 +369,7 @@ body.image-view main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: var(--frame-width-y) var(--frame-width-x) 0;
+    padding: var(--mat-y) var(--mat-x) 0;
     height: calc(100dvh - var(--header-height));
     position: relative;
 }
@@ -522,7 +522,7 @@ body.has-description .image-page {
     }
 
     body.image-view main {
-        padding: var(--frame-width-y) var(--frame-width-x);
+        padding: var(--mat-y) var(--mat-x);
     }
 
     .album-grid {
