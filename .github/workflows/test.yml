@@ -16,16 +16,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Rust with ImageMagick
+      - name: Setup Rust
         uses: ./.github/actions/rust-setup
-        with:
-          install-imagemagick: 'true'
 
       - name: Run tests
         run: cargo test --all-features
-
-      - name: Run ignored tests (require ImageMagick)
-        run: cargo test --all-features --bin simple-gal -- --ignored
 
       - name: Build release binary
         run: cargo build --release

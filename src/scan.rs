@@ -1221,9 +1221,6 @@ mod tests {
         assert_eq!(ls.config.font.weight, "400");
         assert_eq!(ls.config.font.font_type, crate::config::FontType::Serif);
 
-        // Inherited from root config — backend
-        assert_eq!(ls.config.backend.name, crate::config::BackendName::Rust);
-
         // Inherited from root config — image sizes (not overridden by gallery)
         assert_eq!(ls.config.images.sizes, vec![600, 1200, 1800]);
     }

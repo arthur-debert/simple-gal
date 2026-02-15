@@ -12,7 +12,7 @@
 //!   `001-My-Photo.txt` alongside `001-My-Photo.jpg`. Follows the same pattern
 //!   as `info.txt` for album descriptions — plain text, no special format.
 //!
-//! ## Embedded metadata sources (read during process phase via ImageMagick)
+//! ## Embedded metadata sources (read during process phase)
 //!
 //! - **Title**: IPTC Object Name (`IPTC:2:05`). This is the "Title" field in
 //!   Lightroom, Capture One, and most DAM (Digital Asset Management) software.

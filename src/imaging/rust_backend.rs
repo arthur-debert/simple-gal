@@ -1,8 +1,6 @@
 //! Pure Rust image processing backend — zero external dependencies.
 //!
-//! Drop-in replacement for [`ImageMagickBackend`](super::backend::ImageMagickBackend)
-//! using compiled-in Rust libraries instead of shell-outs. Everything is
-//! statically linked into the binary.
+//! Everything is statically linked into the binary.
 //!
 //! ## Crate mapping
 //!
@@ -15,13 +13,6 @@
 //! | Thumbnail crop | `image::DynamicImage::resize_to_fill` |
 //! | Sharpening | `image::imageops::unsharpen` |
 //! | IPTC metadata | custom [`iptc_parser`](super::iptc_parser) (JPEG APP13 + TIFF IFD) |
-//!
-//! ## Switching to this backend
-//!
-//! ```toml
-//! [backend]
-//! name = "rust"
-//! ```
 
 use super::backend::{BackendError, Dimensions, ImageBackend, ImageMetadata};
 use super::params::{ResizeParams, ThumbnailParams};
@@ -31,7 +22,6 @@ use std::path::Path;
 
 /// Pure Rust backend using the `image` crate ecosystem.
 ///
-/// Has full operation parity with [`ImageMagickBackend`](super::backend::ImageMagickBackend).
 /// See the [module docs](self) for the crate-to-operation mapping.
 pub struct RustBackend;
 

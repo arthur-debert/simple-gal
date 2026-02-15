@@ -1,57 +1,11 @@
 # System Dependencies
 
-Simple Gal requires these system-level tools for image processing.
+Simple Gal has **no system-level dependencies**. All image processing (JPEG/PNG/WebP/AVIF decode, resize, encode, IPTC metadata extraction) is handled by pure Rust libraries compiled into the binary.
 
-## Required
+## Build Requirements
 
-| Tool | Commands Used | Purpose |
-|------|---------------|---------|
-| ImageMagick | `convert`, `identify` | Resizing, format conversion, dimension detection |
-| libavif | - | AVIF encoding (via ImageMagick) |
-| libwebp | - | WebP encoding (via ImageMagick) |
+| Tool | Purpose |
+|------|---------|
+| Rust toolchain | Compile the binary (`cargo build --release`) |
 
-## Installation
-
-### macOS (Homebrew)
-
-```bash
-brew install imagemagick webp libavif
-```
-
-### Ubuntu / Debian
-
-```bash
-sudo apt-get update
-sudo apt-get install -y imagemagick webp libavif-bin
-```
-
-### Arch Linux
-
-```bash
-sudo pacman -S imagemagick libwebp libavif
-```
-
-### Verify Installation
-
-```bash
-# Check required commands exist
-convert -version
-identify -version
-
-# Check AVIF/WebP support
-convert -list format | grep -E 'AVIF|WEBP'
-```
-
-Expected output should show both AVIF and WEBP formats.
-
-## Automated Installation
-
-Use the provided script which handles detection and verification:
-
-```bash
-./scripts/install-deps.sh
-```
-
-## GitHub Actions
-
-The CI workflow installs dependencies via apt and verifies the `convert` command.
+That's it. The resulting binary is fully self-contained.

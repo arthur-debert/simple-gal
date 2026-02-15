@@ -5,7 +5,7 @@
 //!
 //! ## Dependencies
 //!
-//! Requires ImageMagick to be installed. Uses the `convert` and `identify` commands.
+//! Uses the pure Rust imaging backend — no external dependencies required.
 //!
 //! ## Output Formats
 //!
@@ -38,10 +38,10 @@
 //! └── ...
 //! ```
 //!
-use crate::config::{BackendName, SiteConfig};
+use crate::config::SiteConfig;
 use crate::imaging::{
-    BackendError, ImageBackend, ImageMagickBackend, Quality, ResponsiveConfig, RustBackend,
-    Sharpening, ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
+    BackendError, ImageBackend, Quality, ResponsiveConfig, RustBackend, Sharpening,
+    ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
 use crate::metadata;
 use crate::types::{NavItem, Page};
@@ -177,19 +177,8 @@ pub fn process(
     source_root: &Path,
     output_dir: &Path,
 ) -> Result<OutputManifest, ProcessError> {
-    let manifest_content = std::fs::read_to_string(manifest_path)?;
-    let input: InputManifest = serde_json::from_str(&manifest_content)?;
-
-    match input.config.backend.name {
-        BackendName::ImageMagick => {
-            let backend = ImageMagickBackend::new();
-            process_with_backend(&backend, manifest_path, source_root, output_dir)
-        }
-        BackendName::Rust => {
-            let backend = RustBackend::new();
-            process_with_backend(&backend, manifest_path, source_root, output_dir)
-        }
-    }
+    let backend = RustBackend::new();
+    process_with_backend(&backend, manifest_path, source_root, output_dir)
 }
 
 /// Process images using a specific backend (allows testing with mock).
@@ -360,7 +349,7 @@ mod tests {
     use tempfile::TempDir;
 
     // =========================================================================
-    // ProcessConfig tests (no ImageMagick required)
+    // ProcessConfig tests
     // =========================================================================
 
     #[test]
@@ -389,7 +378,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Manifest parsing tests (no ImageMagick required)
+    // Manifest parsing tests
     // =========================================================================
 
     #[test]
@@ -468,7 +457,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Process with mock backend tests (no ImageMagick required)
+    // Process with mock backend tests
     // =========================================================================
 
     use crate::imaging::Dimensions;
@@ -631,83 +620,5 @@ mod tests {
         let result = process_with_backend(&backend, &manifest_path, &source_dir, &output_dir);
 
         assert!(matches!(result, Err(ProcessError::SourceNotFound(_))));
-    }
-
-    // =========================================================================
-    // ImageMagick integration tests (require ImageMagick)
-    // =========================================================================
-
-    fn create_test_image(path: &Path) {
-        // Create a 200x250 test image (4:5 aspect)
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::process::Command::new("convert")
-            .args([
-                "-size",
-                "200x250",
-                "xc:gray",
-                "-fill",
-                "white",
-                "-draw",
-                "circle 100,125 100,50",
-                path.to_str().unwrap(),
-            ])
-            .output()
-            .unwrap();
-    }
-
-    #[test]
-    #[ignore] // Requires ImageMagick
-    fn process_generates_outputs() {
-        let tmp = TempDir::new().unwrap();
-        let source_dir = tmp.path().join("source");
-        let output_dir = tmp.path().join("output");
-
-        // Create test image
-        let image_path = source_dir.join("test-album/001-test.jpg");
-        create_test_image(&image_path);
-
-        // Create manifest with per-album config
-        let manifest_path =
-            create_test_manifest_with_config(tmp.path(), r#"{"images": {"sizes": [100, 150]}}"#);
-
-        let result = process(&manifest_path, &source_dir, &output_dir).unwrap();
-
-        // Verify outputs exist
-        assert_eq!(result.albums.len(), 1);
-        assert_eq!(result.albums[0].images.len(), 1);
-
-        let image = &result.albums[0].images[0];
-        assert!(!image.generated.is_empty());
-        assert!(!image.thumbnail.is_empty());
-
-        // Check files were created
-        let album_dir = output_dir.join("test-album");
-        assert!(album_dir.join("001-test-thumb.webp").exists());
-    }
-
-    #[test]
-    #[ignore] // Requires ImageMagick
-    fn thumbnail_has_correct_aspect() {
-        let tmp = TempDir::new().unwrap();
-        let source_dir = tmp.path().join("source");
-        let output_dir = tmp.path().join("output");
-
-        let image_path = source_dir.join("test-album/001-test.jpg");
-        create_test_image(&image_path);
-
-        let manifest_path = create_test_manifest_with_config(
-            tmp.path(),
-            r#"{"images": {"sizes": [100]}, "thumbnails": {"aspect_ratio": [4, 5], "size": 80}}"#,
-        );
-
-        process(&manifest_path, &source_dir, &output_dir).unwrap();
-
-        // Check thumbnail dimensions
-        let thumb_path = output_dir.join("test-album/001-test-thumb.webp");
-        let backend = ImageMagickBackend::new();
-        let dims = crate::imaging::get_dimensions(&backend, &thumb_path).unwrap();
-
-        // Should be 80x100 (4:5 with short edge 80)
-        assert_eq!(dims, (80, 100));
     }
 }
