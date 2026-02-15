@@ -479,7 +479,7 @@ body.has-description main::-webkit-scrollbar {
 }
 
 body.has-description .image-page {
-    --desc-peek: 3.5rem;
+    --desc-peek: 4.5rem;
     flex: 0 0 calc(100% - var(--mat-y) - var(--desc-peek));
 }
 
