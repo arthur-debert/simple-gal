@@ -360,6 +360,7 @@ main {
 }
 
 /* ===== Image Page ===== */
+/* Layout spec: docs/dev/photo-page-layout.md */
 body.image-view {
     overflow: hidden;
 }
