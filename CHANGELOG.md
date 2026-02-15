@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Photo page layout: added bottom mat, description scrolls with photo instead of independently, teaser peeks above nav dots
+- Renamed `frame_width` config to `mat` (breaking: update `config.toml` sections from `[theme.frame_x]`/`[theme.frame_y]` to `[theme.mat_x]`/`[theme.mat_y]`)
+
 ## [0.2.0] - 2026-02-14
 
 ### Added
