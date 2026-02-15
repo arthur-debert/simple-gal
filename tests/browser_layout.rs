@@ -216,12 +216,12 @@ fn short_caption_centered_with_frame() {
 }
 
 // ===========================================================================
-// Long description
+// Long description — scrolls with photo, teaser peeks above nav dots
 // ===========================================================================
 
 #[test]
 #[ignore]
-fn long_desc_within_viewport() {
+fn long_desc_teaser_visible() {
     let tab = load_page(page::with_description::LANDSCAPE, &[]);
     let desc = bounding_box(&tab, ".image-description");
     let vh: f64 = tab
@@ -231,21 +231,28 @@ fn long_desc_within_viewport() {
         .unwrap()
         .as_f64()
         .unwrap();
-    assert!(desc.y < vh, "description should start within viewport");
+    // Description teaser should start within viewport
     assert!(
-        desc.y + desc.height <= vh + 1.0,
-        "description should be contained within viewport (scrolls internally)"
+        desc.y < vh,
+        "description teaser should start within viewport, desc.y={} vh={}",
+        desc.y,
+        vh
+    );
+    // But full description extends beyond (needs scrolling)
+    assert!(
+        desc.y + desc.height > vh,
+        "full description should extend beyond viewport"
     );
 }
 
 #[test]
 #[ignore]
-fn long_desc_scrolls_internally() {
+fn long_desc_main_scrollable() {
     let tab = load_page(page::with_description::LANDSCAPE, &[]);
     let overflows = tab
         .evaluate(
-            "(() => { const d = document.querySelector('.image-description'); \
-             return d.scrollHeight > d.clientHeight; })()",
+            "(() => { const m = document.querySelector('main'); \
+             return m.scrollHeight > m.clientHeight; })()",
             false,
         )
         .unwrap()
@@ -253,16 +260,62 @@ fn long_desc_scrolls_internally() {
         .unwrap()
         .as_bool()
         .unwrap();
-    assert!(overflows, "description should scroll internally");
+    assert!(
+        overflows,
+        "main should be scrollable when description is long"
+    );
 }
 
 #[test]
 #[ignore]
-fn long_desc_below_image_area() {
+fn long_desc_photo_and_text_scroll_together() {
+    let tab = load_page(page::with_description::LANDSCAPE, &[]);
+    let before_y = bounding_box(&tab, ".image-frame").y;
+
+    // Scroll main down
+    tab.evaluate("document.querySelector('main').scrollBy(0, 100)", false)
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let after_y = bounding_box(&tab, ".image-frame").y;
+    assert!(
+        after_y < before_y - 50.0,
+        "image should scroll with description, before={before_y} after={after_y}"
+    );
+}
+
+#[test]
+#[ignore]
+fn long_desc_below_mat() {
     let tab = load_page(page::with_description::LANDSCAPE, &[]);
     let image_page = bounding_box(&tab, ".image-page");
     let desc = bounding_box(&tab, ".image-description");
-    assert!(desc.y >= image_page.y + image_page.height - 1.0);
+    // Description starts after image-page + its bottom margin (mat)
+    assert!(
+        desc.y >= image_page.y + image_page.height,
+        "description should be below the matted photo area"
+    );
+}
+
+#[test]
+#[ignore]
+fn nav_dots_visible_with_description() {
+    let tab = load_page(page::with_description::LANDSCAPE, &[]);
+    let nav = bounding_box(&tab, ".image-nav");
+    let vh: f64 = tab
+        .evaluate("window.innerHeight", false)
+        .unwrap()
+        .value
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert!(
+        nav.y + nav.height <= vh + 1.0,
+        "nav dots should be visible within viewport, bottom={} vh={}",
+        nav.y + nav.height,
+        vh
+    );
+    assert!(nav.height > 0.0, "nav should have non-zero height");
 }
 
 // ===========================================================================
