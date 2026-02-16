@@ -40,6 +40,13 @@
 //! - `static/style.css`: Base styles (colors injected from config)
 //! - `static/nav.js`: Keyboard and touch navigation
 //!
+//! ## Custom Snippets
+//!
+//! Users can inject custom content by placing convention files in `assets/`:
+//! - `custom.css`: Linked after the main `<style>` block for CSS overrides
+//! - `head.html`: Raw HTML injected at the end of `<head>` (analytics, meta tags)
+//! - `body-end.html`: Raw HTML injected before `</body>` (tracking scripts, widgets)
+//!
 //! ## HTML Generation
 //!
 //! Uses [maud](https://maud.lambda.xyz/) for compile-time HTML templating.
@@ -120,6 +127,33 @@ const APPLE_TOUCH_ICON: &[u8] = include_bytes!("../static/apple-touch-icon.png")
 const FAVICON_PNG: &[u8] = include_bytes!("../static/favicon.png");
 
 const IMAGE_SIZES: &str = "(max-width: 800px) 100vw, 80vw";
+
+/// User-provided snippets discovered via convention files in the assets directory.
+///
+/// Drop any of these files into your `assets/` directory to inject custom content:
+/// - `custom.css` → `<link rel="stylesheet">` after the main `<style>` block
+/// - `head.html` → raw HTML at the end of `<head>`
+/// - `body-end.html` → raw HTML before `</body>`
+#[derive(Debug, Default)]
+struct CustomSnippets {
+    /// Whether `custom.css` exists in the output directory.
+    has_custom_css: bool,
+    /// Raw HTML to inject at the end of `<head>`.
+    head_html: Option<String>,
+    /// Raw HTML to inject before `</body>`.
+    body_end_html: Option<String>,
+}
+
+/// Detect convention-based custom snippet files in the output directory.
+///
+/// Called after assets are copied so user files are already in place.
+fn detect_custom_snippets(output_dir: &Path) -> CustomSnippets {
+    CustomSnippets {
+        has_custom_css: output_dir.join("custom.css").exists(),
+        head_html: fs::read_to_string(output_dir.join("head.html")).ok(),
+        body_end_html: fs::read_to_string(output_dir.join("body-end.html")).ok(),
+    }
+}
 
 /// Zero-padding width for image indices, based on album size.
 fn index_width(total: usize) -> usize {
@@ -287,18 +321,22 @@ pub fn generate(
     // Detect favicon in output directory for <link rel="icon"> injection
     let favicon_href = detect_favicon(output_dir);
 
+    // Detect convention-based custom snippets (custom.css, head.html, body-end.html)
+    let snippets = detect_custom_snippets(output_dir);
+
     // Generate index page
     let index_html = render_index(
         &manifest,
         &css,
         font_url.as_deref(),
         favicon_href.as_deref(),
+        &snippets,
     );
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
     println!("Generated index.html");
 
     // Generate offline fallback page (served by SW when offline and page not cached)
-    let offline_html = render_offline(&css, favicon_href.as_deref());
+    let offline_html = render_offline(&css, favicon_href.as_deref(), &snippets);
     fs::write(output_dir.join("offline.html"), offline_html.into_string())?;
 
     // Generate pages (content pages only, not link pages)
@@ -311,6 +349,7 @@ pub fn generate(
             font_url.as_deref(),
             &manifest.config.site_title,
             favicon_href.as_deref(),
+            &snippets,
         );
         let filename = format!("{}.html", page.slug);
         fs::write(output_dir.join(&filename), page_html.into_string())?;
@@ -330,6 +369,7 @@ pub fn generate(
             font_url.as_deref(),
             &manifest.config.site_title,
             favicon_href.as_deref(),
+            &snippets,
         );
         fs::write(album_dir.join("index.html"), album_html.into_string())?;
         println!("Generated {}/index.html", album.path);
@@ -354,6 +394,7 @@ pub fn generate(
                 font_url.as_deref(),
                 &manifest.config.site_title,
                 favicon_href.as_deref(),
+                &snippets,
             );
             let image_dir_name =
                 image_page_url(idx + 1, album.images.len(), image.title.as_deref());
@@ -424,6 +465,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// `@import` inside `<style>`. Browsers ignore or delay `@import` in
 /// inline `<style>` blocks. For local fonts, `@font-face` is in the CSS
 /// and `font_url` is `None`. See the CSS assembly comment in `generate()`.
+#[allow(clippy::too_many_arguments)]
 fn base_document(
     title: &str,
     css: &str,
@@ -431,6 +473,7 @@ fn base_document(
     body_class: Option<&str>,
     head_extra: Option<Markup>,
     favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
     content: Markup,
 ) -> Markup {
     html! {
@@ -453,6 +496,10 @@ fn base_document(
                     link rel="stylesheet" href=(url);
                 }
                 style { (PreEscaped(css)) }
+                // Custom CSS loaded after main styles so overrides win at equal specificity.
+                @if snippets.has_custom_css {
+                    link rel="stylesheet" href="/custom.css";
+                }
                 @if let Some(extra) = head_extra {
                     (extra)
                 }
@@ -466,9 +513,15 @@ fn base_document(
                         window.addEventListener('beforeinstallprompt', e => e.preventDefault());
                     "#))
                 }
+                @if let Some(ref html) = snippets.head_html {
+                    (PreEscaped(html))
+                }
             }
             body class=[body_class] {
                 (content)
+                @if let Some(ref html) = snippets.body_end_html {
+                    (PreEscaped(html))
+                }
             }
         }
     }
@@ -561,6 +614,7 @@ fn render_index(
     css: &str,
     font_url: Option<&str>,
     favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
 ) -> Markup {
     let nav = render_nav(&manifest.navigation, "", &manifest.pages);
 
@@ -589,11 +643,13 @@ fn render_index(
         None,
         None,
         favicon_href,
+        snippets,
         content,
     )
 }
 
 /// Renders an album page with thumbnail grid
+#[allow(clippy::too_many_arguments)]
 fn render_album_page(
     album: &Album,
     navigation: &[NavItem],
@@ -602,6 +658,7 @@ fn render_album_page(
     font_url: Option<&str>,
     site_title: &str,
     favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
@@ -650,6 +707,7 @@ fn render_album_page(
         None,
         None,
         favicon_href,
+        snippets,
         content,
     )
 }
@@ -688,6 +746,7 @@ fn render_image_page(
     font_url: Option<&str>,
     site_title: &str,
     favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
@@ -852,11 +911,13 @@ fn render_image_page(
         Some(body_class),
         Some(head_extra),
         favicon_href,
+        snippets,
         content,
     )
 }
 
 /// Renders a content page from markdown
+#[allow(clippy::too_many_arguments)]
 fn render_page(
     page: &Page,
     navigation: &[NavItem],
@@ -865,6 +926,7 @@ fn render_page(
     font_url: Option<&str>,
     site_title: &str,
     favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
 ) -> Markup {
     let nav = render_nav(navigation, &page.slug, pages);
 
@@ -895,6 +957,7 @@ fn render_page(
         None,
         None,
         favicon_href,
+        snippets,
         content,
     )
 }
@@ -905,7 +968,7 @@ fn render_page(
 /// page is not in the cache. Uses the site's CSS so it matches the gallery
 /// look-and-feel. No navigation or font URL — the page must work with only
 /// the pre-cached assets.
-fn render_offline(css: &str, favicon_href: Option<&str>) -> Markup {
+fn render_offline(css: &str, favicon_href: Option<&str>, snippets: &CustomSnippets) -> Markup {
     let content = html! {
         main.page {
             article.page-content {
@@ -916,7 +979,16 @@ fn render_offline(css: &str, favicon_href: Option<&str>) -> Markup {
         }
     };
 
-    base_document("Offline", css, None, None, None, favicon_href, content)
+    base_document(
+        "Offline",
+        css,
+        None,
+        None,
+        None,
+        favicon_href,
+        snippets,
+        content,
+    )
 }
 
 // ============================================================================
@@ -926,6 +998,10 @@ fn render_offline(css: &str, favicon_href: Option<&str>) -> Markup {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn no_snippets() -> CustomSnippets {
+        CustomSnippets::default()
+    }
 
     fn make_page(slug: &str, link_title: &str, in_nav: bool, is_link: bool) -> Page {
         Page {
@@ -1039,15 +1115,34 @@ mod tests {
     #[test]
     fn base_document_includes_doctype() {
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "body {}", None, None, None, None, content).into_string();
+        let doc = base_document(
+            "Test",
+            "body {}",
+            None,
+            None,
+            None,
+            None,
+            &no_snippets(),
+            content,
+        )
+        .into_string();
         assert!(doc.starts_with("<!DOCTYPE html>"));
     }
 
     #[test]
     fn base_document_applies_body_class() {
         let content = html! { p { "test" } };
-        let doc =
-            base_document("Test", "", None, Some("image-view"), None, None, content).into_string();
+        let doc = base_document(
+            "Test",
+            "",
+            None,
+            Some("image-view"),
+            None,
+            None,
+            &no_snippets(),
+            content,
+        )
+        .into_string();
         assert!(html_contains_body_class(&doc, "image-view"));
     }
 
@@ -1138,7 +1233,8 @@ mod tests {
     fn render_album_page_includes_title() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
+            .into_string();
 
         assert!(html.contains("Test Album"));
         assert!(html.contains("<h1>"));
@@ -1148,7 +1244,8 @@ mod tests {
     fn render_album_page_includes_description() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
+            .into_string();
 
         assert!(html.contains("A test album description"));
         assert!(html.contains("album-description"));
@@ -1158,7 +1255,8 @@ mod tests {
     fn render_album_page_thumbnail_links() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
+            .into_string();
 
         // Should have links to image pages (1-Dawn/, 2/)
         assert!(html.contains("1-Dawn/"));
@@ -1171,7 +1269,8 @@ mod tests {
     fn render_album_page_breadcrumb() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None).into_string();
+        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
+            .into_string();
 
         // Breadcrumb should link to gallery root
         assert!(html.contains(r#"href="/""#));
@@ -1194,6 +1293,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1219,6 +1319,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1244,6 +1345,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1270,6 +1372,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
         assert!(html1.contains(r#"class="nav-prev" href="../""#));
@@ -1287,6 +1390,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
         assert!(html2.contains(r#"class="nav-prev" href="../1-Dawn/""#));
@@ -1309,6 +1413,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1327,7 +1432,8 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "", None, "Gallery", None).into_string();
+        let html =
+            render_page(&page, &[], &[], "", None, "Gallery", None, &no_snippets()).into_string();
 
         // Markdown should be converted to HTML
         assert!(html.contains("<strong>bold</strong>"));
@@ -1345,7 +1451,8 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "", None, "Gallery", None).into_string();
+        let html =
+            render_page(&page, &[], &[], "", None, "Gallery", None, &no_snippets()).into_string();
 
         assert!(html.contains("<title>About Me</title>"));
         assert!(html.contains("class=\"page\""));
@@ -1398,6 +1505,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1422,6 +1530,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1447,6 +1556,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1469,6 +1579,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1522,6 +1633,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1547,6 +1659,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1574,6 +1687,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1600,6 +1714,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1624,6 +1739,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1717,6 +1833,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1738,6 +1855,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1761,6 +1879,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1785,6 +1904,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1811,6 +1931,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1836,7 +1957,17 @@ mod tests {
         let css = format!("{}\n{}\n{}", color_css, theme_css, font_css);
 
         let album = create_test_album();
-        let html = render_album_page(&album, &[], &[], &css, None, "Gallery", None).into_string();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            &css,
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+        )
+        .into_string();
 
         assert!(html.contains("--color-bg: #fafafa"));
         assert!(html.contains("--color-bg: #111111"));
@@ -1855,8 +1986,17 @@ mod tests {
 
         let theme_css = crate::config::generate_theme_css(&config.theme);
         let album = create_test_album();
-        let html =
-            render_album_page(&album, &[], &[], &theme_css, None, "Gallery", None).into_string();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            &theme_css,
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+        )
+        .into_string();
 
         assert!(html.contains("--thumbnail-gap: 0.5rem"));
         assert!(html.contains("--mat-x: clamp(1rem, 5vw, 2.5rem)"));
@@ -1883,6 +2023,7 @@ mod tests {
             font_url.as_deref(),
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -1924,7 +2065,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
 
         assert!(html.contains("Visible"));
         assert!(!html.contains("Hidden"));
@@ -1939,7 +2080,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
 
         assert!(html.contains("album-grid"));
         assert!(html.contains("Gallery"));
@@ -1992,6 +2133,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -2004,7 +2146,8 @@ mod tests {
     fn album_page_no_description() {
         let mut album = create_test_album();
         album.description = None;
-        let html = render_album_page(&album, &[], &[], "", None, "Gallery", None).into_string();
+        let html = render_album_page(&album, &[], &[], "", None, "Gallery", None, &no_snippets())
+            .into_string();
 
         assert!(!html.contains("album-description"));
         assert!(html.contains("Test Album"));
@@ -2025,6 +2168,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -2052,6 +2196,7 @@ mod tests {
             None,
             "Gallery",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -2078,7 +2223,7 @@ mod tests {
             config,
         };
 
-        let html = render_index(&manifest, "", None, None).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
@@ -2088,8 +2233,17 @@ mod tests {
     #[test]
     fn album_page_breadcrumb_uses_custom_site_title() {
         let album = create_test_album();
-        let html =
-            render_album_page(&album, &[], &[], "", None, "My Portfolio", None).into_string();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            "",
+            None,
+            "My Portfolio",
+            None,
+            &no_snippets(),
+        )
+        .into_string();
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
@@ -2110,6 +2264,7 @@ mod tests {
             None,
             "My Portfolio",
             None,
+            &no_snippets(),
         )
         .into_string();
 
@@ -2128,7 +2283,17 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html = render_page(&page, &[], &[], "", None, "My Portfolio", None).into_string();
+        let html = render_page(
+            &page,
+            &[],
+            &[],
+            "",
+            None,
+            "My Portfolio",
+            None,
+            &no_snippets(),
+        )
+        .into_string();
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
@@ -2143,11 +2308,243 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
 
         assert!(html.contains(r#"<link rel="manifest" href="/site.webmanifest">"#));
         assert!(html.contains(r#"<link rel="apple-touch-icon" href="/apple-touch-icon.png">"#));
         assert!(html.contains("navigator.serviceWorker.register('/sw.js');"));
         assert!(html.contains("beforeinstallprompt"));
+    }
+
+    // =========================================================================
+    // Custom snippets tests
+    // =========================================================================
+
+    #[test]
+    fn no_custom_css_link_by_default() {
+        let content = html! { p { "test" } };
+        let doc = base_document("Test", "", None, None, None, None, &no_snippets(), content)
+            .into_string();
+        assert!(!doc.contains("custom.css"));
+    }
+
+    #[test]
+    fn custom_css_link_injected_when_present() {
+        let snippets = CustomSnippets {
+            has_custom_css: true,
+            ..Default::default()
+        };
+        let content = html! { p { "test" } };
+        let doc =
+            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        assert!(doc.contains(r#"<link rel="stylesheet" href="/custom.css">"#));
+    }
+
+    #[test]
+    fn custom_css_link_after_main_style() {
+        let snippets = CustomSnippets {
+            has_custom_css: true,
+            ..Default::default()
+        };
+        let content = html! { p { "test" } };
+        let doc = base_document("Test", "body{}", None, None, None, None, &snippets, content)
+            .into_string();
+        let style_pos = doc.find("</style>").unwrap();
+        let link_pos = doc.find(r#"href="/custom.css""#).unwrap();
+        assert!(
+            link_pos > style_pos,
+            "custom.css link should appear after main <style>"
+        );
+    }
+
+    #[test]
+    fn head_html_injected_when_present() {
+        let snippets = CustomSnippets {
+            head_html: Some(r#"<script>console.log("analytics")</script>"#.to_string()),
+            ..Default::default()
+        };
+        let content = html! { p { "test" } };
+        let doc =
+            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        assert!(doc.contains(r#"<script>console.log("analytics")</script>"#));
+    }
+
+    #[test]
+    fn head_html_inside_head_element() {
+        let snippets = CustomSnippets {
+            head_html: Some("<!-- custom head -->".to_string()),
+            ..Default::default()
+        };
+        let content = html! { p { "test" } };
+        let doc =
+            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let head_end = doc.find("</head>").unwrap();
+        let snippet_pos = doc.find("<!-- custom head -->").unwrap();
+        assert!(
+            snippet_pos < head_end,
+            "head.html should appear inside <head>"
+        );
+    }
+
+    #[test]
+    fn no_head_html_by_default() {
+        let content = html! { p { "test" } };
+        let doc = base_document("Test", "", None, None, None, None, &no_snippets(), content)
+            .into_string();
+        // Only the standard head content should be present
+        assert!(!doc.contains("<!-- custom"));
+    }
+
+    #[test]
+    fn body_end_html_injected_when_present() {
+        let snippets = CustomSnippets {
+            body_end_html: Some(r#"<script src="/tracking.js"></script>"#.to_string()),
+            ..Default::default()
+        };
+        let content = html! { p { "test" } };
+        let doc =
+            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        assert!(doc.contains(r#"<script src="/tracking.js"></script>"#));
+    }
+
+    #[test]
+    fn body_end_html_inside_body_before_close() {
+        let snippets = CustomSnippets {
+            body_end_html: Some("<!-- body end -->".to_string()),
+            ..Default::default()
+        };
+        let content = html! { p { "test" } };
+        let doc =
+            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let body_end = doc.find("</body>").unwrap();
+        let snippet_pos = doc.find("<!-- body end -->").unwrap();
+        assert!(
+            snippet_pos < body_end,
+            "body-end.html should appear before </body>"
+        );
+    }
+
+    #[test]
+    fn body_end_html_after_content() {
+        let snippets = CustomSnippets {
+            body_end_html: Some("<!-- body end -->".to_string()),
+            ..Default::default()
+        };
+        let content = html! { p { "main content" } };
+        let doc =
+            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let content_pos = doc.find("main content").unwrap();
+        let snippet_pos = doc.find("<!-- body end -->").unwrap();
+        assert!(
+            snippet_pos > content_pos,
+            "body-end.html should appear after main content"
+        );
+    }
+
+    #[test]
+    fn all_snippets_injected_together() {
+        let snippets = CustomSnippets {
+            has_custom_css: true,
+            head_html: Some("<!-- head snippet -->".to_string()),
+            body_end_html: Some("<!-- body snippet -->".to_string()),
+        };
+        let content = html! { p { "test" } };
+        let doc =
+            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        assert!(doc.contains(r#"href="/custom.css""#));
+        assert!(doc.contains("<!-- head snippet -->"));
+        assert!(doc.contains("<!-- body snippet -->"));
+    }
+
+    #[test]
+    fn snippets_appear_in_all_page_types() {
+        let snippets = CustomSnippets {
+            has_custom_css: true,
+            head_html: Some("<!-- head -->".to_string()),
+            body_end_html: Some("<!-- body -->".to_string()),
+        };
+
+        // Index page
+        let manifest = Manifest {
+            navigation: vec![],
+            albums: vec![],
+            pages: vec![],
+            config: SiteConfig::default(),
+        };
+        let html = render_index(&manifest, "", None, None, &snippets).into_string();
+        assert!(html.contains("custom.css"));
+        assert!(html.contains("<!-- head -->"));
+        assert!(html.contains("<!-- body -->"));
+
+        // Album page
+        let album = create_test_album();
+        let html =
+            render_album_page(&album, &[], &[], "", None, "Gallery", None, &snippets).into_string();
+        assert!(html.contains("custom.css"));
+        assert!(html.contains("<!-- head -->"));
+        assert!(html.contains("<!-- body -->"));
+
+        // Content page
+        let page = make_page("about", "About", true, false);
+        let html = render_page(&page, &[], &[], "", None, "Gallery", None, &snippets).into_string();
+        assert!(html.contains("custom.css"));
+        assert!(html.contains("<!-- head -->"));
+        assert!(html.contains("<!-- body -->"));
+
+        // Image page
+        let html = render_image_page(
+            &album,
+            &album.images[0],
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &snippets,
+        )
+        .into_string();
+        assert!(html.contains("custom.css"));
+        assert!(html.contains("<!-- head -->"));
+        assert!(html.contains("<!-- body -->"));
+    }
+
+    #[test]
+    fn detect_custom_snippets_finds_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        // No files → empty snippets
+        let snippets = detect_custom_snippets(tmp.path());
+        assert!(!snippets.has_custom_css);
+        assert!(snippets.head_html.is_none());
+        assert!(snippets.body_end_html.is_none());
+
+        // Create custom.css
+        fs::write(tmp.path().join("custom.css"), "body { color: red; }").unwrap();
+        let snippets = detect_custom_snippets(tmp.path());
+        assert!(snippets.has_custom_css);
+        assert!(snippets.head_html.is_none());
+
+        // Create head.html
+        fs::write(tmp.path().join("head.html"), "<meta name=\"test\">").unwrap();
+        let snippets = detect_custom_snippets(tmp.path());
+        assert!(snippets.has_custom_css);
+        assert_eq!(snippets.head_html.as_deref(), Some("<meta name=\"test\">"));
+
+        // Create body-end.html
+        fs::write(
+            tmp.path().join("body-end.html"),
+            "<script>alert(1)</script>",
+        )
+        .unwrap();
+        let snippets = detect_custom_snippets(tmp.path());
+        assert!(snippets.has_custom_css);
+        assert!(snippets.head_html.is_some());
+        assert_eq!(
+            snippets.body_end_html.as_deref(),
+            Some("<script>alert(1)</script>")
+        );
     }
 }

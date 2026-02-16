@@ -110,6 +110,30 @@ source = "fonts/MyFont.woff2"   # path relative to site root
 
 Place the font file in `assets/fonts/` and it will be copied to `dist/fonts/` during build. When `source` is set, a `@font-face` declaration is generated and Google Fonts loading is skipped entirely.
 
+## Custom CSS & JS
+
+Drop any of these convention files into your `assets/` directory to inject custom content — no configuration needed:
+
+| File | Injection point | Use case |
+|------|----------------|----------|
+| `custom.css` | `<link>` after main styles | CSS overrides, layout tweaks |
+| `head.html` | End of `<head>` | Analytics (GA, Plausible), Open Graph meta tags |
+| `body-end.html` | Before `</body>` | Tracking scripts, chat widgets, cookie banners |
+
+For example, to add Plausible analytics, create `assets/head.html`:
+
+```html
+<script defer data-domain="photos.example.com" src="https://plausible.io/js/script.js"></script>
+```
+
+To override gallery styles, create `assets/custom.css`:
+
+```css
+.album-grid { gap: 0.5rem; }
+```
+
+The files are injected as-is — broken syntax won't break the build, it will just produce broken output.
+
 ## PWA / Installable Gallery
 
 Every generated site is a Progressive Web App out of the box — no configuration needed. Visitors can "Add to Home Screen" on any device to get an app-like experience with:

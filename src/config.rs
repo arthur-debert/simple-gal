@@ -876,6 +876,16 @@ font_type = "sans"
 # Maximum parallel image-processing workers.
 # Omit or comment out to auto-detect (= number of CPU cores).
 # max_processes = 4
+
+# ---------------------------------------------------------------------------
+# Custom CSS & HTML Snippets
+# ---------------------------------------------------------------------------
+# Drop any of these files into your assets/ directory to inject custom content.
+# No configuration needed — the files are detected automatically.
+#
+#   assets/custom.css    → <link rel="stylesheet"> after main styles (CSS overrides)
+#   assets/head.html     → raw HTML at the end of <head> (analytics, meta tags)
+#   assets/body-end.html → raw HTML before </body> (tracking scripts, widgets)
 "##
 }
 
