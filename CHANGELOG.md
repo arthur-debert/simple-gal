@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-02-16
+
 ### Added
 - `check` command: validate content directory without building (`simple-gal check`)
 
