@@ -34,23 +34,35 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Fetch event: Network first for HTML, Cache first for others
+// Fetch event: route by request type
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
+
+    // Ignore cross-origin requests (analytics, fonts, etc.)
+    if (url.origin !== location.origin) return;
 
     // Navigation requests (HTML) - Network First, fall back to cache
     if (event.request.mode === 'navigate') {
         event.respondWith(
             fetch(event.request)
                 .then((response) => {
-                    return caches.open(CACHE_NAME).then((cache) => {
-                        cache.put(event.request, response.clone());
-                        return response;
-                    });
+                    if (response.ok) {
+                        const cloned = response.clone();
+                        caches.open(CACHE_NAME).then((cache) => {
+                            cache.put(event.request, cloned);
+                        });
+                    }
+                    return response;
                 })
                 .catch(() => {
                     return caches.match(event.request).then((cached) => {
                         return cached || caches.match('/offline.html');
+                    });
+                })
+                .then((response) => {
+                    return response || new Response('Offline', {
+                        status: 503,
+                        headers: { 'Content-Type': 'text/plain' },
                     });
                 })
         );
@@ -68,15 +80,19 @@ self.addEventListener('fetch', (event) => {
                         return cachedResponse;
                     }
                     return fetch(event.request).then((response) => {
-                        cache.put(event.request, response.clone());
-                        cache.keys().then((keys) => {
-                            if (keys.length > MAX_CACHED_IMAGES) {
-                                cache.delete(keys[0]);
-                            }
-                        });
+                        if (response.ok) {
+                            cache.put(event.request, response.clone());
+                            cache.keys().then((keys) => {
+                                if (keys.length > MAX_CACHED_IMAGES) {
+                                    cache.delete(keys[0]);
+                                }
+                            });
+                        }
                         return response;
                     });
                 });
+            }).catch(() => {
+                return new Response('', { status: 504 });
             })
         );
         return;
@@ -85,13 +101,22 @@ self.addEventListener('fetch', (event) => {
     // Default: Stale-While-Revalidate
     event.respondWith(
         caches.match(event.request).then((cachedResponse) => {
-            const fetchPromise = fetch(event.request).then((networkResponse) => {
-                const cloned = networkResponse.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                    cache.put(event.request, cloned);
+            const fetchPromise = fetch(event.request)
+                .then((networkResponse) => {
+                    if (networkResponse.ok) {
+                        const cloned = networkResponse.clone();
+                        caches.open(CACHE_NAME).then((cache) => {
+                            cache.put(event.request, cloned);
+                        });
+                    }
+                    return networkResponse;
+                })
+                .catch(() => {
+                    return cachedResponse || new Response('', {
+                        status: 504,
+                        headers: { 'Content-Type': 'text/plain' },
+                    });
                 });
-                return networkResponse;
-            });
             return cachedResponse || fetchPromise;
         })
     );
