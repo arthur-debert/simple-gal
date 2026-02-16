@@ -47,6 +47,7 @@ mod generate;
 mod imaging;
 mod metadata;
 mod naming;
+mod output;
 mod process;
 mod scan;
 #[cfg(test)]
@@ -149,7 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let manifest_path = cli.temp_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&manifest)?;
             std::fs::write(&manifest_path, json)?;
-            println!("Wrote manifest to {}", manifest_path.display());
+            output::print_scan_output(&manifest, &cli.source);
         }
         Command::Process => {
             let scan_manifest_path = cli.temp_dir.join("manifest.json");
@@ -163,8 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let output_manifest = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&result)?;
             std::fs::write(&output_manifest, &json)?;
-            println!("Processed {} albums", result.albums.len());
-            println!("Wrote manifest to {}", output_manifest.display());
+            output::print_process_output(&result);
         }
         Command::Generate => {
             let processed_dir = cli.temp_dir.join("processed");
@@ -175,6 +175,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &cli.output,
                 &cli.source,
             )?;
+            let manifest_content = std::fs::read_to_string(&processed_manifest_path)?;
+            let manifest: generate::Manifest = serde_json::from_str(&manifest_content)?;
+            output::print_generate_output(&manifest);
         }
         Command::Build => {
             // Resolve content root: check config.toml in source dir for content_root override
@@ -182,11 +185,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             std::fs::create_dir_all(&cli.temp_dir)?;
 
-            println!("==> Stage 1: Scanning filesystem");
+            println!("==> Stage 1: Scanning {}", source.display());
             let manifest = scan::scan(&source)?;
             let scan_manifest_path = cli.temp_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&manifest)?;
             std::fs::write(&scan_manifest_path, json)?;
+            output::print_scan_output(&manifest, &source);
 
             println!("==> Stage 2: Processing images");
             init_thread_pool(&manifest.config.processing);
@@ -196,14 +200,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let processed_manifest_path = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&processed_manifest)?;
             std::fs::write(&processed_manifest_path, &json)?;
+            output::print_process_output(&processed_manifest);
 
-            println!("==> Stage 3: Generating HTML");
+            println!("==> Stage 3: Generating HTML → {}", cli.output.display());
             generate::generate(
                 &processed_manifest_path,
                 &processed_dir,
                 &cli.output,
                 &source,
             )?;
+            let gen_manifest_content = std::fs::read_to_string(&processed_manifest_path)?;
+            let gen_manifest: generate::Manifest = serde_json::from_str(&gen_manifest_content)?;
+            output::print_generate_output(&gen_manifest);
 
             println!("==> Build complete: {}", cli.output.display());
         }
@@ -224,7 +232,6 @@ fn init_thread_pool(processing: &config::ProcessingConfig) {
         .num_threads(threads)
         .build_global()
         .ok();
-    println!("Using {} worker threads", threads);
 }
 
 /// Resolve the content source directory for the build command.

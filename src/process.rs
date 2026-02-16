@@ -106,6 +106,8 @@ pub struct InputAlbum {
     pub images: Vec<InputImage>,
     pub in_nav: bool,
     pub config: SiteConfig,
+    #[serde(default)]
+    pub support_files: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +144,8 @@ pub struct OutputAlbum {
     pub images: Vec<OutputImage>,
     pub in_nav: bool,
     pub config: SiteConfig,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub support_files: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -192,8 +196,6 @@ pub fn process_with_backend(
     let mut output_albums = Vec::new();
 
     for album in &input.albums {
-        println!("Processing album: {}", album.title);
-
         // Per-album config from the resolved config chain
         let album_process = ProcessConfig::from_site_config(&album.config);
 
@@ -220,8 +222,6 @@ pub fn process_with_backend(
                 if !source_path.exists() {
                     return Err(ProcessError::SourceNotFound(source_path));
                 }
-
-                println!("  {} ", image.filename);
 
                 let dimensions = get_dimensions(backend, &source_path)?;
 
@@ -326,6 +326,7 @@ pub fn process_with_backend(
             images: output_images,
             in_nav: album.in_nav,
             config: album.config.clone(),
+            support_files: album.support_files.clone(),
         });
     }
 

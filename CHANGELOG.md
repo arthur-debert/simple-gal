@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Structured CLI output: tree-based formatting for scan, process, and generate stages
+  - Albums shown with positional indices, photo counts, source directories, and truncated descriptions
+  - Process output shows generated image sizes per photo
+  - Generate output shows output file paths per album and image page
+  - Navigation tree walked for consistent hierarchy display
+- `source_dir` field on `NavItem` tracking original directory basename
+- `support_files` field on `Album` tracking config and description files
+
+### Changed
+- Replaced ad-hoc `println!` output across pipeline stages with centralized `output` module
+- Build command stage headers now include source/output paths
+
 ## [0.3.1] - 2026-02-16
 
 ## [0.3.0] - 2026-02-16
