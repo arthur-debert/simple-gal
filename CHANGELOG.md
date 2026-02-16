@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-16
+
 ### Added
 - Structured CLI output: tree-based formatting for scan, process, and generate stages
   - Albums shown with positional indices, photo counts, source directories, and truncated descriptions
