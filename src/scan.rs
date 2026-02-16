@@ -95,6 +95,9 @@ pub struct Album {
     pub in_nav: bool,
     /// Resolved config for this album (stock → root → group → gallery chain).
     pub config: SiteConfig,
+    /// Supporting files found in the album directory (e.g. config.toml, description.md).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub support_files: Vec<String>,
 }
 
 /// Image metadata
@@ -290,6 +293,7 @@ fn scan_directory(
         let title = album.title.clone();
         let album_path = album.path.clone();
 
+        let source_dir_name = path.file_name().unwrap().to_string_lossy().to_string();
         albums.push(album);
 
         // Add to nav if numbered
@@ -297,6 +301,7 @@ fn scan_directory(
             nav_items.push(NavItem {
                 title,
                 path: album_path,
+                source_dir: source_dir_name,
                 children: vec![],
             });
         }
@@ -331,6 +336,7 @@ fn scan_directory(
                 nav_items.push(NavItem {
                     title: parsed.display_title,
                     path: rel_path.to_string_lossy().to_string(),
+                    source_dir: dir_name.to_string(),
                     children: child_nav,
                 });
             } else {
@@ -537,6 +543,17 @@ fn build_album(
     // Read description: description.md takes priority over description.txt
     let description = read_album_description(path)?;
 
+    // Detect supporting files
+    let mut support_files = Vec::new();
+    if path.join("config.toml").exists() {
+        support_files.push("config.toml".to_string());
+    }
+    if path.join("description.md").exists() {
+        support_files.push("description.md".to_string());
+    } else if path.join("description.txt").exists() {
+        support_files.push("description.txt".to_string());
+    }
+
     Ok(Album {
         path: rel_path.to_string_lossy().to_string(),
         title,
@@ -545,6 +562,7 @@ fn build_album(
         images,
         in_nav,
         config,
+        support_files,
     })
 }
 

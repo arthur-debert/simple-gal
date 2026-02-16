@@ -91,6 +91,9 @@ pub struct Album {
     /// Resolved config for this album (available for future per-album theming).
     #[allow(dead_code)]
     pub config: SiteConfig,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub support_files: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,7 +159,7 @@ fn detect_custom_snippets(output_dir: &Path) -> CustomSnippets {
 }
 
 /// Zero-padding width for image indices, based on album size.
-fn index_width(total: usize) -> usize {
+pub(crate) fn index_width(total: usize) -> usize {
     match total {
         0..=9 => 1,
         10..=99 => 2,
@@ -173,7 +176,7 @@ fn index_width(total: usize) -> usize {
 ///
 /// Image pages are directories with an `index.html` inside, so that static
 /// servers can serve them without requiring `.html` in the URL.
-fn image_page_url(position: usize, total: usize, title: Option<&str>) -> String {
+pub(crate) fn image_page_url(position: usize, total: usize, title: Option<&str>) -> String {
     let width = index_width(total);
     match title {
         Some(t) => {
@@ -312,7 +315,6 @@ pub fn generate(
     let assets_path = source_dir.join(&manifest.config.assets_dir);
     if assets_path.is_dir() {
         copy_dir_recursive(&assets_path, output_dir)?;
-        println!("Copied static assets from {}", assets_path.display());
     }
 
     // Copy processed images to output
@@ -333,7 +335,6 @@ pub fn generate(
         &snippets,
     );
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
-    println!("Generated index.html");
 
     // Generate offline fallback page (served by SW when offline and page not cached)
     let offline_html = render_offline(&css, favicon_href.as_deref(), &snippets);
@@ -353,7 +354,6 @@ pub fn generate(
         );
         let filename = format!("{}.html", page.slug);
         fs::write(output_dir.join(&filename), page_html.into_string())?;
-        println!("Generated {}", filename);
     }
 
     // Generate album pages
@@ -372,7 +372,6 @@ pub fn generate(
             &snippets,
         );
         fs::write(album_dir.join("index.html"), album_html.into_string())?;
-        println!("Generated {}/index.html", album.path);
 
         // Generate image pages
         for (idx, image) in album.images.iter().enumerate() {
@@ -402,14 +401,8 @@ pub fn generate(
             fs::create_dir_all(&image_dir)?;
             fs::write(image_dir.join("index.html"), image_html.into_string())?;
         }
-        println!(
-            "Generated {} image pages for {}",
-            album.images.len(),
-            album.title
-        );
     }
 
-    println!("Site generated at {}", output_dir.display());
     Ok(())
 }
 
@@ -1024,6 +1017,7 @@ mod tests {
         let items = vec![NavItem {
             title: "Album One".to_string(),
             path: "010-one".to_string(),
+            source_dir: String::new(),
             children: vec![],
         }];
         let html = render_nav(&items, "", &[]).into_string();
@@ -1063,11 +1057,13 @@ mod tests {
             NavItem {
                 title: "First".to_string(),
                 path: "010-first".to_string(),
+                source_dir: String::new(),
                 children: vec![],
             },
             NavItem {
                 title: "Second".to_string(),
                 path: "020-second".to_string(),
+                source_dir: String::new(),
                 children: vec![],
             },
         ];
@@ -1088,9 +1084,11 @@ mod tests {
         let items = vec![NavItem {
             title: "Parent".to_string(),
             path: "010-parent".to_string(),
+            source_dir: String::new(),
             children: vec![NavItem {
                 title: "Child".to_string(),
                 path: "010-parent/010-child".to_string(),
+                source_dir: String::new(),
                 children: vec![],
             }],
         }];
@@ -1226,6 +1224,7 @@ mod tests {
             ],
             in_nav: true,
             config: SiteConfig::default(),
+            support_files: vec![],
         }
     }
 
@@ -1756,6 +1755,7 @@ mod tests {
         let items = vec![NavItem {
             title: "<script>alert('xss')</script>".to_string(),
             path: "test".to_string(),
+            source_dir: String::new(),
             children: vec![],
         }];
         let html = render_nav(&items, "", &[]).into_string();
@@ -2050,6 +2050,7 @@ mod tests {
                     images: vec![],
                     in_nav: true,
                     config: SiteConfig::default(),
+                    support_files: vec![],
                 },
                 Album {
                     path: "hidden".to_string(),
@@ -2059,6 +2060,7 @@ mod tests {
                     images: vec![],
                     in_nav: false,
                     config: SiteConfig::default(),
+                    support_files: vec![],
                 },
             ],
             pages: vec![],
@@ -2119,6 +2121,7 @@ mod tests {
             }],
             in_nav: true,
             config: SiteConfig::default(),
+            support_files: vec![],
         };
 
         let image = &album.images[0];

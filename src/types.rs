@@ -35,6 +35,8 @@ pub struct Page {
 pub struct NavItem {
     pub title: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_dir: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<NavItem>,
 }
