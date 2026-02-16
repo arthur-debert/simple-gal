@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Service worker: comprehensive error handling across all fetch strategies
+  - Added `.catch()` to stale-while-revalidate background fetch to prevent unhandled promise rejections
+  - Added `response.ok` guard before all `cache.put()` calls so error responses (404, 500) are never cached
+  - Added fallback `Response` objects in all catch paths so `respondWith()` never receives `undefined`
+  - Added outer `.catch()` on the image cache-first handler for network failures with empty cache
+  - Added cross-origin guard to skip non-same-origin requests
+  - Fixed navigation handler to clone response immediately before fire-and-forget cache operation
+
+### Added
+- Browser integration tests for service worker lifecycle (`tests/browser_sw.rs`)
+  - Tests SW activation, page control after reload, core asset caching, stale-while-revalidate strategy, and error response rejection
+  - Uses a minimal TCP-based HTTP server (service workers require HTTP, not `file://`)
+
 ## [0.4.0] - 2026-02-16
 
 ### Added
