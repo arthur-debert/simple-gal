@@ -21,6 +21,9 @@
 //! # Full build (defaults: --source content --output dist)
 //! simple-gal build
 //!
+//! # Validate content without building
+//! simple-gal check
+//!
 //! # Or run stages individually
 //! simple-gal scan
 //! simple-gal process
@@ -136,6 +139,8 @@ enum Command {
     Generate,
     /// Run the full pipeline: scan → process → generate
     Build,
+    /// Validate content directory without building
+    Check,
     /// Print a stock config.toml with all options documented
     GenConfig,
 }
@@ -214,6 +219,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output::print_generate_output(&gen_manifest);
 
             println!("==> Build complete: {}", cli.output.display());
+        }
+        Command::Check => {
+            let source = resolve_build_source(&cli.source);
+            println!("==> Checking {}", source.display());
+            let manifest = scan::scan(&source)?;
+            output::print_scan_output(&manifest, &source);
+            println!("==> Content is valid");
         }
         Command::GenConfig => {
             print!("{}", config::stock_config_toml());
