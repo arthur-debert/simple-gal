@@ -85,4 +85,4 @@ Add it to your `.gitignore`:
 
 Each album uses its own resolved configuration from the config chain. This means different albums can have different responsive sizes, quality settings, and thumbnail aspect ratios. The processing stage reads the per-album config from the scan manifest and applies it independently.
 
-See [Responsive Sizes](responsive-sizes.md), [Thumbnails](thumbnails.md), and [Quality](quality.md) for the settings that control image output.
+See [Responsive Sizes](responsive-sizes.md), [Thumbnails](thumbnails.md), and [Quality](quality.md) for the settings that control image output. See [Processing Cache](caching.md) for how repeated builds skip unchanged images.

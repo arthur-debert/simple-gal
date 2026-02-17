@@ -33,6 +33,7 @@
 - [Thumbnails](images/thumbnails.md)
 - [Quality](images/quality.md)
 - [Processing Pipeline](images/processing.md)
+- [Processing Cache](images/caching.md)
 
 # PWA
 
