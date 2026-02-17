@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-17
+
 ### Added
 - Site description on the index page: a `site.md` (or `.txt`) file in the content root is rendered on the home page with the site title, using the same expandable description pattern as album pages
 - `site_description_file` config option to customize the description filename (default: `"site"`)
