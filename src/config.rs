@@ -70,7 +70,7 @@
 //! link_hover = "#ffffff"
 //!
 //! [font]
-//! font = "Space Grotesk"    # Google Fonts family name
+//! font = "Noto Sans"    # Google Fonts family name
 //! weight = "600"            # Font weight to load
 //! font_type = "sans"        # "sans" or "serif" (determines fallbacks)
 //!
@@ -291,7 +291,7 @@ pub enum FontType {
 /// ```toml
 /// # Google Fonts (default)
 /// [font]
-/// font = "Space Grotesk"
+/// font = "Noto Sans"
 /// weight = "600"
 /// font_type = "sans"
 ///
@@ -330,7 +330,7 @@ pub struct PartialFontConfig {
 impl Default for FontConfig {
     fn default() -> Self {
         Self {
-            font: "Space Grotesk".to_string(),
+            font: "Noto Sans".to_string(),
             weight: "600".to_string(),
             font_type: FontType::Sans,
             source: None,
@@ -870,7 +870,7 @@ link_hover = "#ffffff"
 # ---------------------------------------------------------------------------
 [font]
 # Google Fonts family name.
-font = "Space Grotesk"
+font = "Noto Sans"
 
 # Font weight to load from Google Fonts.
 weight = "600"
@@ -1610,7 +1610,7 @@ quality = 200
         let config = SiteConfig::default().merge(partial);
 
         assert_eq!(config.font.weight, "300");
-        assert_eq!(config.font.font, "Space Grotesk");
+        assert_eq!(config.font.font, "Noto Sans");
         assert_eq!(config.font.font_type, FontType::Sans);
     }
 
@@ -1758,7 +1758,7 @@ source = "fonts/custom.woff2"
         )
         .unwrap();
         let config = SiteConfig::default().merge(partial);
-        assert_eq!(config.font.font, "Space Grotesk"); // default preserved
+        assert_eq!(config.font.font, "Noto Sans"); // default preserved
         assert_eq!(config.font.weight, "600"); // default preserved
         assert_eq!(config.font.source.as_deref(), Some("fonts/custom.woff2"));
     }
