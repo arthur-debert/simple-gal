@@ -6,7 +6,7 @@ language = "en"
 src = "src"
 
 [build]
-build-dir = "../../target/book"
+build-dir = "../target/book"
 
 [output.html]
 default-theme = "light"
