@@ -908,9 +908,9 @@ fn render_image_page(
                     }
                 }
             }
+            a.nav-prev href=(prev_url) aria-label="Previous image" {}
+            a.nav-next href=(next_url) aria-label="Next image" {}
         }
-        a.nav-prev href=(prev_url) aria-label="Previous image" {}
-        a.nav-next href=(next_url) aria-label="Next image" {}
         script { (PreEscaped(JS)) }
     };
 
