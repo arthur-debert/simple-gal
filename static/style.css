@@ -260,6 +260,17 @@ main {
     max-width: 1200px;
 }
 
+.index-header {
+    padding-left: var(--grid-padding);
+    margin-bottom: 0;
+}
+
+.index-header h1 {
+    font-size: var(--font-size-heading);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
 .album-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -519,6 +530,24 @@ body.has-description .image-nav {
     }
 
     .album-description {
+        max-width: none;
+    }
+
+    .index-page.has-description {
+        display: grid;
+        grid-template-columns: 2fr 5fr;
+        gap: 0 var(--thumbnail-gap);
+    }
+
+    .index-page.has-description .index-header {
+        position: sticky;
+        top: calc(var(--header-height) + 2rem);
+        align-self: start;
+        padding-left: var(--grid-padding);
+        padding-top: var(--grid-padding);
+    }
+
+    .index-page.has-description .album-description {
         max-width: none;
     }
 }
