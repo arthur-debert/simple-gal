@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `site_description_file` config option to customize the description filename (default: `"site"`)
 - Desktop 2-column layout for index page when a site description is present (description sidebar + album grid)
 
+### Fixed
+- Photo view scrolling broken when description present: invisible click-navigation zones (prev/next) were siblings of `<main>`, intercepting scroll events over 60% of the viewport — moved them inside `<main>` so scroll events propagate to the scrollable container
+
 ## [0.4.2] - 2026-02-16
 
 ### Added
