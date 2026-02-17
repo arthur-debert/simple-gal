@@ -123,6 +123,10 @@ pub struct SiteConfig {
     /// Contents are copied verbatim to the output root during generation.
     #[serde(default = "default_assets_dir")]
     pub assets_dir: String,
+    /// Stem of the site description file in the content root (e.g. "site" →
+    /// looks for `site.md` / `site.txt`). Rendered on the index page.
+    #[serde(default = "default_site_description_file")]
+    pub site_description_file: String,
     /// Color schemes for light and dark modes.
     pub colors: ColorConfig,
     /// Thumbnail generation settings (aspect ratio).
@@ -144,6 +148,7 @@ pub struct PartialSiteConfig {
     pub content_root: Option<String>,
     pub site_title: Option<String>,
     pub assets_dir: Option<String>,
+    pub site_description_file: Option<String>,
     pub colors: Option<PartialColorConfig>,
     pub thumbnails: Option<PartialThumbnailsConfig>,
     pub images: Option<PartialImagesConfig>,
@@ -164,12 +169,17 @@ fn default_assets_dir() -> String {
     "assets".to_string()
 }
 
+fn default_site_description_file() -> String {
+    "site".to_string()
+}
+
 impl Default for SiteConfig {
     fn default() -> Self {
         Self {
             content_root: default_content_root(),
             site_title: default_site_title(),
             assets_dir: default_assets_dir(),
+            site_description_file: default_site_description_file(),
             colors: ColorConfig::default(),
             thumbnails: ThumbnailsConfig::default(),
             images: ImagesConfig::default(),
@@ -211,6 +221,9 @@ impl SiteConfig {
         }
         if let Some(ad) = other.assets_dir {
             self.assets_dir = ad;
+        }
+        if let Some(sd) = other.site_description_file {
+            self.site_description_file = sd;
         }
         if let Some(c) = other.colors {
             self.colors = self.colors.merge(c);
@@ -779,6 +792,10 @@ site_title = "Gallery"
 # Contents are copied verbatim to the output root during generation.
 # If the directory doesn't exist, it is silently skipped.
 assets_dir = "assets"
+
+# Stem of the site description file in the content root.
+# If site.md or site.txt exists, its content is rendered on the index page.
+# site_description_file = "site"
 
 # ---------------------------------------------------------------------------
 # Thumbnail generation
@@ -1650,6 +1667,31 @@ quality = 200
         let partial: PartialSiteConfig = toml::from_str("[images]\nquality = 70\n").unwrap();
         let config = SiteConfig::default().merge(partial);
         assert_eq!(config.assets_dir, "assets");
+    }
+
+    // =========================================================================
+    // Site description file tests
+    // =========================================================================
+
+    #[test]
+    fn default_site_description_file() {
+        let config = SiteConfig::default();
+        assert_eq!(config.site_description_file, "site");
+    }
+
+    #[test]
+    fn parse_custom_site_description_file() {
+        let toml = r#"site_description_file = "intro""#;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.site_description_file, "intro");
+    }
+
+    #[test]
+    fn merge_preserves_default_site_description_file() {
+        let partial: PartialSiteConfig = toml::from_str("[images]\nquality = 70\n").unwrap();
+        let config = SiteConfig::default().merge(partial);
+        assert_eq!(config.site_description_file, "site");
     }
 
     // =========================================================================

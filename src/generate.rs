@@ -77,6 +77,8 @@ pub struct Manifest {
     pub albums: Vec<Album>,
     #[serde(default)]
     pub pages: Vec<Page>,
+    #[serde(default)]
+    pub description: Option<String>,
     pub config: SiteConfig,
 }
 
@@ -615,9 +617,24 @@ fn render_index(
         a href="/" { (&manifest.config.site_title) }
     };
 
+    let main_class = match manifest.description {
+        Some(_) => "index-page has-description",
+        None => "index-page",
+    };
     let content = html! {
         (site_header(breadcrumb, nav))
-        main.index-page {
+        main class=(main_class) {
+            @if let Some(desc) = &manifest.description {
+                header.index-header {
+                    h1 { (&manifest.config.site_title) }
+                    input.desc-toggle type="checkbox" id="desc-toggle";
+                    div.album-description { (PreEscaped(desc)) }
+                    label.desc-expand for="desc-toggle" {
+                        span.expand-more { "Read more" }
+                        span.expand-less { "Show less" }
+                    }
+                }
+            }
             div.album-grid {
                 @for album in manifest.albums.iter().filter(|a| a.in_nav) {
                     a.album-card href={ (album.path) "/" } {
@@ -2064,6 +2081,7 @@ mod tests {
                 },
             ],
             pages: vec![],
+            description: None,
             config: SiteConfig::default(),
         };
 
@@ -2079,6 +2097,7 @@ mod tests {
             navigation: vec![],
             albums: vec![],
             pages: vec![],
+            description: None,
             config: SiteConfig::default(),
         };
 
@@ -2086,6 +2105,46 @@ mod tests {
 
         assert!(html.contains("album-grid"));
         assert!(html.contains("Gallery"));
+    }
+
+    #[test]
+    fn index_page_with_description() {
+        let manifest = Manifest {
+            navigation: vec![],
+            albums: vec![],
+            pages: vec![],
+            description: Some("<p>Welcome to the gallery.</p>".to_string()),
+            config: SiteConfig::default(),
+        };
+
+        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+
+        assert!(html.contains("has-description"));
+        assert!(html.contains("index-header"));
+        assert!(html.contains("album-description"));
+        assert!(html.contains("Welcome to the gallery."));
+        assert!(html.contains("desc-toggle"));
+        assert!(html.contains("Read more"));
+        assert!(html.contains("Show less"));
+        // Should still include the site title in the header
+        assert!(html.contains("<h1>Gallery</h1>"));
+    }
+
+    #[test]
+    fn index_page_no_description_no_header() {
+        let manifest = Manifest {
+            navigation: vec![],
+            albums: vec![],
+            pages: vec![],
+            description: None,
+            config: SiteConfig::default(),
+        };
+
+        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+
+        assert!(!html.contains("has-description"));
+        assert!(!html.contains("index-header"));
+        assert!(!html.contains("album-description"));
     }
 
     // =========================================================================
@@ -2223,6 +2282,7 @@ mod tests {
             navigation: vec![],
             albums: vec![],
             pages: vec![],
+            description: None,
             config,
         };
 
@@ -2308,6 +2368,7 @@ mod tests {
             navigation: vec![],
             albums: vec![],
             pages: vec![],
+            description: None,
             config: SiteConfig::default(),
         };
 
@@ -2472,6 +2533,7 @@ mod tests {
             navigation: vec![],
             albums: vec![],
             pages: vec![],
+            description: None,
             config: SiteConfig::default(),
         };
         let html = render_index(&manifest, "", None, None, &snippets).into_string();

@@ -80,6 +80,8 @@ pub struct Manifest {
     pub albums: Vec<Album>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pages: Vec<Page>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub config: SiteConfig,
 }
 
@@ -154,7 +156,8 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     }
     slugify_nav_paths(&mut nav_items);
 
-    let pages = parse_pages(root)?;
+    let description = read_description(root, &root_config.site_description_file)?;
+    let pages = parse_pages(root, &root_config.site_description_file)?;
 
     // Root-level resolved config for CSS generation
     let config = root_config;
@@ -163,6 +166,7 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
         navigation: nav_items,
         albums,
         pages,
+        description,
         config,
     })
 }
@@ -197,7 +201,10 @@ fn slugify_nav_paths(items: &mut [NavItem]) {
 /// Each `.md` file becomes a page. Numbered files (`NNN-name.md`) appear in
 /// navigation sorted by number; unnumbered files are generated but hidden.
 /// If a file's only content is a URL, it becomes an external link in the nav.
-fn parse_pages(root: &Path) -> Result<Vec<Page>, ScanError> {
+/// The `site_description_stem` file (e.g. `site.md`) is excluded — it is
+/// rendered on the index page, not as a standalone page.
+fn parse_pages(root: &Path, site_description_stem: &str) -> Result<Vec<Page>, ScanError> {
+    let exclude_filename = format!("{}.md", site_description_stem);
     let mut md_files: Vec<PathBuf> = fs::read_dir(root)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -206,6 +213,9 @@ fn parse_pages(root: &Path) -> Result<Vec<Page>, ScanError> {
                 && p.extension()
                     .map(|e| e.eq_ignore_ascii_case("md"))
                     .unwrap_or(false)
+                && p.file_name()
+                    .map(|n| n.to_string_lossy() != exclude_filename)
+                    .unwrap_or(true)
         })
         .collect();
 
@@ -391,14 +401,13 @@ fn is_image(path: &Path) -> bool {
     IMAGE_EXTENSIONS.contains(&ext.as_str())
 }
 
-/// Read an album description from `description.md` or `description.txt`.
+/// Read a description from `<stem>.md` or `<stem>.txt` in the given directory.
 ///
-/// - `description.md` takes priority and is rendered as markdown HTML.
-/// - `description.txt` is converted to HTML with smart paragraph handling
-///   and URL linkification.
+/// - `.md` takes priority and is rendered as markdown HTML.
+/// - `.txt` is converted to HTML with smart paragraph handling and URL linkification.
 /// - Returns `None` if neither file exists or contents are empty.
-fn read_album_description(album_dir: &Path) -> Result<Option<String>, ScanError> {
-    let md_path = album_dir.join("description.md");
+fn read_description(dir: &Path, stem: &str) -> Result<Option<String>, ScanError> {
+    let md_path = dir.join(format!("{}.md", stem));
     if md_path.exists() {
         let content = fs::read_to_string(&md_path)?.trim().to_string();
         if content.is_empty() {
@@ -410,7 +419,7 @@ fn read_album_description(album_dir: &Path) -> Result<Option<String>, ScanError>
         return Ok(Some(html));
     }
 
-    let txt_path = album_dir.join("description.txt");
+    let txt_path = dir.join(format!("{}.txt", stem));
     if txt_path.exists() {
         let content = fs::read_to_string(&txt_path)?.trim().to_string();
         if content.is_empty() {
@@ -420,6 +429,11 @@ fn read_album_description(album_dir: &Path) -> Result<Option<String>, ScanError>
     }
 
     Ok(None)
+}
+
+/// Read an album description from `description.md` or `description.txt`.
+fn read_album_description(album_dir: &Path) -> Result<Option<String>, ScanError> {
+    read_description(album_dir, "description")
 }
 
 /// Convert plain text to HTML with smart paragraph detection and URL linkification.
@@ -1408,5 +1422,126 @@ mod tests {
         assert!(album_titles.contains(&"Test"));
         assert!(album_titles.contains(&"assets"));
         assert!(!album_titles.iter().any(|t| *t == "site-assets"));
+    }
+
+    // =========================================================================
+    // Site description tests
+    // =========================================================================
+
+    #[test]
+    fn site_description_read_from_md() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(tmp.path().join("site.md"), "**Welcome** to the gallery.").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.description.as_ref().unwrap();
+        assert!(desc.contains("<strong>Welcome</strong>"));
+    }
+
+    #[test]
+    fn site_description_read_from_txt() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(tmp.path().join("site.txt"), "A plain text description.").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.description.as_ref().unwrap();
+        assert!(desc.contains("<p>A plain text description.</p>"));
+    }
+
+    #[test]
+    fn site_description_md_takes_priority_over_txt() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(tmp.path().join("site.md"), "Markdown version").unwrap();
+        fs::write(tmp.path().join("site.txt"), "Text version").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.description.as_ref().unwrap();
+        assert!(desc.contains("Markdown version"));
+        assert!(!desc.contains("Text version"));
+    }
+
+    #[test]
+    fn site_description_empty_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(tmp.path().join("site.md"), "  \n  ").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.description.is_none());
+    }
+
+    #[test]
+    fn site_description_none_when_no_file() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.description.is_none());
+    }
+
+    #[test]
+    fn site_description_excluded_from_pages() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(tmp.path().join("site.md"), "# Site Description\n\nContent.").unwrap();
+        fs::write(tmp.path().join("010-about.md"), "# About\n\nAbout page.").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+
+        // site.md should be in description, not in pages
+        assert!(manifest.description.is_some());
+        assert_eq!(manifest.pages.len(), 1);
+        assert_eq!(manifest.pages[0].slug, "about");
+    }
+
+    #[test]
+    fn site_description_custom_file_name() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("config.toml"),
+            r#"site_description_file = "intro""#,
+        )
+        .unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-test.jpg"), "fake image").unwrap();
+        fs::write(tmp.path().join("intro.md"), "Custom intro text.").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let desc = manifest.description.as_ref().unwrap();
+        assert!(desc.contains("Custom intro text."));
+    }
+
+    #[test]
+    fn fixture_site_description_loaded() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        let desc = manifest.description.as_ref().unwrap();
+        assert!(desc.contains("fine art photography"));
+    }
+
+    #[test]
+    fn fixture_site_md_not_in_pages() {
+        let tmp = setup_fixtures();
+        let manifest = scan(tmp.path()).unwrap();
+
+        // site.md should not appear as a page
+        assert!(manifest.pages.iter().all(|p| p.slug != "site"));
     }
 }

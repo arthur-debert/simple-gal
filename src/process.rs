@@ -94,6 +94,8 @@ pub struct InputManifest {
     pub albums: Vec<InputAlbum>,
     #[serde(default)]
     pub pages: Vec<Page>,
+    #[serde(default)]
+    pub description: Option<String>,
     pub config: SiteConfig,
 }
 
@@ -130,6 +132,8 @@ pub struct OutputManifest {
     pub albums: Vec<OutputAlbum>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pages: Vec<Page>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub config: SiteConfig,
 }
 
@@ -334,6 +338,7 @@ pub fn process_with_backend(
         navigation: input.navigation,
         albums: output_albums,
         pages: input.pages,
+        description: input.description,
         config: input.config,
     })
 }

@@ -51,6 +51,7 @@ Galleries and images are ordered by a numeric prefix (e.g. `001-Paris`, `002-Lon
 - **Photo title**: from the IPTC tag if available, otherwise the filename (e.g. `003-Dusk.jpg` becomes "Dusk").
 - **Photo description**: from the IPTC tag if available, otherwise from a same-name `.txt` sidecar (e.g. `003-Dusk.txt`).
 - **Gallery names**: from the directory name. Descriptions from `description.md` (or `.txt`) inside the directory.
+- **Site description**: a `site.md` (or `site.txt`) in the content root is rendered on the home page with the site title. Configurable via `site_description_file` in `config.toml`.
 
 A `config.toml` in the content root sets global preferences. Each gallery can have its own `config.toml` — only changed properties need to be listed; the rest are inherited from parents.
 
@@ -59,6 +60,7 @@ Any `NNN-<name>.md` file in the content root is added as a page in the navigatio
 ```text
 content/
 ├── config.toml                    # Site configuration (optional)
+├── site.md                        # Site description → rendered on home page
 ├── assets/                        # Static assets → copied to output root
 │   ├── favicon.ico                # Auto-detected, injected into <head>
 │   └── fonts/                     # Custom fonts (referenced in config.toml)
@@ -142,9 +144,19 @@ Every generated site is a Progressive Web App out of the box — no configuratio
 - **App-like display**: opens in standalone mode (no browser chrome), matching the gallery's clean aesthetic.
 - **Automatic updates**: when you rebuild and deploy, the service worker picks up the new version on the next visit.
 
-The gallery name on the home screen comes from `site_title` in your `config.toml`. Default PWA icons are provided; override them by placing `icon-192.png`, `icon-512.png`, or `apple-touch-icon.png` in your `assets/` directory.
+### How it works
 
-**Note**: the site must be deployed at the root of its domain (e.g. `photos.example.com/`, not `example.com/photos/`).
+A **service worker** (`sw.js`) is registered on every page. It uses a stale-while-revalidate caching strategy: cached pages are served instantly while a fresh copy is fetched in the background. The cache name includes the build version (`simple-gal-v<version>`) so old caches are automatically cleaned up when you deploy a new build.
+
+A **web manifest** (`site.webmanifest`) is generated with your `site_title` and default icons. It tells the browser how to display the app when installed: standalone mode, white theme, and your gallery title on the home screen.
+
+### Customizing
+
+- **App name**: set `site_title` in `config.toml` — this becomes the name on the home screen.
+- **Icons**: place `icon-192.png`, `icon-512.png`, or `apple-touch-icon.png` in your `assets/` directory to override the defaults.
+- **Theme color**: the manifest uses white (`#ffffff`) for both `theme_color` and `background_color`. To customize, place your own `site.webmanifest` in `assets/` — it will overwrite the generated one.
+
+**Note**: the site must be deployed at the root of its domain (e.g. `photos.example.com/`, not `example.com/photos/`). Subdirectory deployment is not supported because the service worker scope, manifest paths, and cached asset URLs all assume root-relative paths.
 
 ## GitHub Action
 
