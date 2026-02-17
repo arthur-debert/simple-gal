@@ -1,31 +1,46 @@
 //! Image processing — pure Rust, zero external dependencies.
 //!
-//! | Operation | Crate / function |
-//! |---|---|
-//! | **Identify** | `image::image_dimensions` |
-//! | **IPTC metadata** | custom parser (JPEG APP13 + TIFF IFD) |
-//! | **Resize → AVIF** | Lanczos3 + rav1e encoder |
-//! | **Thumbnail** | `resize_to_fill` + `unsharpen` |
+//! This module handles all image manipulation in Simple Gal: reading dimensions,
+//! extracting IPTC metadata, generating responsive sizes, and creating thumbnails.
+//! Everything uses pure Rust crates (`image`, `rav1e`) — no ImageMagick, no FFmpeg,
+//! no system libraries. This is a deliberate choice: the binary is fully self-contained,
+//! so it works on any machine without installing prerequisites.
 //!
-//! The module is split into:
-//! - **Calculations**: Pure functions for dimension math (unit testable)
-//! - **Parameters**: Data structures describing image operations
-//! - **Backend**: [`ImageBackend`] trait + [`RustBackend`]
-//! - **Operations**: High-level functions combining calculations + backend
+//! ## Operation Table
+//!
+//! | Operation | Implementation |
+//! |---|---|
+//! | **Identify** (dimensions) | `image::image_dimensions` |
+//! | **IPTC metadata** | Custom parser (`iptc_parser`) — reads JPEG APP13 + TIFF IFD |
+//! | **Resize → AVIF** | Lanczos3 resampling + rav1e AVIF encoder |
+//! | **Thumbnail** | `resize_to_fill` (center crop) + optional `unsharpen` |
+//!
+//! ## Architecture: Backend Trait Pattern
+//!
+//! The module separates *what* to do from *how* to do it using the [`ImageBackend`] trait:
+//!
+//! - **[`calculations`]** — Pure functions for dimension math (aspect ratios, responsive
+//!   sizes). Fully unit-testable with no I/O.
+//! - **[`params`]** — Data structs (`ResizeParams`, `ThumbnailParams`) describing operations.
+//! - **[`backend`]** — The [`ImageBackend`] trait defining identify/resize/thumbnail.
+//!   Includes a `MockBackend` (behind `#[cfg(test)]`) for fast, deterministic tests.
+//! - **[`rust_backend`]** — [`RustBackend`], the production implementation using `image` + `rav1e`.
+//! - **[`operations`]** — High-level functions (`create_responsive_images`, `create_thumbnail`)
+//!   that combine calculations + backend. Accept `&dyn ImageBackend` for testability.
 
 pub mod backend;
-mod calculations;
+pub mod calculations;
 pub(crate) mod iptc_parser;
 pub mod operations;
-mod params;
+pub mod params;
 pub mod rust_backend;
 
-pub use backend::{BackendError, ImageBackend};
-pub use rust_backend::RustBackend;
-// Re-exported for tests (process.rs, operations.rs tests use this)
 #[cfg(test)]
 pub use backend::Dimensions;
+pub use backend::{BackendError, ImageBackend};
+pub use calculations::calculate_thumbnail_dimensions;
 pub use operations::{
     ResponsiveConfig, ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
 pub use params::{Quality, Sharpening};
+pub use rust_backend::RustBackend;

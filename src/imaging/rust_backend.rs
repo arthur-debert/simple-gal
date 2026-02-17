@@ -11,7 +11,7 @@
 //! | Encode → AVIF | `image::codecs::avif::AvifEncoder` (rav1e, speed 6) |
 //! | Thumbnail crop | `image::DynamicImage::resize_to_fill` |
 //! | Sharpening | `image::imageops::unsharpen` |
-//! | IPTC metadata | custom [`iptc_parser`](super::iptc_parser) (JPEG APP13 + TIFF IFD) |
+//! | IPTC metadata | custom `iptc_parser` (JPEG APP13 + TIFF IFD) |
 
 use super::backend::{BackendError, Dimensions, ImageBackend, ImageMetadata};
 use super::params::{ResizeParams, ThumbnailParams};

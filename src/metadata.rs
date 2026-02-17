@@ -85,7 +85,7 @@ const MAX_SLUG_LEN: usize = 80;
 /// - Replaces non-alphanumeric characters (except dashes) with dashes
 /// - Collapses consecutive dashes into one
 /// - Strips leading and trailing dashes
-/// - Truncates to [`MAX_SLUG_LEN`] characters (breaks at last dash before limit)
+/// - Truncates to `MAX_SLUG_LEN` characters (breaks at last dash before limit)
 pub fn sanitize_slug(title: &str) -> String {
     let slug: String = title
         .chars()

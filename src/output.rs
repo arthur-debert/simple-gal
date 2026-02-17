@@ -1,7 +1,40 @@
 //! CLI output formatting for all pipeline stages.
 //!
-//! Provides structured, tree-based output showing the gallery hierarchy
-//! with semantic positional indices. Each stage has a dedicated formatter.
+//! Each pipeline stage (scan, process, generate) produces a manifest. This module
+//! formats those manifests as human-readable, tree-based terminal output showing
+//! the gallery hierarchy with positional indices (e.g. `001`, `002`).
+//!
+//! ## Why Tree-Based Display
+//!
+//! The output mirrors the directory structure so photographers can verify that
+//! their content was discovered correctly. Positional indices show navigation
+//! order, container vs. leaf albums are visually distinct, and image counts
+//! give a quick sanity check. Each stage's formatter shows progressively more
+//! detail: scan shows discovery, process shows generated sizes, generate shows
+//! output file paths.
+//!
+//! ## Output Format
+//!
+//! ```text
+//! Albums
+//! 001 Landscapes (5 photos) [010-Landscapes]
+//!     [001-dawn.jpg 001-dawn.txt]
+//! 002 Travel [020-Travel]
+//!     001 Japan (3 photos) [010-Japan]: A trip through Tokyo...
+//!     002 Italy (2 photos) [020-Italy]
+//!
+//! Pages
+//!     001 About [about.md]
+//!
+//! Config
+//!     config.toml
+//!     assets/
+//! ```
+//!
+//! ## Functions
+//!
+//! Each stage has a `format_*` function (returns `Vec<String>`) for testability
+//! and a `print_*` wrapper that writes to stdout.
 
 use crate::types::NavItem;
 use std::path::Path;

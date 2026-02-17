@@ -1,0 +1,16 @@
+[book]
+title = "Simple Gal"
+description = "Documentation for Simple Gal — a static site generator for photography portfolios"
+authors = ["Arthur Debert"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../../target/book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/arthur-debert/simple-gal"
+edit-url-template = "https://github.com/arthur-debert/simple-gal/edit/main/docs/{path}"
+site-url = "https://simple-gal.magik.works/"

@@ -1,7 +1,17 @@
 //! Parameter types for image operations.
 //!
-//! These structs describe what to do, not how to do it.
-//! The backend interprets these and executes the actual commands.
+//! These structs describe *what* to do, not *how* to do it. They are the
+//! interface between the high-level [`operations`](super::operations) module
+//! (which decides what images to create) and the [`backend`](super::backend)
+//! (which does the actual pixel work). This separation allows swapping backends
+//! (e.g. for testing with a mock) without changing operation logic.
+//!
+//! ## Types
+//!
+//! - [`Quality`] — Lossy encoding quality (1–100, default 90). Clamped on construction.
+//! - [`Sharpening`] — Unsharp-mask parameters (sigma + threshold) for thumbnail crispness.
+//! - [`ResizeParams`] — Full specification for a resize: source, output path, target dimensions, quality.
+//! - [`ThumbnailParams`] — Full specification for a thumbnail: source, output, crop dimensions, quality, optional sharpening.
 
 use std::path::PathBuf;
 
