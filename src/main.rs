@@ -2,6 +2,14 @@ use clap::{Parser, Subcommand};
 use simple_gal::{config, generate, output, process, scan};
 use std::path::PathBuf;
 
+/// Shared flags for commands that process images.
+#[derive(clap::Args, Clone)]
+struct CacheArgs {
+    /// Disable the processing cache — force re-encoding of all images
+    #[arg(long)]
+    no_cache: bool,
+}
+
 fn version_string() -> &'static str {
     let on_tag = env!("ON_RELEASE_TAG");
     if on_tag == "true" {
@@ -76,11 +84,11 @@ enum Command {
     /// Scan content directory into a manifest
     Scan,
     /// Generate responsive image sizes and thumbnails
-    Process,
+    Process(CacheArgs),
     /// Produce the final HTML site from processed images
     Generate,
     /// Run the full pipeline: scan → process → generate
-    Build,
+    Build(CacheArgs),
     /// Validate content directory without building
     Check,
     /// Print a stock config.toml with all options documented
@@ -99,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(&manifest_path, json)?;
             output::print_scan_output(&manifest, &cli.source);
         }
-        Command::Process => {
+        Command::Process(cache_args) => {
             let scan_manifest_path = cli.temp_dir.join("manifest.json");
             let manifest_content = std::fs::read_to_string(&scan_manifest_path)?;
             let input_manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
@@ -107,11 +115,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::from_value(input_manifest.get("config").cloned().unwrap_or_default())?;
             init_thread_pool(&site_config.processing);
             let processed_dir = cli.temp_dir.join("processed");
-            let result = process::process(&scan_manifest_path, &cli.source, &processed_dir)?;
+            let result = process::process(
+                &scan_manifest_path,
+                &cli.source,
+                &processed_dir,
+                !cache_args.no_cache,
+            )?;
             let output_manifest = processed_dir.join("manifest.json");
-            let json = serde_json::to_string_pretty(&result)?;
+            let json = serde_json::to_string_pretty(&result.manifest)?;
             std::fs::write(&output_manifest, &json)?;
-            output::print_process_output(&result);
+            output::print_process_output(&result.manifest);
+            println!("Cache: {}", result.cache_stats);
         }
         Command::Generate => {
             let processed_dir = cli.temp_dir.join("processed");
@@ -126,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let manifest: generate::Manifest = serde_json::from_str(&manifest_content)?;
             output::print_generate_output(&manifest);
         }
-        Command::Build => {
+        Command::Build(cache_args) => {
             // Resolve content root: check config.toml in source dir for content_root override
             let source = resolve_build_source(&cli.source);
 
@@ -142,12 +156,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("==> Stage 2: Processing images");
             init_thread_pool(&manifest.config.processing);
             let processed_dir = cli.temp_dir.join("processed");
-            let processed_manifest =
-                process::process(&scan_manifest_path, &source, &processed_dir)?;
+            let result = process::process(
+                &scan_manifest_path,
+                &source,
+                &processed_dir,
+                !cache_args.no_cache,
+            )?;
             let processed_manifest_path = processed_dir.join("manifest.json");
-            let json = serde_json::to_string_pretty(&processed_manifest)?;
+            let json = serde_json::to_string_pretty(&result.manifest)?;
             std::fs::write(&processed_manifest_path, &json)?;
-            output::print_process_output(&processed_manifest);
+            output::print_process_output(&result.manifest);
+            println!("Cache: {}", result.cache_stats);
 
             println!("==> Stage 3: Generating HTML → {}", cli.output.display());
             generate::generate(

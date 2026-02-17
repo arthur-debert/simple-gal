@@ -30,6 +30,7 @@
 //! | [`scan`] | Stage 1 — walks the content directory, extracts metadata, produces the scan manifest |
 //! | [`process`] | Stage 2 — generates responsive AVIF images and thumbnails from the scan manifest |
 //! | [`generate`] | Stage 3 — renders the final HTML site from the process manifest using Maud |
+//! | [`cache`] | Incremental build cache — skips AVIF encoding when source and params are unchanged |
 //! | [`config`] | Hierarchical `config.toml` loading, validation, merging, and CSS generation |
 //! | [`types`] | Shared types serialized between stages (`NavItem`, `Page`) |
 //! | [`naming`] | `NNN-name` filename convention parser used by all entry types |
@@ -102,6 +103,7 @@
 //! site can be dropped on any file server — no Node, no PHP, no database. If a
 //! browser can render HTML, it can display your portfolio.
 
+pub mod cache;
 pub mod config;
 pub mod generate;
 pub mod imaging;

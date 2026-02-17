@@ -35,16 +35,18 @@
 //! └── ...
 //! ```
 //!
+use crate::cache::{self, CacheManifest, CacheStats};
 use crate::config::SiteConfig;
 use crate::imaging::{
     BackendError, ImageBackend, Quality, ResponsiveConfig, RustBackend, Sharpening,
-    ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
+    ThumbnailConfig, get_dimensions,
 };
 use crate::metadata;
 use crate::types::{NavItem, Page};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -176,13 +178,20 @@ pub struct GeneratedVariant {
     pub height: u32,
 }
 
+/// Process result containing the output manifest and cache statistics.
+pub struct ProcessResult {
+    pub manifest: OutputManifest,
+    pub cache_stats: CacheStats,
+}
+
 pub fn process(
     manifest_path: &Path,
     source_root: &Path,
     output_dir: &Path,
-) -> Result<OutputManifest, ProcessError> {
+    use_cache: bool,
+) -> Result<ProcessResult, ProcessError> {
     let backend = RustBackend::new();
-    process_with_backend(&backend, manifest_path, source_root, output_dir)
+    process_with_backend(&backend, manifest_path, source_root, output_dir, use_cache)
 }
 
 /// Process images using a specific backend (allows testing with mock).
@@ -191,11 +200,19 @@ pub fn process_with_backend(
     manifest_path: &Path,
     source_root: &Path,
     output_dir: &Path,
-) -> Result<OutputManifest, ProcessError> {
+    use_cache: bool,
+) -> Result<ProcessResult, ProcessError> {
     let manifest_content = std::fs::read_to_string(manifest_path)?;
     let input: InputManifest = serde_json::from_str(&manifest_content)?;
 
     std::fs::create_dir_all(output_dir)?;
+
+    let cache = Mutex::new(if use_cache {
+        CacheManifest::load(output_dir)
+    } else {
+        CacheManifest::empty()
+    });
+    let stats = Mutex::new(CacheStats::default());
 
     let mut output_albums = Vec::new();
 
@@ -229,12 +246,12 @@ pub fn process_with_backend(
 
                 let dimensions = get_dimensions(backend, &source_path)?;
 
-                // Read embedded IPTC metadata and merge with scan-phase values
+                // Read embedded IPTC metadata and merge with scan-phase values.
+                // This always runs so metadata changes are never stale.
                 let exif = backend.read_metadata(&source_path)?;
                 let title = metadata::resolve(&[exif.title.as_deref(), image.title.as_deref()]);
                 let description =
                     metadata::resolve(&[image.description.as_deref(), exif.description.as_deref()]);
-                // If EXIF provided a title, derive slug from it (sanitized for URLs)
                 let slug = if exif.title.is_some() && title.is_some() {
                     metadata::sanitize_slug(title.as_deref().unwrap())
                 } else {
@@ -247,21 +264,32 @@ pub fn process_with_backend(
                     .to_str()
                     .unwrap();
 
-                let variants = create_responsive_images(
+                // Compute source hash once, shared across all variants
+                let source_hash = cache::hash_file(&source_path)?;
+                let ctx = CacheContext {
+                    source_hash: &source_hash,
+                    cache: &cache,
+                    stats: &stats,
+                    cache_root: output_dir,
+                };
+
+                let variants = create_responsive_images_cached(
                     backend,
                     &source_path,
                     &album_output_dir,
                     stem,
                     dimensions,
                     &responsive_config,
+                    &ctx,
                 )?;
 
-                let thumbnail_path = create_thumbnail(
+                let thumbnail_path = create_thumbnail_cached(
                     backend,
                     &source_path,
                     &album_output_dir,
                     stem,
                     &thumbnail_config,
+                    &ctx,
                 )?;
 
                 let generated: std::collections::BTreeMap<String, GeneratedVariant> = variants
@@ -334,13 +362,146 @@ pub fn process_with_backend(
         });
     }
 
-    Ok(OutputManifest {
-        navigation: input.navigation,
-        albums: output_albums,
-        pages: input.pages,
-        description: input.description,
-        config: input.config,
+    let final_stats = stats.into_inner().unwrap();
+    cache.into_inner().unwrap().save(output_dir)?;
+
+    Ok(ProcessResult {
+        manifest: OutputManifest {
+            navigation: input.navigation,
+            albums: output_albums,
+            pages: input.pages,
+            description: input.description,
+            config: input.config,
+        },
+        cache_stats: final_stats,
     })
+}
+
+/// Create responsive images with cache awareness.
+///
+/// For each variant, checks the cache before encoding. On a cache hit the
+/// existing output file is reused and no backend call is made.
+/// Shared cache state passed to per-image encoding functions.
+struct CacheContext<'a> {
+    source_hash: &'a str,
+    cache: &'a Mutex<CacheManifest>,
+    stats: &'a Mutex<CacheStats>,
+    cache_root: &'a Path,
+}
+
+/// Create responsive images with cache awareness.
+///
+/// For each variant, checks the cache before encoding. On a cache hit the
+/// existing output file is reused and no backend call is made.
+fn create_responsive_images_cached(
+    backend: &impl ImageBackend,
+    source: &Path,
+    output_dir: &Path,
+    filename_stem: &str,
+    original_dims: (u32, u32),
+    config: &ResponsiveConfig,
+    ctx: &CacheContext<'_>,
+) -> Result<Vec<crate::imaging::operations::GeneratedVariant>, ProcessError> {
+    use crate::imaging::calculations::calculate_responsive_sizes;
+
+    let sizes = calculate_responsive_sizes(original_dims, &config.sizes);
+    let mut variants = Vec::new();
+
+    let relative_dir = output_dir
+        .file_name()
+        .map(|s| s.to_str().unwrap())
+        .unwrap_or("");
+
+    for size in sizes {
+        let avif_name = format!("{}-{}.avif", filename_stem, size.target);
+        let relative_path = format!("{}/{}", relative_dir, avif_name);
+        let params_hash = cache::hash_responsive_params(size.target, config.quality.value());
+
+        let is_hit = ctx.cache.lock().unwrap().is_cached(
+            &relative_path,
+            ctx.source_hash,
+            &params_hash,
+            ctx.cache_root,
+        );
+
+        if is_hit {
+            ctx.stats.lock().unwrap().hit();
+        } else {
+            let avif_path = output_dir.join(&avif_name);
+            backend.resize(&crate::imaging::params::ResizeParams {
+                source: source.to_path_buf(),
+                output: avif_path,
+                width: size.width,
+                height: size.height,
+                quality: config.quality,
+            })?;
+            let mut c = ctx.cache.lock().unwrap();
+            c.insert(
+                relative_path.clone(),
+                ctx.source_hash.to_string(),
+                params_hash,
+            );
+            ctx.stats.lock().unwrap().miss();
+        }
+
+        variants.push(crate::imaging::operations::GeneratedVariant {
+            target_size: size.target,
+            avif_path: relative_path,
+            width: size.width,
+            height: size.height,
+        });
+    }
+
+    Ok(variants)
+}
+
+/// Create a thumbnail with cache awareness.
+fn create_thumbnail_cached(
+    backend: &impl ImageBackend,
+    source: &Path,
+    output_dir: &Path,
+    filename_stem: &str,
+    config: &ThumbnailConfig,
+    ctx: &CacheContext<'_>,
+) -> Result<String, ProcessError> {
+    let thumb_name = format!("{}-thumb.avif", filename_stem);
+    let relative_dir = output_dir
+        .file_name()
+        .map(|s| s.to_str().unwrap())
+        .unwrap_or("");
+    let relative_path = format!("{}/{}", relative_dir, thumb_name);
+
+    let sharpening_tuple = config.sharpening.map(|s| (s.sigma, s.threshold));
+    let params_hash = cache::hash_thumbnail_params(
+        config.aspect,
+        config.short_edge,
+        config.quality.value(),
+        sharpening_tuple,
+    );
+
+    let is_hit = ctx.cache.lock().unwrap().is_cached(
+        &relative_path,
+        ctx.source_hash,
+        &params_hash,
+        ctx.cache_root,
+    );
+
+    if is_hit {
+        ctx.stats.lock().unwrap().hit();
+    } else {
+        let thumb_path = output_dir.join(&thumb_name);
+        let params = crate::imaging::operations::plan_thumbnail(source, &thumb_path, config);
+        backend.thumbnail(&params)?;
+        let mut c = ctx.cache.lock().unwrap();
+        c.insert(
+            relative_path.clone(),
+            ctx.source_hash.to_string(),
+            params_hash,
+        );
+        ctx.stats.lock().unwrap().miss();
+    }
+
+    Ok(relative_path)
 }
 
 #[cfg(test)]
@@ -522,13 +683,14 @@ mod tests {
         }]);
 
         let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir).unwrap();
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false)
+                .unwrap();
 
         // Verify outputs
-        assert_eq!(result.albums.len(), 1);
-        assert_eq!(result.albums[0].images.len(), 1);
+        assert_eq!(result.manifest.albums.len(), 1);
+        assert_eq!(result.manifest.albums[0].images.len(), 1);
 
-        let image = &result.albums[0].images[0];
+        let image = &result.manifest.albums[0].images[0];
         assert_eq!(image.dimensions, (200, 250));
         assert!(!image.generated.is_empty());
         assert!(!image.thumbnail.is_empty());
@@ -555,7 +717,7 @@ mod tests {
             height: 1500,
         }]);
 
-        process_with_backend(&backend, &manifest_path, &source_dir, &output_dir).unwrap();
+        process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false).unwrap();
 
         use crate::imaging::backend::tests::RecordedOp;
         let ops = backend.get_operations();
@@ -600,10 +762,11 @@ mod tests {
         }]);
 
         let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir).unwrap();
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false)
+                .unwrap();
 
         // Should only have original size
-        let image = &result.albums[0].images[0];
+        let image = &result.manifest.albums[0].images[0];
         assert_eq!(image.generated.len(), 1);
         assert!(image.generated.contains_key("500"));
     }
@@ -618,8 +781,229 @@ mod tests {
         let manifest_path = create_test_manifest(tmp.path());
         let backend = MockBackend::new();
 
-        let result = process_with_backend(&backend, &manifest_path, &source_dir, &output_dir);
+        let result =
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false);
 
         assert!(matches!(result, Err(ProcessError::SourceNotFound(_))));
+    }
+
+    // =========================================================================
+    // Cache integration tests
+    // =========================================================================
+
+    /// Helper: run process with cache enabled, returning (ops_count, cache_stats).
+    fn run_cached(
+        source_dir: &Path,
+        output_dir: &Path,
+        manifest_path: &Path,
+        dims: Vec<Dimensions>,
+    ) -> (Vec<crate::imaging::backend::tests::RecordedOp>, CacheStats) {
+        let backend = MockBackend::with_dimensions(dims);
+        let result =
+            process_with_backend(&backend, manifest_path, source_dir, output_dir, true).unwrap();
+        (backend.get_operations(), result.cache_stats)
+    }
+
+    #[test]
+    fn cache_second_run_skips_all_encoding() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        let manifest_path = create_test_manifest_with_config(
+            tmp.path(),
+            r#"{"images": {"sizes": [800, 1400], "quality": 85}}"#,
+        );
+
+        // First run: everything is a miss
+        let (_ops1, stats1) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+
+        // The mock backend doesn't write real files, so we need to create
+        // dummy output files for the cache hit check on the second run.
+        for entry in cache::CacheManifest::load(&output_dir).entries.keys() {
+            let path = output_dir.join(entry);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "fake avif").unwrap();
+        }
+
+        // Second run: everything should be a cache hit
+        let (ops2, stats2) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+
+        // First run: 2 resizes + 1 thumbnail = 3 misses
+        assert_eq!(stats1.misses, 3);
+        assert_eq!(stats1.hits, 0);
+
+        // Second run: 0 resizes + 0 thumbnails encoded, all cached
+        assert_eq!(stats2.hits, 3);
+        assert_eq!(stats2.misses, 0);
+
+        // Second run should only have identify + read_metadata (no resize/thumbnail)
+        use crate::imaging::backend::tests::RecordedOp;
+        let encode_ops: Vec<_> = ops2
+            .iter()
+            .filter(|op| matches!(op, RecordedOp::Resize { .. } | RecordedOp::Thumbnail { .. }))
+            .collect();
+        assert_eq!(encode_ops.len(), 0);
+    }
+
+    #[test]
+    fn cache_invalidated_when_source_changes() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        let manifest_path =
+            create_test_manifest_with_config(tmp.path(), r#"{"images": {"sizes": [800]}}"#);
+
+        // First run
+        let (_ops1, stats1) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+        assert_eq!(stats1.misses, 2); // 1 resize + 1 thumb
+
+        // Create dummy outputs
+        for entry in cache::CacheManifest::load(&output_dir).entries.keys() {
+            let path = output_dir.join(entry);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "fake").unwrap();
+        }
+
+        // Modify source file content (changes source_hash)
+        fs::write(&image_path, "different content").unwrap();
+
+        // Second run: cache should miss because source hash changed
+        let (_ops2, stats2) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+        assert_eq!(stats2.misses, 2);
+        assert_eq!(stats2.hits, 0);
+    }
+
+    #[test]
+    fn cache_invalidated_when_config_changes() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        // First run with quality=85
+        let manifest_path = create_test_manifest_with_config(
+            tmp.path(),
+            r#"{"images": {"sizes": [800], "quality": 85}}"#,
+        );
+        let (_ops1, stats1) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+        assert_eq!(stats1.misses, 2);
+
+        // Create dummy outputs
+        for entry in cache::CacheManifest::load(&output_dir).entries.keys() {
+            let path = output_dir.join(entry);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "fake").unwrap();
+        }
+
+        // Second run with quality=90 — params_hash changes, cache invalidated
+        let manifest_path = create_test_manifest_with_config(
+            tmp.path(),
+            r#"{"images": {"sizes": [800], "quality": 90}}"#,
+        );
+        let (_ops2, stats2) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+        assert_eq!(stats2.misses, 2);
+        assert_eq!(stats2.hits, 0);
+    }
+
+    #[test]
+    fn no_cache_flag_forces_full_reprocess() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        let manifest_path =
+            create_test_manifest_with_config(tmp.path(), r#"{"images": {"sizes": [800]}}"#);
+
+        // First run with cache
+        let (_ops1, _stats1) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+
+        // Create dummy outputs
+        for entry in cache::CacheManifest::load(&output_dir).entries.keys() {
+            let path = output_dir.join(entry);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "fake").unwrap();
+        }
+
+        // Second run with use_cache=false (simulates --no-cache)
+        let backend = MockBackend::with_dimensions(vec![Dimensions {
+            width: 2000,
+            height: 1500,
+        }]);
+        let result =
+            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false)
+                .unwrap();
+
+        // Should re-encode everything despite outputs existing
+        assert_eq!(result.cache_stats.misses, 2);
+        assert_eq!(result.cache_stats.hits, 0);
     }
 }
