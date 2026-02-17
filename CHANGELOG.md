@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-02-17
+
 ### Added
 - Image processing cache: repeated builds skip AVIF encoding for unchanged images, making incremental builds near-instant (6s → 0.2s for 3 images). Cache keys are SHA-256 of source content + encoding parameters (size, quality, aspect ratio), so config changes automatically invalidate.
 - `--no-cache` flag on `build` and `process` commands to force full re-encoding
