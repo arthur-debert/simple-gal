@@ -126,7 +126,7 @@ pub struct Image {
     pub description: Option<String>,
 }
 
-const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "webp"];
+const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "webp", "avif"];
 
 pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     let mut albums = Vec::new();

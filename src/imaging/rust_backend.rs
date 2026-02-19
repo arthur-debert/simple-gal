@@ -6,7 +6,7 @@
 //!
 //! | Operation | Crate / function |
 //! |---|---|
-//! | Decode (JPEG, PNG, TIFF, WebP) | `image` crate (pure Rust decoders) |
+//! | Decode (JPEG, PNG, TIFF, WebP, AVIF) | `image` crate (pure Rust decoders) |
 //! | Resize | `image::imageops::resize` with `Lanczos3` filter |
 //! | Encode → AVIF | `image::codecs::avif::AvifEncoder` (rav1e, speed 6) |
 //! | Thumbnail crop | `image::DynamicImage::resize_to_fill` |

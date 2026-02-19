@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- AVIF source image support: `.avif` files are now accepted as input alongside JPEG, PNG, TIFF, and WebP
+
 ## [0.6.0] - 2026-02-17
 
 ### Added
