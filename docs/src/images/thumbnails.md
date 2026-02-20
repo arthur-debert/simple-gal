@@ -91,6 +91,41 @@ Now every album under `020-Travel` uses square 350px thumbnails, unless an indiv
 
 Only the keys you specify are overridden. Setting `aspect_ratio` in a gallery config does not reset `size` to the default -- it keeps whatever value was inherited from the parent.
 
+## Custom album thumbnail
+
+By default, the album thumbnail is image #1 (or the first image by sort order). To designate a specific image as the album thumbnail, use the `thumb` naming convention:
+
+```text
+content/010-Landscapes/
+├── 001-dawn.jpg
+├── 002-dusk.jpg
+├── 005-thumb.jpg           # ← This image becomes the album thumbnail
+└── 010-night.jpg
+```
+
+The thumb image is still a normal gallery image — it appears in the album alongside every other photo. It is simply also used as the album's representative thumbnail on the index page.
+
+### Naming rules
+
+Any image whose name (after the number prefix) starts with `thumb` is a thumb designator:
+
+| Filename | Thumb? | Image title |
+|----------|--------|-------------|
+| `005-thumb.jpg` | Yes | (none) |
+| `005-thumb-The-Sunset.jpg` | Yes | The Sunset |
+| `thumb.jpg` | Yes | (none) |
+| `001-thumbnail.jpg` | No | thumbnail |
+
+The `thumb` prefix is stripped from the image's display title. `005-thumb-The-Sunset.jpg` becomes "The Sunset", not "thumb The Sunset".
+
+Only one thumb image is allowed per album. If two or more images match, the build fails with a `DuplicateThumb` error.
+
+### Priority
+
+1. Thumb-designated image (if present)
+2. Image #1 (number prefix `001`)
+3. First image by sort order
+
 ## Output format
 
 Thumbnails are encoded as AVIF using the same quality setting as responsive images. Each thumbnail is saved as `{stem}-thumb.avif` alongside the responsive sizes:

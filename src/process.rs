@@ -341,10 +341,10 @@ pub fn process_with_backend(
         // Sort by number to ensure consistent ordering
         output_images.sort_by_key(|img| img.number);
 
-        // Find album thumbnail (first image or image #1)
+        // Find album thumbnail: match the preview_image from scan, fall back to first
         let album_thumbnail = output_images
             .iter()
-            .find(|img| img.number == 1)
+            .find(|img| img.source_path == album.preview_image)
             .or_else(|| output_images.first())
             .map(|img| img.thumbnail.clone())
             .unwrap_or_default();
