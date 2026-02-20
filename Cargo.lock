@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "simple-gal"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "avif-parse",
  "clap",

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-02-20
+
+### Fixed
+- Release CI: bump Rust toolchain from 1.90.0 to 1.93.1 to fix `cross` requiring rustc 1.92.0+
+
 ## [0.8.0] - 2026-02-20
 
 ### Added
