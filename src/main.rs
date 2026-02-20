@@ -115,16 +115,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::from_value(input_manifest.get("config").cloned().unwrap_or_default())?;
             init_thread_pool(&site_config.processing);
             let processed_dir = cli.temp_dir.join("processed");
+            let (tx, rx) = std::sync::mpsc::channel();
+            let printer = std::thread::spawn(move || {
+                for event in rx {
+                    println!("{}", output::format_process_event(&event));
+                }
+            });
             let result = process::process(
                 &scan_manifest_path,
                 &cli.source,
                 &processed_dir,
                 !cache_args.no_cache,
+                Some(tx),
             )?;
+            printer.join().unwrap();
             let output_manifest = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&result.manifest)?;
             std::fs::write(&output_manifest, &json)?;
-            output::print_process_output(&result.manifest);
             println!("Cache: {}", result.cache_stats);
         }
         Command::Generate => {
@@ -156,16 +163,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("==> Stage 2: Processing images");
             init_thread_pool(&manifest.config.processing);
             let processed_dir = cli.temp_dir.join("processed");
+            let (tx, rx) = std::sync::mpsc::channel();
+            let printer = std::thread::spawn(move || {
+                for event in rx {
+                    println!("{}", output::format_process_event(&event));
+                }
+            });
             let result = process::process(
                 &scan_manifest_path,
                 &source,
                 &processed_dir,
                 !cache_args.no_cache,
+                Some(tx),
             )?;
+            printer.join().unwrap();
             let processed_manifest_path = processed_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&result.manifest)?;
             std::fs::write(&processed_manifest_path, &json)?;
-            output::print_process_output(&result.manifest);
             println!("Cache: {}", result.cache_stats);
 
             println!("==> Stage 3: Generating HTML → {}", cli.output.display());
