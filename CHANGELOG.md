@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-02-20
+
 ### Changed
 - Image processing now streams progress to the terminal as each image completes, instead of waiting for the entire stage to finish before printing output. Uses an `mpsc` channel from the process module to a printer thread, preserving the separation between processing logic and output formatting.
 
