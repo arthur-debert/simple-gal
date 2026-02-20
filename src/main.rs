@@ -210,9 +210,21 @@ fn init_thread_pool(processing: &config::ProcessingConfig) {
 /// Resolve the content source directory for the build command.
 ///
 /// Loads `config.toml` from the given source directory and uses its `content_root`
-/// if it specifies a different path. Otherwise returns the source path as-is.
+/// if it specifies a different path. Relative `content_root` values are resolved
+/// against the parent of `cli_source` (since config.toml lives inside the content
+/// directory, `content_root` is relative to the project root).
 fn resolve_build_source(cli_source: &std::path::Path) -> PathBuf {
     config::load_config(cli_source)
-        .map(|c| PathBuf::from(c.content_root))
+        .map(|c| {
+            let content_root = PathBuf::from(c.content_root);
+            if content_root.is_absolute() {
+                content_root
+            } else {
+                cli_source
+                    .parent()
+                    .map(|p| p.join(&content_root))
+                    .unwrap_or(content_root)
+            }
+        })
         .unwrap_or_else(|_| cli_source.to_path_buf())
 }

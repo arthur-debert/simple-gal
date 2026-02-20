@@ -88,12 +88,61 @@ fn load_image(path: &Path) -> Result<DynamicImage, BackendError> {
         })
 }
 
+/// Read an AVIF file and parse its ISOBMFF container.
+///
+/// Works around an `avif-parse` limitation: the `mdat` box in many real-world
+/// AVIF files uses `size == 0` ("extends to end of file"), which the library
+/// rejects. We patch the box header in memory before parsing.
+///
+/// UPSTREAM: <https://github.com/kornelski/avif-parse/blob/v2.0.0/src/lib.rs#L663>
+/// Remove `fix_unsized_isobmff_boxes` once avif-parse handles size-0 boxes.
+fn read_avif_file(path: &Path) -> Result<avif_parse::AvifData, BackendError> {
+    let mut file_data = std::fs::read(path).map_err(BackendError::Io)?;
+    fix_unsized_isobmff_boxes(&mut file_data);
+    avif_parse::read_avif(&mut std::io::Cursor::new(&file_data)).map_err(|e| {
+        BackendError::ProcessingFailed(format!("Failed to parse AVIF {}: {e:?}", path.display()))
+    })
+}
+
+/// Patch ISOBMFF boxes that have `size == 0` (meaning "extends to end of file").
+///
+/// Per ISO 14496-12 § 4.2, a box with `size == 0` is valid and means "this box
+/// extends to EOF". `avif-parse` ≤ 2.0.0 returns `Unsupported("unknown sized box")`
+/// instead. We rewrite the 4-byte size field in place with `(file_len - box_offset)`.
+fn fix_unsized_isobmff_boxes(data: &mut [u8]) {
+    let file_len = data.len() as u64;
+    let mut offset: usize = 0;
+    while offset + 8 <= data.len() {
+        let size = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
+        if size == 0 {
+            // Size 0 means "rest of file". Patch it if it fits in u32.
+            let remaining = file_len - offset as u64;
+            if remaining <= u32::MAX as u64 {
+                data[offset..offset + 4].copy_from_slice(&(remaining as u32).to_be_bytes());
+            }
+            break; // size-0 box is always the last box
+        }
+        let box_size = if size == 1 {
+            // Extended 64-bit size
+            if offset + 16 > data.len() {
+                break;
+            }
+            u64::from_be_bytes(data[offset + 8..offset + 16].try_into().unwrap())
+        } else {
+            size as u64
+        };
+        offset += box_size as usize;
+    }
+}
+
 /// Extract dimensions from an AVIF file's container metadata (no full decode needed).
 fn identify_avif(path: &Path) -> Result<Dimensions, BackendError> {
-    let file_data = std::fs::read(path).map_err(BackendError::Io)?;
-    let avif = avif_parse::read_avif(&mut std::io::Cursor::new(&file_data)).map_err(|e| {
-        BackendError::ProcessingFailed(format!("Failed to parse AVIF {}: {e:?}", path.display()))
-    })?;
+    let avif = read_avif_file(path)?;
     let meta = avif.primary_item_metadata().map_err(|e| {
         BackendError::ProcessingFailed(format!(
             "Failed to read AVIF metadata {}: {e:?}",
@@ -121,10 +170,7 @@ fn decode_avif(path: &Path) -> Result<DynamicImage, BackendError> {
     use rav1d::include::dav1d::picture::Dav1dPicture;
     use std::ptr::NonNull;
 
-    let file_data = std::fs::read(path).map_err(BackendError::Io)?;
-    let avif = avif_parse::read_avif(&mut std::io::Cursor::new(&file_data)).map_err(|e| {
-        BackendError::ProcessingFailed(format!("Failed to parse AVIF {}: {e:?}", path.display()))
-    })?;
+    let avif = read_avif_file(path)?;
     let av1_bytes: &[u8] = &avif.primary_item;
 
     // Initialize rav1d decoder
