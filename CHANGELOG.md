@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-02-20
+
 ### Fixed
 - AVIF files with size-0 `mdat` boxes (common in Lightroom/modern encoders) now parse correctly — works around an `avif-parse` limitation by patching the ISOBMFF header in memory
 - `--source` with absolute/cross-project paths no longer silently scans the wrong directory — relative `content_root` is now resolved against the source path instead of the current working directory
