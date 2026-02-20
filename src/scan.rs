@@ -34,7 +34,8 @@
 //! - **Numbered directories** (`NNN-name`): Appear in navigation, sorted by number
 //! - **Unnumbered directories**: Albums exist but are hidden from navigation
 //! - **Numbered images** (`NNN-name.ext`): Sorted by number within album
-//! - **Image #1**: Automatically becomes the album preview/thumbnail (falls back to first image)
+//! - **Thumb images** (`NNN-thumb.ext` or `NNN-thumb-Title.ext`): Designated album thumbnail
+//! - **Image #1**: Fallback album preview/thumbnail when no thumb image exists
 //!
 //! ## Output
 //!
@@ -71,6 +72,8 @@ pub enum ScanError {
     MixedContent(PathBuf),
     #[error("Duplicate image number {0} in {1}")]
     DuplicateNumber(u32, PathBuf),
+    #[error("Multiple thumb-designated images in {0}")]
+    DuplicateThumb(PathBuf),
 }
 
 /// Manifest output from the scan stage
@@ -520,14 +523,34 @@ fn build_album(
         }
     }
 
-    // Find preview image (#1, or first image by sort order)
-    let preview_image = numbered_images
+    // Detect thumb-designated images (name starts with "thumb", case-insensitive)
+    let thumb_keys: Vec<u32> = numbered_images
         .iter()
-        .find(|&(&num, _)| num == 1)
-        .map(|(_, (path, _))| *path)
-        .or_else(|| numbered_images.values().next().map(|(path, _)| *path))
-        // Safe: build_album is only called with non-empty images
-        .unwrap();
+        .filter(|(_, (_, parsed))| {
+            let lower = parsed.name.to_ascii_lowercase();
+            lower == "thumb" || lower.starts_with("thumb-")
+        })
+        .map(|(&key, _)| key)
+        .collect();
+
+    if thumb_keys.len() > 1 {
+        return Err(ScanError::DuplicateThumb(path.to_path_buf()));
+    }
+
+    let thumb_key = thumb_keys.first().copied();
+
+    // Find preview image: thumb > #1 > first by sort order
+    let preview_image = if let Some(key) = thumb_key {
+        numbered_images.get(&key).map(|(p, _)| *p).unwrap()
+    } else {
+        numbered_images
+            .iter()
+            .find(|&(&num, _)| num == 1)
+            .map(|(_, (p, _))| *p)
+            .or_else(|| numbered_images.values().next().map(|(p, _)| *p))
+            // Safe: build_album is only called with non-empty images
+            .unwrap()
+    };
 
     let preview_rel = preview_image.strip_prefix(root).unwrap();
 
@@ -536,18 +559,33 @@ fn build_album(
         .iter()
         .map(|(&num, (img_path, parsed))| {
             let filename = img_path.file_name().unwrap().to_string_lossy().to_string();
-            let title = if parsed.display_title.is_empty() {
-                None
+
+            // Strip "thumb" prefix from thumb-designated images
+            let (slug, title) = if thumb_key == Some(num) {
+                let lower = parsed.name.to_ascii_lowercase();
+                if lower == "thumb" {
+                    (String::new(), None)
+                } else {
+                    // "thumb-Something" → "Something"
+                    let rest = &parsed.name["thumb-".len()..];
+                    (rest.to_string(), Some(rest.replace('-', " ")))
+                }
             } else {
-                Some(parsed.display_title.clone())
+                let title = if parsed.display_title.is_empty() {
+                    None
+                } else {
+                    Some(parsed.display_title.clone())
+                };
+                (parsed.name.clone(), title)
             };
+
             let source = img_path.strip_prefix(root).unwrap();
             let description = metadata::read_sidecar(img_path);
             Image {
                 number: num,
                 source_path: source.to_string_lossy().to_string(),
                 filename,
-                slug: parsed.name.clone(),
+                slug,
                 title,
                 description,
             }
@@ -642,7 +680,7 @@ mod tests {
             .iter()
             .map(|i| i.number)
             .collect();
-        assert_eq!(numbers, vec![1, 2, 10]);
+        assert_eq!(numbers, vec![1, 2, 5, 10]);
     }
 
     #[test]
@@ -777,14 +815,14 @@ mod tests {
     }
 
     #[test]
-    fn preview_image_is_001() {
+    fn preview_image_is_thumb() {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
         assert!(
             find_album(&manifest, "Landscapes")
                 .preview_image
-                .contains("001-dawn")
+                .contains("005-thumb")
         );
     }
 
@@ -1262,11 +1300,12 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Landscapes: dawn has sidecar, dusk and night do not
+        // Landscapes: dawn has sidecar; dusk, thumb, and night do not
         assert_eq!(
             image_descriptions(find_album(&manifest, "Landscapes")),
             vec![
                 Some("First light breaking over the mountain ridge."),
+                None,
                 None,
                 None,
             ]
@@ -1287,7 +1326,7 @@ mod tests {
 
         assert_eq!(
             image_titles(find_album(&manifest, "Landscapes")),
-            vec![Some("dawn"), Some("dusk"), Some("night")]
+            vec![Some("dawn"), Some("dusk"), None, Some("night")]
         );
     }
 
@@ -1543,5 +1582,89 @@ mod tests {
 
         // site.md should not appear as a page
         assert!(manifest.pages.iter().all(|p| p.slug != "site"));
+    }
+
+    // =========================================================================
+    // Thumb image tests
+    // =========================================================================
+
+    #[test]
+    fn thumb_image_overrides_preview() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("005-thumb.jpg"), "fake image").unwrap();
+        fs::write(album.join("010-last.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        assert!(manifest.albums[0].preview_image.contains("005-thumb"));
+    }
+
+    #[test]
+    fn thumb_image_without_title() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("003-thumb.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let img = &manifest.albums[0]
+            .images
+            .iter()
+            .find(|i| i.number == 3)
+            .unwrap();
+        assert_eq!(img.slug, "");
+        assert_eq!(img.title, None);
+    }
+
+    #[test]
+    fn thumb_image_with_title() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("003-thumb-The-Sunset.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        let img = manifest.albums[0]
+            .images
+            .iter()
+            .find(|i| i.number == 3)
+            .unwrap();
+        assert_eq!(img.slug, "The-Sunset");
+        assert_eq!(img.title.as_deref(), Some("The Sunset"));
+        // Preview uses the thumb image
+        assert!(
+            manifest.albums[0]
+                .preview_image
+                .contains("003-thumb-The-Sunset")
+        );
+    }
+
+    #[test]
+    fn duplicate_thumb_is_error() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("001-thumb.jpg"), "fake image").unwrap();
+        fs::write(album.join("002-thumb-Other.jpg"), "fake image").unwrap();
+
+        let result = scan(tmp.path());
+        assert!(matches!(result, Err(ScanError::DuplicateThumb(_))));
+    }
+
+    #[test]
+    fn no_thumb_falls_back_to_first() {
+        let tmp = TempDir::new().unwrap();
+        let album = tmp.path().join("010-Test");
+        fs::create_dir_all(&album).unwrap();
+        fs::write(album.join("005-first.jpg"), "fake image").unwrap();
+        fs::write(album.join("010-second.jpg"), "fake image").unwrap();
+
+        let manifest = scan(tmp.path()).unwrap();
+        // No thumb, no image #1 → falls back to first by sort order (005)
+        assert!(manifest.albums[0].preview_image.contains("005-first"));
     }
 }
