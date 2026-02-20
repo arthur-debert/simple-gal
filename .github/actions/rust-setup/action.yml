@@ -14,10 +14,17 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    - name: Read toolchain from rust-toolchain.toml
+      id: toolchain
+      shell: bash
+      run: |
+        CHANNEL=$(grep '^channel' rust-toolchain.toml | sed 's/.*= *"\(.*\)"/\1/')
+        echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: "" # reads from rust-toolchain.toml
+        toolchain: ${{ steps.toolchain.outputs.channel }}
         components: ${{ inputs.rust-components }}
         targets: ${{ inputs.targets }}
 
