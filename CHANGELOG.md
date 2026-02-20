@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-20
+
 ### Added
 - Custom album thumbnail via naming convention: name an image `NNN-thumb.<ext>` (or `NNN-thumb-Title.<ext>`) to designate it as the album's representative thumbnail instead of the default first image
 - AVIF source image support: `.avif` files are now accepted as input alongside JPEG, PNG, TIFF, and WebP
