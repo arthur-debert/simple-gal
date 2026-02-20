@@ -129,8 +129,6 @@ pub struct Image {
     pub description: Option<String>,
 }
 
-const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "webp", "avif"];
-
 pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     let mut albums = Vec::new();
     let mut nav_items = Vec::new();
@@ -401,7 +399,7 @@ fn is_image(path: &Path) -> bool {
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    IMAGE_EXTENSIONS.contains(&ext.as_str())
+    crate::imaging::supported_input_extensions().contains(&ext.as_str())
 }
 
 /// Read a description from `<stem>.md` or `<stem>.txt` in the given directory.
