@@ -187,8 +187,8 @@ fn decode_avif(path: &Path) -> Result<DynamicImage, BackendError> {
     let h = pic.p.h as u32;
     let bpc = pic.p.bpc as u32;
     let layout = pic.p.layout;
-    let y_stride = pic.stride[0] as isize;
-    let uv_stride = pic.stride[1] as isize;
+    let y_stride = pic.stride[0];
+    let uv_stride = pic.stride[1];
     let y_ptr = pic.data[0].unwrap().as_ptr() as *const u8;
 
     // Convert YUV planes to interleaved RGB8
