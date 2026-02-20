@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- AVIF source image support via pure Rust decoder (`avif-parse` + `rav1d`), replacing the broken `image` crate AVIF decode path
+
 ### Fixed
-- Image format list now derived from actual decode capabilities instead of a hardcoded list; AVIF removed as input format until decoder is added
+- Image format list now derived from actual decode capabilities instead of a hardcoded list
 
 ## [0.7.0] - 2026-02-20
 

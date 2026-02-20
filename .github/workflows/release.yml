@@ -98,10 +98,19 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Read toolchain from rust-toolchain.toml
+        if: steps.check_asset.outputs.exists != 'true'
+        id: toolchain
+        shell: bash
+        run: |
+          CHANNEL=$(grep '^channel' rust-toolchain.toml | sed 's/.*= *"\(.*\)"/\1/')
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+
       - name: Setup Rust
         if: steps.check_asset.outputs.exists != 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo
@@ -170,8 +179,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read toolchain from rust-toolchain.toml
+        id: toolchain
+        run: |
+          CHANNEL=$(grep '^channel' rust-toolchain.toml | sed 's/.*= *"\(.*\)"/\1/')
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
 
       - name: Cache Cargo
         uses: actions/cache@v4

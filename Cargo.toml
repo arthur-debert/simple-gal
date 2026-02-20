@@ -16,7 +16,9 @@ image = { version = "0.25", default-features = false, features = [
     "jpeg", "png", "tiff", "webp",
     "avif",
 ] }
+avif-parse = "1"
 maud = "0.26"
+rav1d = { version = "1", default-features = false, features = ["bitdepth_8", "bitdepth_16"] }
 pulldown-cmark = "0.13"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
