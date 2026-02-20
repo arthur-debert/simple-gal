@@ -233,79 +233,16 @@ pub fn print_scan_output(manifest: &crate::scan::Manifest, source_root: &Path) {
 // Stage 2: Process output
 // ============================================================================
 
-/// Format process stage output showing generated image sizes.
-pub fn format_process_output(manifest: &crate::process::OutputManifest) -> Vec<String> {
-    let mut lines = Vec::new();
-
-    let tree_nodes = walk_nav_tree(&manifest.navigation);
-    let mut shown_paths = std::collections::HashSet::new();
-    let mut total_images = 0;
-
-    for node in &tree_nodes {
-        let prefix = format!("{}{}", indent(node.depth), format_index(node.position));
-
-        if node.is_container {
-            lines.push(format!(
-                "{} {}",
-                prefix,
-                node.path.split('/').next_back().unwrap_or(&node.path)
-            ));
-        } else if let Some(album) = manifest.albums.iter().find(|a| a.path == node.path) {
-            shown_paths.insert(&album.path);
-            lines.push(format!(
-                "{} {} ({} photos)",
-                prefix,
-                album.title,
-                album.images.len()
-            ));
-            total_images += album.images.len();
-
-            for img in &album.images {
-                let sizes: Vec<String> = img.generated.keys().cloned().collect();
-                let sizes_str = sizes.join(" ");
-                let title_part = img.title.as_deref().unwrap_or(&img.slug);
-                lines.push(format!(
-                    "{}    {} → {} + thumb",
-                    indent(node.depth),
-                    title_part,
-                    sizes_str
-                ));
-            }
+/// Format a single process progress event as a display line.
+pub fn format_process_event(event: &crate::process::ProcessEvent) -> String {
+    use crate::process::ProcessEvent;
+    match event {
+        ProcessEvent::AlbumStarted { title, image_count } => {
+            format!("{} ({} photos)", title, image_count)
         }
-    }
-
-    // Un-navigated albums
-    for album in &manifest.albums {
-        if !shown_paths.contains(&album.path) {
-            lines.push(format!(
-                "    {} ({} photos)",
-                album.title,
-                album.images.len()
-            ));
-            total_images += album.images.len();
-
-            for img in &album.images {
-                let sizes: Vec<String> = img.generated.keys().cloned().collect();
-                let sizes_str = sizes.join(" ");
-                let title_part = img.title.as_deref().unwrap_or(&img.slug);
-                lines.push(format!("        {} → {} + thumb", title_part, sizes_str));
-            }
+        ProcessEvent::ImageProcessed { title, sizes, .. } => {
+            format!("    {} \u{2192} {} + thumb", title, sizes.join(" "))
         }
-    }
-
-    lines.push(format!(
-        "Processed {} albums, {} images",
-        manifest.albums.len(),
-        total_images
-    ));
-
-    lines
-}
-
-/// Print process output to stdout.
-pub fn print_process_output(manifest: &crate::process::OutputManifest) {
-    for line in format_process_output(manifest) {
-        println!("{}", line);
     }
 }
 

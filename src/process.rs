@@ -47,6 +47,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::mpsc::Sender;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -184,14 +185,34 @@ pub struct ProcessResult {
     pub cache_stats: CacheStats,
 }
 
+/// Progress events emitted during image processing.
+///
+/// Sent through an optional channel so callers can display progress
+/// as images complete, without the process module touching stdout.
+#[derive(Debug, Clone)]
+pub enum ProcessEvent {
+    /// An album is about to be processed.
+    AlbumStarted { title: String, image_count: usize },
+    /// A single image finished processing (or served from cache).
+    ImageProcessed { title: String, sizes: Vec<String> },
+}
+
 pub fn process(
     manifest_path: &Path,
     source_root: &Path,
     output_dir: &Path,
     use_cache: bool,
+    progress: Option<Sender<ProcessEvent>>,
 ) -> Result<ProcessResult, ProcessError> {
     let backend = RustBackend::new();
-    process_with_backend(&backend, manifest_path, source_root, output_dir, use_cache)
+    process_with_backend(
+        &backend,
+        manifest_path,
+        source_root,
+        output_dir,
+        use_cache,
+        progress,
+    )
 }
 
 /// Process images using a specific backend (allows testing with mock).
@@ -201,6 +222,7 @@ pub fn process_with_backend(
     source_root: &Path,
     output_dir: &Path,
     use_cache: bool,
+    progress: Option<Sender<ProcessEvent>>,
 ) -> Result<ProcessResult, ProcessError> {
     let manifest_content = std::fs::read_to_string(manifest_path)?;
     let input: InputManifest = serde_json::from_str(&manifest_content)?;
@@ -217,6 +239,14 @@ pub fn process_with_backend(
     let mut output_albums = Vec::new();
 
     for album in &input.albums {
+        if let Some(ref tx) = progress {
+            tx.send(ProcessEvent::AlbumStarted {
+                title: album.title.clone(),
+                image_count: album.images.len(),
+            })
+            .ok();
+        }
+
         // Per-album config from the resolved config chain
         let album_process = ProcessConfig::from_site_config(&album.config);
 
@@ -305,6 +335,21 @@ pub fn process_with_backend(
                         )
                     })
                     .collect();
+
+                if let Some(ref tx) = progress {
+                    let display_title = title
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| Some(slug.as_str()).filter(|s| !s.is_empty()))
+                        .unwrap_or(stem)
+                        .to_string();
+                    let sizes: Vec<String> = generated.keys().cloned().collect();
+                    tx.send(ProcessEvent::ImageProcessed {
+                        title: display_title,
+                        sizes,
+                    })
+                    .ok();
+                }
 
                 Ok((
                     image,
@@ -682,9 +727,15 @@ mod tests {
             height: 250,
         }]);
 
-        let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false)
-                .unwrap();
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
 
         // Verify outputs
         assert_eq!(result.manifest.albums.len(), 1);
@@ -717,7 +768,15 @@ mod tests {
             height: 1500,
         }]);
 
-        process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false).unwrap();
+        process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
 
         use crate::imaging::backend::tests::RecordedOp;
         let ops = backend.get_operations();
@@ -761,9 +820,15 @@ mod tests {
             height: 400,
         }]);
 
-        let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false)
-                .unwrap();
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
 
         // Should only have original size
         let image = &result.manifest.albums[0].images[0];
@@ -781,8 +846,14 @@ mod tests {
         let manifest_path = create_test_manifest(tmp.path());
         let backend = MockBackend::new();
 
-        let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false);
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        );
 
         assert!(matches!(result, Err(ProcessError::SourceNotFound(_))));
     }
@@ -800,7 +871,8 @@ mod tests {
     ) -> (Vec<crate::imaging::backend::tests::RecordedOp>, CacheStats) {
         let backend = MockBackend::with_dimensions(dims);
         let result =
-            process_with_backend(&backend, manifest_path, source_dir, output_dir, true).unwrap();
+            process_with_backend(&backend, manifest_path, source_dir, output_dir, true, None)
+                .unwrap();
         (backend.get_operations(), result.cache_stats)
     }
 
@@ -998,9 +1070,15 @@ mod tests {
             width: 2000,
             height: 1500,
         }]);
-        let result =
-            process_with_backend(&backend, &manifest_path, &source_dir, &output_dir, false)
-                .unwrap();
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
 
         // Should re-encode everything despite outputs existing
         assert_eq!(result.cache_stats.misses, 2);
