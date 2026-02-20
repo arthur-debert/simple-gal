@@ -43,4 +43,4 @@ pub use operations::{
     ResponsiveConfig, ThumbnailConfig, create_responsive_images, create_thumbnail, get_dimensions,
 };
 pub use params::{Quality, Sharpening};
-pub use rust_backend::RustBackend;
+pub use rust_backend::{RustBackend, supported_input_extensions};

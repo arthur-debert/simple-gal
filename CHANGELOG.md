@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Image format list now derived from actual decode capabilities instead of a hardcoded list; AVIF removed as input format until decoder is added
+
 ## [0.7.0] - 2026-02-20
 
 ### Added

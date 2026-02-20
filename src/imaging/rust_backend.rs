@@ -16,8 +16,37 @@
 use super::backend::{BackendError, Dimensions, ImageBackend, ImageMetadata};
 use super::params::{ResizeParams, ThumbnailParams};
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageReader};
+use image::{DynamicImage, ImageFormat, ImageReader};
 use std::path::Path;
+use std::sync::LazyLock;
+
+/// Extensions whose decoders are compiled in and known to work.
+///
+/// AVIF is deliberately excluded: the `image` crate's `"avif"` feature only enables the
+/// **encoder** (rav1e). The decoder requires `"avif-native"` (a C library we don't use).
+/// `ImageFormat::reading_enabled()` incorrectly returns `true` for AVIF when `"avif"` is
+/// enabled, so we cannot rely on that API alone.
+const PHOTO_CANDIDATES: &[(&str, ImageFormat)] = &[
+    ("jpg", ImageFormat::Jpeg),
+    ("jpeg", ImageFormat::Jpeg),
+    ("png", ImageFormat::Png),
+    ("tif", ImageFormat::Tiff),
+    ("tiff", ImageFormat::Tiff),
+    ("webp", ImageFormat::WebP),
+];
+
+static SUPPORTED_EXTENSIONS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    PHOTO_CANDIDATES
+        .iter()
+        .filter(|(_, fmt)| fmt.reading_enabled())
+        .map(|(ext, _)| *ext)
+        .collect()
+});
+
+/// Returns the set of image file extensions that have working decoders compiled in.
+pub fn supported_input_extensions() -> &'static [&'static str] {
+    &SUPPORTED_EXTENSIONS
+}
 
 /// Pure Rust backend using the `image` crate ecosystem.
 ///
@@ -123,6 +152,23 @@ mod tests {
     use super::*;
     use crate::imaging::params::{Quality, Sharpening};
     use image::{ImageEncoder, RgbImage};
+
+    #[test]
+    fn supported_extensions_match_decodable_formats() {
+        let exts = super::supported_input_extensions();
+        // These formats have working decoders compiled in
+        for expected in &["jpg", "jpeg", "png", "tif", "tiff", "webp"] {
+            assert!(
+                exts.contains(expected),
+                "expected {expected} in supported extensions"
+            );
+        }
+        // AVIF decoder is NOT compiled in (the "avif" feature only enables the encoder)
+        assert!(
+            !exts.contains(&"avif"),
+            "avif should NOT be in supported extensions"
+        );
+    }
 
     /// Create a small valid JPEG file with the given dimensions.
     fn create_test_jpeg(path: &Path, width: u32, height: u32) {
