@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-02-21
+
 ### Fixed
 - View transitions broken with PWA: service worker's `respondWith()` on navigation requests interfered with the CSS View Transitions API (`@view-transition { navigation: auto }`), causing abrupt page swaps instead of smooth fades when images weren't cached. Navigation requests now pass through to the browser natively.
 - Navigation click zones (prev/next) now overlap 20% of the image and extend to the page edges, instead of using a fixed 30% viewport width. On wide screens with portrait images, the old zones were entirely in the mat area and hard to find; the zones now always start at the image edges.
