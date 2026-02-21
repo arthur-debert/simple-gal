@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Nested gallery support: container directories (directories with sub-albums but no images) now generate their own gallery-list pages showing thumbnail cards for each child album/container
+- `description` field on `NavItem` — container directories can have `description.md`/`description.txt` shown on their gallery-list page
+- Breadcrumbs reflect nesting: album pages show `Home › NY › Snow` instead of `Home › Snow`, and image pages include the full chain
+
+### Changed
+- Index page now shows only top-level navigation entries instead of all albums flat — nested albums appear under their container
+- Navigation containers are clickable links to their gallery-list page instead of inert `<span>` labels
+- Index page and container gallery-list pages share a single rendering path (`render_gallery_list_page`)
+
+### Fixed
+- Nested album pages had broken image paths: `strip_prefix` stripped the full nested path instead of just the album directory name, causing double-nested URLs (e.g. `/NY/Night/Night/thumb.avif`)
+
 ## [0.10.2] - 2026-02-21
 
 ## [0.10.1] - 2026-02-21

@@ -589,12 +589,14 @@ mod tests {
                 title: "A".to_string(),
                 path: "a".to_string(),
                 source_dir: "010-A".to_string(),
+                description: None,
                 children: vec![],
             },
             NavItem {
                 title: "B".to_string(),
                 path: "b".to_string(),
                 source_dir: "020-B".to_string(),
+                description: None,
                 children: vec![],
             },
         ];
@@ -614,17 +616,20 @@ mod tests {
             title: "Parent".to_string(),
             path: "parent".to_string(),
             source_dir: "010-Parent".to_string(),
+            description: None,
             children: vec![
                 NavItem {
                     title: "Child A".to_string(),
                     path: "parent/child-a".to_string(),
                     source_dir: "010-Child-A".to_string(),
+                    description: None,
                     children: vec![],
                 },
                 NavItem {
                     title: "Child B".to_string(),
                     path: "parent/child-b".to_string(),
                     source_dir: "020-Child-B".to_string(),
+                    description: None,
                     children: vec![],
                 },
             ],
