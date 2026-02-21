@@ -15,7 +15,7 @@
 ## Running tests
 
 ```bash
-cargo test                                          # 253 unit + integration tests
+cargo test                                          # unit + integration tests
 cargo test --test browser_layout -- --ignored       # 12 browser layout tests (needs Chrome)
 cargo test --test browser_pwa -- --ignored          # Browser PWA tests (needs Chrome)
 ```
@@ -73,6 +73,10 @@ All helpers live in `src/test_helpers.rs` (compiled only under `#[cfg(test)]`).
 - **`nav_titles(&manifest)`** → `Vec<&str>` — Top-level nav items.
 - **`nav_children_titles(&manifest, "parent")`** → `Vec<&str>` — Children of a nav item.
 - **`assert_nav_shape(&manifest, &[("Title", &["child1", "child2"])])`** — Assert the full nav tree in one call.
+
+### Nested album helpers
+
+- **`create_nested_test_album()`** — Creates a test `Album` at path `"NY/Night"` with process-stage-convention paths (image paths relative to the album's parent directory, e.g. `Night/001-city-800.avif`). Use this to test that nested album rendering strips path prefixes correctly.
 
 ## Browser tests
 

@@ -5,7 +5,8 @@
 //!
 //! ## Generated Pages
 //!
-//! - **Index page** (`/index.html`): Album grid showing thumbnails of all albums
+//! - **Index page** (`/index.html`): Gallery list showing top-level album/group cards
+//! - **Gallery-list pages** (`/{group}/index.html`): Gallery list for a container directory, showing cards for each child album or sub-group
 //! - **Album pages** (`/{album}/index.html`): Thumbnail grid for an album
 //! - **Image pages** (`/{album}/{n}-{slug}.html`): Full-screen image viewer with navigation
 //! - **Content pages** (`/{slug}.html`): Markdown pages (e.g. about, contact)
@@ -22,16 +23,21 @@
 //!
 //! ```text
 //! dist/
-//! ├── index.html                 # Home/gallery page
+//! ├── index.html                 # Gallery list (top-level cards)
 //! ├── about.html                 # Content page (from 040-about.md)
 //! ├── Landscapes/
-//! │   ├── index.html             # Album page
+//! │   ├── index.html             # Album page (thumbnail grid)
 //! │   ├── 1-dawn.html            # Image viewer pages
 //! │   ├── 2-sunset.html
 //! │   ├── 001-dawn-800.avif      # Processed images (copied)
 //! │   └── ...
 //! └── Travel/
-//!     └── ...
+//!     ├── index.html             # Gallery-list page (child album cards)
+//!     ├── Japan/
+//!     │   ├── index.html         # Album page
+//!     │   └── ...
+//!     └── Italy/
+//!         └── ...
 //! ```
 //!
 //! ## CSS and JavaScript

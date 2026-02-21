@@ -40,7 +40,8 @@
 //! ## Output
 //!
 //! Produces a [`Manifest`] containing:
-//! - Navigation tree (numbered directories only)
+//! - Navigation tree (numbered directories only) — container directories carry an
+//!   optional `description` field read from `description.md`/`description.txt`
 //! - All albums with their images
 //! - Pages from markdown files (content pages and external links)
 //! - Site configuration
