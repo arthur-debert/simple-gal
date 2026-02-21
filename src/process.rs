@@ -185,6 +185,36 @@ pub struct ProcessResult {
     pub cache_stats: CacheStats,
 }
 
+/// Cache outcome for a single processed variant (for progress reporting).
+#[derive(Debug, Clone)]
+pub enum VariantStatus {
+    /// Existing cached file was reused in place.
+    Cached,
+    /// Cached content found at a different path and copied.
+    Copied,
+    /// No cache entry — image was encoded from scratch.
+    Encoded,
+}
+
+impl From<&CacheLookup> for VariantStatus {
+    fn from(lookup: &CacheLookup) -> Self {
+        match lookup {
+            CacheLookup::ExactHit => VariantStatus::Cached,
+            CacheLookup::Copied => VariantStatus::Copied,
+            CacheLookup::Miss => VariantStatus::Encoded,
+        }
+    }
+}
+
+/// Information about a single processed variant (for progress reporting).
+#[derive(Debug, Clone)]
+pub struct VariantInfo {
+    /// Display label (e.g., "800px", "thumbnail").
+    pub label: String,
+    /// Whether this variant was cached, copied, or encoded.
+    pub status: VariantStatus,
+}
+
 /// Progress events emitted during image processing.
 ///
 /// Sent through an optional channel so callers can display progress
@@ -194,7 +224,16 @@ pub enum ProcessEvent {
     /// An album is about to be processed.
     AlbumStarted { title: String, image_count: usize },
     /// A single image finished processing (or served from cache).
-    ImageProcessed { title: String, sizes: Vec<String> },
+    ImageProcessed {
+        /// 1-based positional index within the album.
+        index: usize,
+        /// Display title (from IPTC, filename, or slug fallback).
+        title: String,
+        /// Relative source path (e.g., "010-Landscapes/001-dawn.jpg").
+        source_path: String,
+        /// Per-variant cache/encode status.
+        variants: Vec<VariantInfo>,
+    },
 }
 
 pub fn process(
@@ -268,7 +307,8 @@ pub fn process_with_backend(
         let processed_images: Result<Vec<_>, ProcessError> = album
             .images
             .par_iter()
-            .map(|image| {
+            .enumerate()
+            .map(|(idx, image)| {
                 let source_path = source_root.join(&image.source_path);
                 if !source_path.exists() {
                     return Err(ProcessError::SourceNotFound(source_path));
@@ -303,7 +343,7 @@ pub fn process_with_backend(
                     cache_root: output_dir,
                 };
 
-                let variants = create_responsive_images_cached(
+                let (raw_variants, responsive_statuses) = create_responsive_images_cached(
                     backend,
                     &source_path,
                     &album_output_dir,
@@ -313,7 +353,7 @@ pub fn process_with_backend(
                     &ctx,
                 )?;
 
-                let thumbnail_path = create_thumbnail_cached(
+                let (thumbnail_path, thumb_status) = create_thumbnail_cached(
                     backend,
                     &source_path,
                     &album_output_dir,
@@ -322,7 +362,26 @@ pub fn process_with_backend(
                     &ctx,
                 )?;
 
-                let generated: std::collections::BTreeMap<String, GeneratedVariant> = variants
+                // Build variant infos for progress event (before consuming raw_variants)
+                let variant_infos: Vec<VariantInfo> = if progress.is_some() {
+                    let mut infos: Vec<VariantInfo> = raw_variants
+                        .iter()
+                        .zip(&responsive_statuses)
+                        .map(|(v, status)| VariantInfo {
+                            label: format!("{}px", v.target_size),
+                            status: status.clone(),
+                        })
+                        .collect();
+                    infos.push(VariantInfo {
+                        label: "thumbnail".to_string(),
+                        status: thumb_status,
+                    });
+                    infos
+                } else {
+                    Vec::new()
+                };
+
+                let generated: std::collections::BTreeMap<String, GeneratedVariant> = raw_variants
                     .into_iter()
                     .map(|v| {
                         (
@@ -343,10 +402,11 @@ pub fn process_with_backend(
                         .or_else(|| Some(slug.as_str()).filter(|s| !s.is_empty()))
                         .unwrap_or(stem)
                         .to_string();
-                    let sizes: Vec<String> = generated.keys().cloned().collect();
                     tx.send(ProcessEvent::ImageProcessed {
+                        index: idx + 1,
                         title: display_title,
-                        sizes,
+                        source_path: image.source_path.clone(),
+                        variants: variant_infos,
                     })
                     .ok();
                 }
@@ -409,14 +469,15 @@ pub fn process_with_backend(
                 stats: &stats,
                 cache_root: output_dir,
             };
-            create_thumbnail_cached(
+            let (path, _status) = create_thumbnail_cached(
                 backend,
                 &thumb_source,
                 &album_output_dir,
                 stem,
                 &thumbnail_config,
                 &ctx,
-            )?
+            )?;
+            path
         };
 
         output_albums.push(OutputAlbum {
@@ -520,11 +581,18 @@ fn create_responsive_images_cached(
     original_dims: (u32, u32),
     config: &ResponsiveConfig,
     ctx: &CacheContext<'_>,
-) -> Result<Vec<crate::imaging::operations::GeneratedVariant>, ProcessError> {
+) -> Result<
+    (
+        Vec<crate::imaging::operations::GeneratedVariant>,
+        Vec<VariantStatus>,
+    ),
+    ProcessError,
+> {
     use crate::imaging::calculations::calculate_responsive_sizes;
 
     let sizes = calculate_responsive_sizes(original_dims, &config.sizes);
     let mut variants = Vec::new();
+    let mut statuses = Vec::new();
 
     let relative_dir = output_dir
         .file_name()
@@ -536,7 +604,8 @@ fn create_responsive_images_cached(
         let relative_path = format!("{}/{}", relative_dir, avif_name);
         let params_hash = cache::hash_responsive_params(size.target, config.quality.value());
 
-        match check_cache_and_copy(&relative_path, ctx.source_hash, &params_hash, ctx) {
+        let lookup = check_cache_and_copy(&relative_path, ctx.source_hash, &params_hash, ctx);
+        match &lookup {
             CacheLookup::ExactHit => {
                 ctx.stats.lock().unwrap().hit();
             }
@@ -561,6 +630,7 @@ fn create_responsive_images_cached(
             }
         }
 
+        statuses.push(VariantStatus::from(&lookup));
         variants.push(crate::imaging::operations::GeneratedVariant {
             target_size: size.target,
             avif_path: relative_path,
@@ -569,7 +639,7 @@ fn create_responsive_images_cached(
         });
     }
 
-    Ok(variants)
+    Ok((variants, statuses))
 }
 
 /// Create a thumbnail with cache awareness.
@@ -580,7 +650,7 @@ fn create_thumbnail_cached(
     filename_stem: &str,
     config: &ThumbnailConfig,
     ctx: &CacheContext<'_>,
-) -> Result<String, ProcessError> {
+) -> Result<(String, VariantStatus), ProcessError> {
     let thumb_name = format!("{}-thumb.avif", filename_stem);
     let relative_dir = output_dir
         .file_name()
@@ -596,7 +666,8 @@ fn create_thumbnail_cached(
         sharpening_tuple,
     );
 
-    match check_cache_and_copy(&relative_path, ctx.source_hash, &params_hash, ctx) {
+    let lookup = check_cache_and_copy(&relative_path, ctx.source_hash, &params_hash, ctx);
+    match &lookup {
         CacheLookup::ExactHit => {
             ctx.stats.lock().unwrap().hit();
         }
@@ -616,7 +687,8 @@ fn create_thumbnail_cached(
         }
     }
 
-    Ok(relative_path)
+    let status = VariantStatus::from(&lookup);
+    Ok((relative_path, status))
 }
 
 #[cfg(test)]

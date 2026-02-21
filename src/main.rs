@@ -118,7 +118,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (tx, rx) = std::sync::mpsc::channel();
             let printer = std::thread::spawn(move || {
                 for event in rx {
-                    println!("{}", output::format_process_event(&event));
+                    for line in output::format_process_event(&event) {
+                        println!("{}", line);
+                    }
                 }
             });
             let result = process::process(
@@ -165,7 +167,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (tx, rx) = std::sync::mpsc::channel();
             let printer = std::thread::spawn(move || {
                 for event in rx {
-                    println!("{}", output::format_process_event(&event));
+                    for line in output::format_process_event(&event) {
+                        println!("{}", line);
+                    }
                 }
             });
             let result = process::process(
