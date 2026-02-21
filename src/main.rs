@@ -148,7 +148,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output::print_generate_output(&manifest);
         }
         Command::Build(cache_args) => {
-            // Resolve content root: check config.toml in source dir for content_root override
             let source = resolve_build_source(&cli.source);
 
             std::fs::create_dir_all(&cli.temp_dir)?;
@@ -222,23 +221,6 @@ fn init_thread_pool(processing: &config::ProcessingConfig) {
 }
 
 /// Resolve the content source directory for the build command.
-///
-/// Loads `config.toml` from the given source directory and uses its `content_root`
-/// if it specifies a different path. Relative `content_root` values are resolved
-/// against the parent of `cli_source` (since config.toml lives inside the content
-/// directory, `content_root` is relative to the project root).
 fn resolve_build_source(cli_source: &std::path::Path) -> PathBuf {
-    config::load_config(cli_source)
-        .map(|c| {
-            let content_root = PathBuf::from(c.content_root);
-            if content_root.is_absolute() {
-                content_root
-            } else {
-                cli_source
-                    .parent()
-                    .map(|p| p.join(&content_root))
-                    .unwrap_or(content_root)
-            }
-        })
-        .unwrap_or_else(|_| cli_source.to_path_buf())
+    cli_source.to_path_buf()
 }
