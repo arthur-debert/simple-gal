@@ -1,47 +1,121 @@
 //! CLI output formatting for all pipeline stages.
 //!
-//! Each pipeline stage (scan, process, generate) produces a manifest. This module
-//! formats those manifests as human-readable, tree-based terminal output showing
-//! the gallery hierarchy with positional indices (e.g. `001`, `002`).
+//! # Information-First Display
 //!
-//! ## Why Tree-Based Display
+//! Output is **information-centric, not file-centric**. The primary display
+//! for every entity (album, image, page) is its semantic identity — title and
+//! positional index — with filesystem paths shown as secondary context via
+//! indented `Source:` lines. This makes the output readable as a content
+//! inventory while still letting users trace data back to specific files.
 //!
-//! The output mirrors the directory structure so photographers can verify that
-//! their content was discovered correctly. Positional indices show navigation
-//! order, container vs. leaf albums are visually distinct, and image counts
-//! give a quick sanity check. Each stage's formatter shows progressively more
-//! detail: scan shows discovery, process shows generated sizes, generate shows
-//! output file paths.
+//! # Entity Display Contract
 //!
-//! ## Output Format
+//! Every entity follows a consistent two-level pattern across all stages:
+//!
+//! 1. **Header line**: positional index + title (+ optional detail like photo count)
+//! 2. **Context lines**: indented `Source:`, `Description:`, variant status, etc.
+//!
+//! Shared helpers ([`entity_header`], [`image_line`]) enforce this pattern so
+//! scan, process, and generate output look consistent for the same entities.
+//!
+//! # Output Format
+//!
+//! ## Scan
 //!
 //! ```text
 //! Albums
-//! 001 Landscapes (5 photos) [010-Landscapes]
-//!     [001-dawn.jpg 001-dawn.txt]
-//! 002 Travel [020-Travel]
-//!     001 Japan (3 photos) [010-Japan]: A trip through Tokyo...
-//!     002 Italy (2 photos) [020-Italy]
+//! 001 Landscapes (5 photos)
+//!     Source: 010-Landscapes/
+//!     001 dawn
+//!         Source: 001-dawn.jpg
+//!         Description: 001-dawn.txt
+//!     002 mountains
+//!         Source: 010-mountains.jpg
 //!
 //! Pages
-//!     001 About [about.md]
+//! 001 About
+//!     Source: about.md
 //!
 //! Config
 //!     config.toml
 //!     assets/
 //! ```
 //!
-//! ## Functions
+//! ## Process
+//!
+//! ```text
+//! Landscapes (5 photos)
+//!     001 dawn
+//!         Source: 001-dawn.jpg
+//!         800px: cached
+//!         1400px: encoded
+//!         thumbnail: cached
+//! ```
+//!
+//! ## Generate
+//!
+//! ```text
+//! Home → index.html
+//! 001 Landscapes → Landscapes/index.html
+//!     001 dawn → Landscapes/1-dawn/index.html
+//!     002 mountains → Landscapes/2-mountains/index.html
+//!
+//! Pages
+//! 001 About → about.html
+//!
+//! Generated 2 albums, 4 image pages, 1 page
+//! ```
+//!
+//! # Architecture
 //!
 //! Each stage has a `format_*` function (returns `Vec<String>`) for testability
-//! and a `print_*` wrapper that writes to stdout.
+//! and a `print_*` wrapper that writes to stdout. Format functions are pure —
+//! no I/O, no side effects.
 
 use crate::types::NavItem;
 use std::path::Path;
 
 // ============================================================================
-// Helpers
+// Shared entity display helpers
 // ============================================================================
+
+/// Format a 1-based positional index as 3-digit zero-padded.
+fn format_index(pos: usize) -> String {
+    format!("{:0>3}", pos)
+}
+
+/// Return indentation string: 4 spaces per depth level.
+fn indent(depth: usize) -> String {
+    "    ".repeat(depth)
+}
+
+/// Format an entity header: positional index + title, with optional detail.
+///
+/// Used for albums (with photo count) and containers (without).
+///
+/// ```text
+/// 001 Landscapes (5 photos)
+/// 001 Travel
+/// ```
+fn entity_header(index: usize, title: &str, count: Option<usize>) -> String {
+    match count {
+        Some(n) => format!("{} {} ({} photos)", format_index(index), title, n),
+        None => format!("{} {}", format_index(index), title),
+    }
+}
+
+/// Format an image line: titled images show title, untitled show filename in parens.
+///
+/// ```text
+/// 001 The Sunset        // titled
+/// 001 (010.avif)        // untitled — filename IS the identity
+/// ```
+fn image_line(index: usize, title: Option<&str>, filename: &str) -> String {
+    match title {
+        Some(t) if !t.is_empty() => format!("{} {}", format_index(index), t),
+        _ => format!("{} ({})", format_index(index), filename),
+    }
+}
 
 /// Strip HTML tags from a string (simple angle-bracket stripping).
 fn strip_html_tags(html: &str) -> String {
@@ -65,16 +139,6 @@ fn truncate_desc(text: &str, max: usize) -> String {
     } else {
         format!("{}...", &text[..max])
     }
-}
-
-/// Format a 1-based positional index as 3-digit zero-padded.
-fn format_index(pos: usize) -> String {
-    format!("{:0>3}", pos)
-}
-
-/// Return indentation string: 4 spaces per depth level.
-fn indent(depth: usize) -> String {
-    "    ".repeat(depth)
 }
 
 // ============================================================================
@@ -119,6 +183,9 @@ fn walk_nav_tree_recursive(items: &[NavItem], depth: usize, nodes: &mut Vec<Tree
 // ============================================================================
 
 /// Format scan stage output showing discovered gallery structure.
+///
+/// Information-first: each entity leads with its positional index and title.
+/// Source paths and description files are shown as indented context lines.
 pub fn format_scan_output(manifest: &crate::scan::Manifest, source_root: &Path) -> Vec<String> {
     let mut lines = Vec::new();
 
@@ -126,69 +193,69 @@ pub fn format_scan_output(manifest: &crate::scan::Manifest, source_root: &Path) 
     lines.push("Albums".to_string());
 
     let tree_nodes = walk_nav_tree(&manifest.navigation);
-
-    // Track which album paths we've shown via nav tree
     let mut shown_paths = std::collections::HashSet::new();
 
     for node in &tree_nodes {
-        let prefix = format!("{}{}", indent(node.depth), format_index(node.position));
+        let base_indent = indent(node.depth);
 
         if node.is_container {
-            // Container directory (no images, just children)
-            lines.push(format!(
-                "{} {} [{}]",
-                prefix,
+            let header = entity_header(
+                node.position,
                 node.path.split('/').next_back().unwrap_or(&node.path),
-                node.source_dir
-            ));
-        } else {
-            // Leaf album — find matching album in manifest
-            if let Some(album) = manifest.albums.iter().find(|a| a.path == node.path) {
-                shown_paths.insert(&album.path);
-                let photo_count = album.images.len();
-                let mut line = format!(
-                    "{} {} ({} photos) [{}]",
-                    prefix, album.title, photo_count, node.source_dir
-                );
-                if let Some(ref desc) = album.description {
-                    let plain = strip_html_tags(desc);
-                    let truncated = truncate_desc(plain.trim(), 40);
-                    line.push_str(&format!(": {}", truncated));
-                }
-                lines.push(line);
+                None,
+            );
+            lines.push(format!("{}{}", base_indent, header));
+            lines.push(format!("{}    Source: {}/", base_indent, node.source_dir));
+        } else if let Some(album) = manifest.albums.iter().find(|a| a.path == node.path) {
+            shown_paths.insert(&album.path);
+            let photo_count = album.images.len();
+            let header = entity_header(node.position, &album.title, Some(photo_count));
+            lines.push(format!("{}{}", base_indent, header));
+            lines.push(format!("{}    Source: {}/", base_indent, node.source_dir));
 
-                // Support files
-                for sf in &album.support_files {
-                    lines.push(format!("{}    {}", indent(node.depth), sf));
+            // Album description (truncated preview)
+            if let Some(ref desc) = album.description {
+                let plain = strip_html_tags(desc);
+                let truncated = truncate_desc(plain.trim(), 60);
+                if !truncated.is_empty() {
+                    lines.push(format!("{}    {}", base_indent, truncated));
+                }
+            }
+
+            // Images
+            for (i, img) in album.images.iter().enumerate() {
+                let img_indent = format!("{}    ", base_indent);
+                let img_header = image_line(i + 1, img.title.as_deref(), &img.filename);
+                lines.push(format!("{}{}", img_indent, img_header));
+
+                // Source (always shown for titled images; implicit for untitled)
+                if img.title.is_some() {
+                    lines.push(format!("{}    Source: {}", img_indent, img.filename));
                 }
 
-                // Images with sidecar info
-                for img in &album.images {
-                    let sidecar_path = source_root.join(&img.source_path).with_extension("txt");
-                    let sidecar_info = if sidecar_path.exists() {
-                        let sidecar_name = sidecar_path.file_name().unwrap().to_string_lossy();
-                        format!(" [{} {}]", img.filename, sidecar_name)
-                    } else {
-                        format!(" [{}]", img.filename)
-                    };
-                    lines.push(format!("{}   {}", indent(node.depth), sidecar_info));
+                // Description sidecar
+                let sidecar_path = source_root.join(&img.source_path).with_extension("txt");
+                if sidecar_path.exists() {
+                    let sidecar_name = sidecar_path.file_name().unwrap().to_string_lossy();
+                    lines.push(format!("{}    Description: {}", img_indent, sidecar_name));
                 }
             }
         }
     }
 
-    // Un-navigated albums
+    // Un-navigated albums (hidden from nav, no number prefix)
     for album in &manifest.albums {
         if !shown_paths.contains(&album.path) {
-            let photo_count = album.images.len();
             let dir_name = album.path.split('/').next_back().unwrap_or(&album.path);
-            let mut line = format!("    {} ({} photos)", dir_name, photo_count);
+            let photo_count = album.images.len();
+            lines.push(format!("    {} ({} photos)", dir_name, photo_count));
             if let Some(ref desc) = album.description {
                 let plain = strip_html_tags(desc);
-                let truncated = truncate_desc(plain.trim(), 40);
-                line.push_str(&format!(": {}", truncated));
+                let truncated = truncate_desc(plain.trim(), 60);
+                if !truncated.is_empty() {
+                    lines.push(format!("        {}", truncated));
+                }
             }
-            lines.push(line);
         }
     }
 
@@ -197,13 +264,14 @@ pub fn format_scan_output(manifest: &crate::scan::Manifest, source_root: &Path) 
         lines.push(String::new());
         lines.push("Pages".to_string());
         for (i, page) in manifest.pages.iter().enumerate() {
-            let idx = format_index(i + 1);
             let link_marker = if page.is_link { " (link)" } else { "" };
-            let filename = format!("[{}.md]", page.slug);
             lines.push(format!(
-                "    {} {}{} {}",
-                idx, page.title, link_marker, filename
+                "    {} {}{}",
+                format_index(i + 1),
+                page.title,
+                link_marker
             ));
+            lines.push(format!("        Source: {}.md", page.slug));
         }
     }
 
@@ -233,15 +301,43 @@ pub fn print_scan_output(manifest: &crate::scan::Manifest, source_root: &Path) {
 // Stage 2: Process output
 // ============================================================================
 
-/// Format a single process progress event as a display line.
-pub fn format_process_event(event: &crate::process::ProcessEvent) -> String {
-    use crate::process::ProcessEvent;
+/// Format a single process progress event as display lines.
+///
+/// Information-first: each image leads with its positional index and title.
+/// Source path and per-variant cache status are shown as indented context.
+pub fn format_process_event(event: &crate::process::ProcessEvent) -> Vec<String> {
+    use crate::process::{ProcessEvent, VariantStatus};
     match event {
         ProcessEvent::AlbumStarted { title, image_count } => {
-            format!("{} ({} photos)", title, image_count)
+            vec![format!("{} ({} photos)", title, image_count)]
         }
-        ProcessEvent::ImageProcessed { title, sizes, .. } => {
-            format!("    {} \u{2192} {} + thumb", title, sizes.join(" "))
+        ProcessEvent::ImageProcessed {
+            index,
+            title,
+            source_path,
+            variants,
+        } => {
+            let mut lines = Vec::new();
+            let filename = Path::new(source_path)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_else(|| source_path.clone());
+
+            lines.push(format!(
+                "    {}",
+                image_line(*index, title.as_deref(), &filename)
+            ));
+            lines.push(format!("        Source: {}", source_path));
+
+            for variant in variants {
+                let status_str = match &variant.status {
+                    VariantStatus::Cached => "cached",
+                    VariantStatus::Copied => "copied",
+                    VariantStatus::Encoded => "encoded",
+                };
+                lines.push(format!("        {}: {}", variant.label, status_str));
+            }
+            lines
         }
     }
 }
@@ -251,30 +347,35 @@ pub fn format_process_event(event: &crate::process::ProcessEvent) -> String {
 // ============================================================================
 
 /// Format generate stage output showing generated HTML files.
+///
+/// Information-first: each entity leads with its positional index and title,
+/// followed by `→` and the output path.
 pub fn format_generate_output(manifest: &crate::generate::Manifest) -> Vec<String> {
     let mut lines = Vec::new();
     let mut total_image_pages = 0;
 
     // Home page
-    lines.push("Home → index.html".to_string());
+    lines.push("Home \u{2192} index.html".to_string());
 
     let tree_nodes = walk_nav_tree(&manifest.navigation);
     let mut shown_paths = std::collections::HashSet::new();
 
     for node in &tree_nodes {
-        let prefix = format!("{}{}", indent(node.depth), format_index(node.position));
+        let base_indent = indent(node.depth);
 
         if node.is_container {
-            lines.push(format!(
-                "{} {}",
-                prefix,
-                node.path.split('/').next_back().unwrap_or(&node.path)
-            ));
+            let header = entity_header(
+                node.position,
+                node.path.split('/').next_back().unwrap_or(&node.path),
+                None,
+            );
+            lines.push(format!("{}{}", base_indent, header));
         } else if let Some(album) = manifest.albums.iter().find(|a| a.path == node.path) {
             shown_paths.insert(&album.path);
+            let header = entity_header(node.position, &album.title, None);
             lines.push(format!(
-                "{} {} → {}/index.html",
-                prefix, album.title, album.path
+                "{}{} \u{2192} {}/index.html",
+                base_indent, header, album.path
             ));
 
             for (idx, image) in album.images.iter().enumerate() {
@@ -283,11 +384,13 @@ pub fn format_generate_output(manifest: &crate::generate::Manifest) -> Vec<Strin
                     album.images.len(),
                     image.title.as_deref(),
                 );
+                let display = match &image.title {
+                    Some(t) if !t.is_empty() => format!("{} {}", format_index(idx + 1), t),
+                    _ => format_index(idx + 1),
+                };
                 lines.push(format!(
-                    "{}    → {}/{}index.html",
-                    indent(node.depth),
-                    album.path,
-                    page_url
+                    "{}    {} \u{2192} {}/{}index.html",
+                    base_indent, display, album.path, page_url
                 ));
                 total_image_pages += 1;
             }
@@ -297,7 +400,10 @@ pub fn format_generate_output(manifest: &crate::generate::Manifest) -> Vec<Strin
     // Un-navigated albums
     for album in &manifest.albums {
         if !shown_paths.contains(&album.path) {
-            lines.push(format!("    {} → {}/index.html", album.title, album.path));
+            lines.push(format!(
+                "    {} \u{2192} {}/index.html",
+                album.title, album.path
+            ));
 
             for (idx, image) in album.images.iter().enumerate() {
                 let page_url = crate::generate::image_page_url(
@@ -305,22 +411,42 @@ pub fn format_generate_output(manifest: &crate::generate::Manifest) -> Vec<Strin
                     album.images.len(),
                     image.title.as_deref(),
                 );
-                lines.push(format!("        → {}/{}index.html", album.path, page_url));
+                let display = match &image.title {
+                    Some(t) if !t.is_empty() => format!("{} {}", format_index(idx + 1), t),
+                    _ => format_index(idx + 1),
+                };
+                lines.push(format!(
+                    "        {} \u{2192} {}/{}index.html",
+                    display, album.path, page_url
+                ));
                 total_image_pages += 1;
             }
         }
     }
 
-    // Pages
-    for page in &manifest.pages {
-        if page.is_link {
-            lines.push(format!("{} → (external)", page.title));
-        } else {
-            lines.push(format!("{} → {}.html", page.title, page.slug));
+    // Pages section
+    let page_count = manifest.pages.iter().filter(|p| !p.is_link).count();
+    if !manifest.pages.is_empty() {
+        lines.push(String::new());
+        lines.push("Pages".to_string());
+        for (i, page) in manifest.pages.iter().enumerate() {
+            if page.is_link {
+                lines.push(format!(
+                    "    {} {} \u{2192} (external link)",
+                    format_index(i + 1),
+                    page.title
+                ));
+            } else {
+                lines.push(format!(
+                    "    {} {} \u{2192} {}.html",
+                    format_index(i + 1),
+                    page.title,
+                    page.slug
+                ));
+            }
         }
     }
 
-    let page_count = manifest.pages.iter().filter(|p| !p.is_link).count();
     lines.push(format!(
         "Generated {} albums, {} image pages, {} pages",
         manifest.albums.len(),
@@ -345,6 +471,10 @@ pub fn print_generate_output(manifest: &crate::generate::Manifest) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // =========================================================================
+    // Helper tests
+    // =========================================================================
 
     #[test]
     fn strip_html_tags_removes_tags() {
@@ -406,6 +536,45 @@ mod tests {
     fn format_index_triple_digit() {
         assert_eq!(format_index(100), "100");
     }
+
+    // =========================================================================
+    // Entity display helper tests
+    // =========================================================================
+
+    #[test]
+    fn entity_header_with_count() {
+        assert_eq!(
+            entity_header(1, "Landscapes", Some(5)),
+            "001 Landscapes (5 photos)"
+        );
+    }
+
+    #[test]
+    fn entity_header_without_count() {
+        assert_eq!(entity_header(2, "Travel", None), "002 Travel");
+    }
+
+    #[test]
+    fn image_line_with_title() {
+        assert_eq!(
+            image_line(1, Some("The Sunset"), "010-The-Sunset.avif"),
+            "001 The Sunset"
+        );
+    }
+
+    #[test]
+    fn image_line_without_title() {
+        assert_eq!(image_line(1, None, "010.avif"), "001 (010.avif)");
+    }
+
+    #[test]
+    fn image_line_with_empty_title() {
+        assert_eq!(image_line(1, Some(""), "010.avif"), "001 (010.avif)");
+    }
+
+    // =========================================================================
+    // Tree walker tests
+    // =========================================================================
 
     #[test]
     fn walk_nav_tree_empty() {
@@ -488,5 +657,67 @@ mod tests {
     #[test]
     fn indent_two() {
         assert_eq!(indent(2), "        ");
+    }
+
+    // =========================================================================
+    // Process event formatting tests
+    // =========================================================================
+
+    #[test]
+    fn format_process_album_started() {
+        use crate::process::ProcessEvent;
+        let event = ProcessEvent::AlbumStarted {
+            title: "Landscapes".to_string(),
+            image_count: 5,
+        };
+        let lines = format_process_event(&event);
+        assert_eq!(lines, vec!["Landscapes (5 photos)"]);
+    }
+
+    #[test]
+    fn format_process_image_with_title() {
+        use crate::process::{ProcessEvent, VariantInfo, VariantStatus};
+        let event = ProcessEvent::ImageProcessed {
+            index: 1,
+            title: Some("The Sunset".to_string()),
+            source_path: "010-Landscapes/001-sunset.jpg".to_string(),
+            variants: vec![
+                VariantInfo {
+                    label: "800px".to_string(),
+                    status: VariantStatus::Cached,
+                },
+                VariantInfo {
+                    label: "1400px".to_string(),
+                    status: VariantStatus::Encoded,
+                },
+                VariantInfo {
+                    label: "thumbnail".to_string(),
+                    status: VariantStatus::Copied,
+                },
+            ],
+        };
+        let lines = format_process_event(&event);
+        assert_eq!(lines[0], "    001 The Sunset");
+        assert_eq!(lines[1], "        Source: 010-Landscapes/001-sunset.jpg");
+        assert_eq!(lines[2], "        800px: cached");
+        assert_eq!(lines[3], "        1400px: encoded");
+        assert_eq!(lines[4], "        thumbnail: copied");
+    }
+
+    #[test]
+    fn format_process_image_without_title() {
+        use crate::process::{ProcessEvent, VariantInfo, VariantStatus};
+        let event = ProcessEvent::ImageProcessed {
+            index: 3,
+            title: None,
+            source_path: "002-NY/38.avif".to_string(),
+            variants: vec![VariantInfo {
+                label: "800px".to_string(),
+                status: VariantStatus::Cached,
+            }],
+        };
+        let lines = format_process_event(&event);
+        assert_eq!(lines[0], "    003 (38.avif)");
+        assert_eq!(lines[1], "        Source: 002-NY/38.avif");
     }
 }

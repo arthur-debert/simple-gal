@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CLI output is now information-centric instead of file-path-centric: every entity (album, image, page) leads with its positional index and title, with filesystem paths shown as indented `Source:` lines. Shared display helpers (`entity_header`, `image_line`) enforce consistent formatting across scan, process, and generate stages.
+- Process stage output now shows per-variant cache status (`cached`, `copied`, `encoded`) for each responsive size and thumbnail, replacing the previous flat `sizes + thumb` summary.
+- `ProcessEvent::ImageProcessed` now carries `index`, `source_path`, and per-variant `VariantInfo` (label + cache status) so callers can display rich progress without coupling to process internals.
+
 ### Removed
 - `content_root` config key — it was redundant since the config file already lives inside the content directory, so the content root is known by the time the config is found. The `--source` CLI flag is the sole way to specify the content directory.
 
