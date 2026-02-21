@@ -552,30 +552,19 @@ fn build_album(
 
     let preview_rel = preview_image.strip_prefix(root).unwrap();
 
-    // Build image list
+    // Build image list (exclude thumb-designated image — it's only used as preview)
     let images: Vec<Image> = numbered_images
         .iter()
+        .filter(|&(&num, _)| thumb_key != Some(num))
         .map(|(&num, (img_path, parsed))| {
             let filename = img_path.file_name().unwrap().to_string_lossy().to_string();
 
-            // Strip "thumb" prefix from thumb-designated images
-            let (slug, title) = if thumb_key == Some(num) {
-                let lower = parsed.name.to_ascii_lowercase();
-                if lower == "thumb" {
-                    (String::new(), None)
-                } else {
-                    // "thumb-Something" → "Something"
-                    let rest = &parsed.name["thumb-".len()..];
-                    (rest.to_string(), Some(rest.replace('-', " ")))
-                }
+            let title = if parsed.display_title.is_empty() {
+                None
             } else {
-                let title = if parsed.display_title.is_empty() {
-                    None
-                } else {
-                    Some(parsed.display_title.clone())
-                };
-                (parsed.name.clone(), title)
+                Some(parsed.display_title.clone())
             };
+            let slug = parsed.name.clone();
 
             let source = img_path.strip_prefix(root).unwrap();
             let description = metadata::read_sidecar(img_path);
@@ -678,7 +667,7 @@ mod tests {
             .iter()
             .map(|i| i.number)
             .collect();
-        assert_eq!(numbers, vec![1, 2, 5, 10]);
+        assert_eq!(numbers, vec![1, 2, 10]);
     }
 
     #[test]
@@ -1298,12 +1287,11 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Landscapes: dawn has sidecar; dusk, thumb, and night do not
+        // Landscapes: dawn has sidecar; dusk and night do not (thumb excluded from images)
         assert_eq!(
             image_descriptions(find_album(&manifest, "Landscapes")),
             vec![
                 Some("First light breaking over the mountain ridge."),
-                None,
                 None,
                 None,
             ]
@@ -1324,7 +1312,7 @@ mod tests {
 
         assert_eq!(
             image_titles(find_album(&manifest, "Landscapes")),
-            vec![Some("dawn"), Some("dusk"), None, Some("night")]
+            vec![Some("dawn"), Some("dusk"), Some("night")]
         );
     }
 
@@ -1600,25 +1588,24 @@ mod tests {
     }
 
     #[test]
-    fn thumb_image_without_title() {
+    fn thumb_image_excluded_from_images() {
         let tmp = TempDir::new().unwrap();
         let album = tmp.path().join("010-Test");
         fs::create_dir_all(&album).unwrap();
         fs::write(album.join("001-first.jpg"), "fake image").unwrap();
         fs::write(album.join("003-thumb.jpg"), "fake image").unwrap();
+        fs::write(album.join("005-last.jpg"), "fake image").unwrap();
 
         let manifest = scan(tmp.path()).unwrap();
-        let img = &manifest.albums[0]
-            .images
-            .iter()
-            .find(|i| i.number == 3)
-            .unwrap();
-        assert_eq!(img.slug, "");
-        assert_eq!(img.title, None);
+        // Thumb is used as preview
+        assert!(manifest.albums[0].preview_image.contains("003-thumb"));
+        // But NOT included in the image list
+        assert_eq!(manifest.albums[0].images.len(), 2);
+        assert!(manifest.albums[0].images.iter().all(|i| i.number != 3));
     }
 
     #[test]
-    fn thumb_image_with_title() {
+    fn thumb_image_with_title_excluded_from_images() {
         let tmp = TempDir::new().unwrap();
         let album = tmp.path().join("010-Test");
         fs::create_dir_all(&album).unwrap();
@@ -1626,19 +1613,15 @@ mod tests {
         fs::write(album.join("003-thumb-The-Sunset.jpg"), "fake image").unwrap();
 
         let manifest = scan(tmp.path()).unwrap();
-        let img = manifest.albums[0]
-            .images
-            .iter()
-            .find(|i| i.number == 3)
-            .unwrap();
-        assert_eq!(img.slug, "The-Sunset");
-        assert_eq!(img.title.as_deref(), Some("The Sunset"));
         // Preview uses the thumb image
         assert!(
             manifest.albums[0]
                 .preview_image
                 .contains("003-thumb-The-Sunset")
         );
+        // Thumb is NOT in the image list
+        assert_eq!(manifest.albums[0].images.len(), 1);
+        assert_eq!(manifest.albums[0].images[0].number, 1);
     }
 
     #[test]

@@ -386,13 +386,38 @@ pub fn process_with_backend(
         // Sort by number to ensure consistent ordering
         output_images.sort_by_key(|img| img.number);
 
-        // Find album thumbnail: match the preview_image from scan, fall back to first
-        let album_thumbnail = output_images
+        // Find album thumbnail: match the preview_image from scan, fall back to first.
+        // If the preview_image is a dedicated thumb file (not in the image list),
+        // generate just a thumbnail for it.
+        let album_thumbnail = if let Some(img) = output_images
             .iter()
             .find(|img| img.source_path == album.preview_image)
-            .or_else(|| output_images.first())
-            .map(|img| img.thumbnail.clone())
-            .unwrap_or_default();
+        {
+            img.thumbnail.clone()
+        } else {
+            // Dedicated thumb file — process only its thumbnail
+            let thumb_source = source_root.join(&album.preview_image);
+            let stem = Path::new(&album.preview_image)
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap();
+            let source_hash = cache::hash_file(&thumb_source)?;
+            let ctx = CacheContext {
+                source_hash: &source_hash,
+                cache: &cache,
+                stats: &stats,
+                cache_root: output_dir,
+            };
+            create_thumbnail_cached(
+                backend,
+                &thumb_source,
+                &album_output_dir,
+                stem,
+                &thumbnail_config,
+                &ctx,
+            )?
+        };
 
         output_albums.push(OutputAlbum {
             path: album.path.clone(),

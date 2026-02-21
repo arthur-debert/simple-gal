@@ -103,20 +103,18 @@ content/010-Landscapes/
 └── 010-night.jpg
 ```
 
-The thumb image is still a normal gallery image — it appears in the album alongside every other photo. It is simply also used as the album's representative thumbnail on the index page.
+The thumb image is **not** included in the gallery — it is only used as the album's representative thumbnail on the index page. It does not appear as a browsable photo in the album.
 
 ### Naming rules
 
 Any image whose name (after the number prefix) starts with `thumb` is a thumb designator:
 
-| Filename | Thumb? | Image title |
-|----------|--------|-------------|
-| `005-thumb.jpg` | Yes | (none) |
-| `005-thumb-The-Sunset.jpg` | Yes | The Sunset |
-| `thumb.jpg` | Yes | (none) |
-| `001-thumbnail.jpg` | No | thumbnail |
-
-The `thumb` prefix is stripped from the image's display title. `005-thumb-The-Sunset.jpg` becomes "The Sunset", not "thumb The Sunset".
+| Filename | Thumb? |
+|----------|--------|
+| `005-thumb.jpg` | Yes |
+| `005-thumb-The-Sunset.jpg` | Yes |
+| `thumb.jpg` | Yes |
+| `001-thumbnail.jpg` | No |
 
 Only one thumb image is allowed per album. If two or more images match, the build fails with a `DuplicateThumb` error.
 
