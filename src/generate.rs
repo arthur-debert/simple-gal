@@ -338,10 +338,6 @@ pub fn generate(
     );
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
 
-    // Generate offline fallback page (served by SW when offline and page not cached)
-    let offline_html = render_offline(&css, favicon_href.as_deref(), &snippets);
-    fs::write(output_dir.join("offline.html"), offline_html.into_string())?;
-
     // Generate pages (content pages only, not link pages)
     for page in manifest.pages.iter().filter(|p| !p.is_link) {
         let page_html = render_page(
@@ -964,35 +960,6 @@ fn render_page(
         &page.title,
         css,
         font_url,
-        None,
-        None,
-        favicon_href,
-        snippets,
-        content,
-    )
-}
-
-/// Renders a minimal offline fallback page.
-///
-/// Served by the service worker when the user is offline and the requested
-/// page is not in the cache. Uses the site's CSS so it matches the gallery
-/// look-and-feel. No navigation or font URL — the page must work with only
-/// the pre-cached assets.
-fn render_offline(css: &str, favicon_href: Option<&str>, snippets: &CustomSnippets) -> Markup {
-    let content = html! {
-        main.page {
-            article.page-content {
-                h1 { "You're offline" }
-                p { "This page hasn't been cached yet. Connect to the internet or go back to a page you've already visited." }
-                p { a href="/" { "Go to the gallery" } }
-            }
-        }
-    };
-
-    base_document(
-        "Offline",
-        css,
-        None,
         None,
         None,
         favicon_href,

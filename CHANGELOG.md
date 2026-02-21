@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- View transitions broken with PWA: service worker's `respondWith()` on navigation requests interfered with the CSS View Transitions API (`@view-transition { navigation: auto }`), causing abrupt page swaps instead of smooth fades when images weren't cached. Navigation requests now pass through to the browser natively.
+
+### Removed
+- Offline fallback page (`offline.html`) — no longer generated since navigation requests are not intercepted by the service worker
+
 ## [0.8.3] - 2026-02-20
 
 ### Changed
