@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-02-21
+
 ### Changed
 - CLI output is now information-centric instead of file-path-centric: every entity (album, image, page) leads with its positional index and title, with filesystem paths shown as indented `Source:` lines. Shared display helpers (`entity_header`, `image_line`) enforce consistent formatting across scan, process, and generate stages.
 - Process stage output now shows per-variant cache status (`cached`, `copied`, `encoded`) for each responsive size and thumbnail, replacing the previous flat `sizes + thumb` summary.
