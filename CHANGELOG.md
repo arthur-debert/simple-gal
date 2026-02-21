@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Thumb-designated images (`NNN-thumb.<ext>`) are no longer included as browsable gallery images — they are now used exclusively as the album's representative thumbnail on the index page
+
 ## [0.8.4] - 2026-02-21
 
 ### Fixed
