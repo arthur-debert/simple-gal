@@ -1,6 +1,6 @@
 [package]
 name = "simple-gal"
-version = "0.10.2"
+version = "0.11.0"
 edition = "2024"
 description = "A minimal static site generator for fine art photography portfolios"
 license = "MIT"

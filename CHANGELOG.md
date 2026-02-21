@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-02-21
+
 ### Added
 - Nested gallery support: container directories (directories with sub-albums but no images) now generate their own gallery-list pages showing thumbnail cards for each child album/container
 - `description` field on `NavItem` — container directories can have `description.md`/`description.txt` shown on their gallery-list page
