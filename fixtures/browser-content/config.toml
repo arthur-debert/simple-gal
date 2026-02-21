@@ -1,2 +1,2 @@
 # Browser test fixture config
-content_root = "fixtures/browser-content"
+content_root = "browser-content"

@@ -414,6 +414,8 @@ body.image-view main {
 }
 
 /* Click navigation zones (invisible prev/next links) */
+/* Width is set dynamically by nav.js to overlap 20% of the image;
+   the 30% fallback applies when JS is unavailable. */
 .nav-prev,
 .nav-next {
     position: fixed;

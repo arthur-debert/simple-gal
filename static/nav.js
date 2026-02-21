@@ -6,6 +6,21 @@
     var prevUrl = prev && prev.getAttribute('href');
     var nextUrl = next && next.getAttribute('href');
 
+    // Position click zones so they overlap ~20% of the image on each side
+    // and extend outward to the page edges.
+    var frame = document.querySelector('.image-frame');
+    if (frame) {
+        var OVERLAP = 0.2;
+        function sizeNavZones() {
+            var r = frame.getBoundingClientRect();
+            if (r.width === 0) return;
+            if (prev) prev.style.width = (r.left + r.width * OVERLAP) + 'px';
+            if (next) next.style.width = (window.innerWidth - r.right + r.width * OVERLAP) + 'px';
+        }
+        sizeNavZones();
+        window.addEventListener('resize', sizeNavZones);
+    }
+
     // Keyboard navigation
     document.addEventListener('keydown', function(e) {
         if (e.key === 'ArrowLeft' || e.key === 'h') {
