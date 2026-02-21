@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-02-21
+
 ### Changed
 - Image processing cache is now content-addressed: cache keys use source file hash + encoding parameters instead of output paths. Album renames, file renumbers, and slug changes no longer invalidate the cache — only actual image content or encoding parameter changes trigger re-encoding. When a cached file is found at a different path (e.g. after an album rename), it is copied instead of re-encoded.
 
