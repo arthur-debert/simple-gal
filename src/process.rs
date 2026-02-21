@@ -447,10 +447,6 @@ pub fn process_with_backend(
     })
 }
 
-/// Create responsive images with cache awareness.
-///
-/// For each variant, checks the cache before encoding. On a cache hit the
-/// existing output file is reused and no backend call is made.
 /// Shared cache state passed to per-image encoding functions.
 struct CacheContext<'a> {
     source_hash: &'a str,
@@ -459,10 +455,63 @@ struct CacheContext<'a> {
     cache_root: &'a Path,
 }
 
+/// Result of checking the content-based cache.
+enum CacheLookup {
+    /// Same content, same path — file already in place.
+    ExactHit,
+    /// Same content at a different path — file copied to new location.
+    Copied,
+    /// No cached file available — caller must encode.
+    Miss,
+}
+
+/// Check the cache and, if the content exists at a different path, copy it.
+///
+/// Returns `ExactHit` when the cached file is already at `expected_path`,
+/// `Copied` when a file with matching content was found elsewhere and
+/// copied to `expected_path`, or `Miss` when no cached version exists
+/// (or the copy failed).
+fn check_cache_and_copy(
+    expected_path: &str,
+    source_hash: &str,
+    params_hash: &str,
+    ctx: &CacheContext<'_>,
+) -> CacheLookup {
+    let cached_path =
+        ctx.cache
+            .lock()
+            .unwrap()
+            .find_cached(source_hash, params_hash, ctx.cache_root);
+
+    match cached_path {
+        Some(ref stored) if stored == expected_path => CacheLookup::ExactHit,
+        Some(ref stored) => {
+            let old_file = ctx.cache_root.join(stored);
+            let new_file = ctx.cache_root.join(expected_path);
+            if let Some(parent) = new_file.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match std::fs::copy(&old_file, &new_file) {
+                Ok(_) => {
+                    ctx.cache.lock().unwrap().insert(
+                        expected_path.to_string(),
+                        source_hash.to_string(),
+                        params_hash.to_string(),
+                    );
+                    CacheLookup::Copied
+                }
+                Err(_) => CacheLookup::Miss,
+            }
+        }
+        None => CacheLookup::Miss,
+    }
+}
+
 /// Create responsive images with cache awareness.
 ///
 /// For each variant, checks the cache before encoding. On a cache hit the
-/// existing output file is reused and no backend call is made.
+/// existing output file is reused (or copied from its old location if the
+/// album was renamed) and no backend call is made.
 fn create_responsive_images_cached(
     backend: &impl ImageBackend,
     source: &Path,
@@ -487,31 +536,29 @@ fn create_responsive_images_cached(
         let relative_path = format!("{}/{}", relative_dir, avif_name);
         let params_hash = cache::hash_responsive_params(size.target, config.quality.value());
 
-        let is_hit = ctx.cache.lock().unwrap().is_cached(
-            &relative_path,
-            ctx.source_hash,
-            &params_hash,
-            ctx.cache_root,
-        );
-
-        if is_hit {
-            ctx.stats.lock().unwrap().hit();
-        } else {
-            let avif_path = output_dir.join(&avif_name);
-            backend.resize(&crate::imaging::params::ResizeParams {
-                source: source.to_path_buf(),
-                output: avif_path,
-                width: size.width,
-                height: size.height,
-                quality: config.quality,
-            })?;
-            let mut c = ctx.cache.lock().unwrap();
-            c.insert(
-                relative_path.clone(),
-                ctx.source_hash.to_string(),
-                params_hash,
-            );
-            ctx.stats.lock().unwrap().miss();
+        match check_cache_and_copy(&relative_path, ctx.source_hash, &params_hash, ctx) {
+            CacheLookup::ExactHit => {
+                ctx.stats.lock().unwrap().hit();
+            }
+            CacheLookup::Copied => {
+                ctx.stats.lock().unwrap().copy();
+            }
+            CacheLookup::Miss => {
+                let avif_path = output_dir.join(&avif_name);
+                backend.resize(&crate::imaging::params::ResizeParams {
+                    source: source.to_path_buf(),
+                    output: avif_path,
+                    width: size.width,
+                    height: size.height,
+                    quality: config.quality,
+                })?;
+                ctx.cache.lock().unwrap().insert(
+                    relative_path.clone(),
+                    ctx.source_hash.to_string(),
+                    params_hash,
+                );
+                ctx.stats.lock().unwrap().miss();
+            }
         }
 
         variants.push(crate::imaging::operations::GeneratedVariant {
@@ -549,26 +596,24 @@ fn create_thumbnail_cached(
         sharpening_tuple,
     );
 
-    let is_hit = ctx.cache.lock().unwrap().is_cached(
-        &relative_path,
-        ctx.source_hash,
-        &params_hash,
-        ctx.cache_root,
-    );
-
-    if is_hit {
-        ctx.stats.lock().unwrap().hit();
-    } else {
-        let thumb_path = output_dir.join(&thumb_name);
-        let params = crate::imaging::operations::plan_thumbnail(source, &thumb_path, config);
-        backend.thumbnail(&params)?;
-        let mut c = ctx.cache.lock().unwrap();
-        c.insert(
-            relative_path.clone(),
-            ctx.source_hash.to_string(),
-            params_hash,
-        );
-        ctx.stats.lock().unwrap().miss();
+    match check_cache_and_copy(&relative_path, ctx.source_hash, &params_hash, ctx) {
+        CacheLookup::ExactHit => {
+            ctx.stats.lock().unwrap().hit();
+        }
+        CacheLookup::Copied => {
+            ctx.stats.lock().unwrap().copy();
+        }
+        CacheLookup::Miss => {
+            let thumb_path = output_dir.join(&thumb_name);
+            let params = crate::imaging::operations::plan_thumbnail(source, &thumb_path, config);
+            backend.thumbnail(&params)?;
+            ctx.cache.lock().unwrap().insert(
+                relative_path.clone(),
+                ctx.source_hash.to_string(),
+                params_hash,
+            );
+            ctx.stats.lock().unwrap().miss();
+        }
     }
 
     Ok(relative_path)
@@ -1108,5 +1153,109 @@ mod tests {
         // Should re-encode everything despite outputs existing
         assert_eq!(result.cache_stats.misses, 2);
         assert_eq!(result.cache_stats.hits, 0);
+    }
+
+    #[test]
+    fn cache_hit_after_album_rename() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        // First run: album path is "test-album"
+        let manifest_path =
+            create_test_manifest_with_config(tmp.path(), r#"{"images": {"sizes": [800]}}"#);
+
+        let (_ops1, stats1) = run_cached(
+            &source_dir,
+            &output_dir,
+            &manifest_path,
+            vec![Dimensions {
+                width: 2000,
+                height: 1500,
+            }],
+        );
+        assert_eq!(stats1.misses, 2); // 1 resize + 1 thumb
+        assert_eq!(stats1.hits, 0);
+
+        // Create dummy output files (mock backend doesn't write real files)
+        for entry in cache::CacheManifest::load(&output_dir).entries.keys() {
+            let path = output_dir.join(entry);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "fake avif").unwrap();
+        }
+
+        // Second run: album renamed to "renamed-album", same source image
+        let manifest2 = r##"{
+            "navigation": [],
+            "albums": [{
+                "path": "renamed-album",
+                "title": "Renamed Album",
+                "description": null,
+                "preview_image": "test-album/001-test.jpg",
+                "images": [{
+                    "number": 1,
+                    "source_path": "test-album/001-test.jpg",
+                    "filename": "001-test.jpg"
+                }],
+                "in_nav": true,
+                "config": {"images": {"sizes": [800]}}
+            }],
+            "config": {}
+        }"##;
+        let manifest_path2 = tmp.path().join("manifest2.json");
+        fs::write(&manifest_path2, manifest2).unwrap();
+
+        let backend = MockBackend::with_dimensions(vec![Dimensions {
+            width: 2000,
+            height: 1500,
+        }]);
+        let result = process_with_backend(
+            &backend,
+            &manifest_path2,
+            &source_dir,
+            &output_dir,
+            true,
+            None,
+        )
+        .unwrap();
+
+        // Should be copies (not re-encoded) since content is identical
+        assert_eq!(result.cache_stats.copies, 2); // 1 resize + 1 thumb copied
+        assert_eq!(result.cache_stats.misses, 0);
+        assert_eq!(result.cache_stats.hits, 0);
+
+        // Verify copied files exist at the new path
+        assert!(output_dir.join("renamed-album/001-test-800.avif").exists());
+        assert!(
+            output_dir
+                .join("renamed-album/001-test-thumb.avif")
+                .exists()
+        );
+
+        // Verify stale entries were cleaned up
+        let manifest = cache::CacheManifest::load(&output_dir);
+        assert!(
+            !manifest
+                .entries
+                .contains_key("test-album/001-test-800.avif")
+        );
+        assert!(
+            !manifest
+                .entries
+                .contains_key("test-album/001-test-thumb.avif")
+        );
+        assert!(
+            manifest
+                .entries
+                .contains_key("renamed-album/001-test-800.avif")
+        );
+        assert!(
+            manifest
+                .entries
+                .contains_key("renamed-album/001-test-thumb.avif")
+        );
     }
 }

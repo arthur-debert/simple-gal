@@ -16,7 +16,10 @@
 //!
 //! ## Cache keys
 //!
-//! Each output file (e.g. `NY/001-Storm_1400.avif`) is keyed by two values:
+//! The cache is **content-addressed**: lookups are by the combination of
+//! `source_hash` and `params_hash`, not by output file path. This means
+//! album renames, file renumbers, and slug changes do not invalidate the
+//! cache — only actual image content or encoding parameter changes do.
 //!
 //! - **`source_hash`**: SHA-256 of the source file contents. Content-based
 //!   rather than mtime-based so it survives `git checkout` (which resets
@@ -28,11 +31,12 @@
 //!   (aspect ratio, short edge, quality, sharpening). If any config value
 //!   changes, the params hash changes and the image is re-encoded.
 //!
-//! A cache hit requires **all four** conditions:
-//! 1. Entry exists in the manifest
-//! 2. `source_hash` matches
-//! 3. `params_hash` matches
-//! 4. Output file exists on disk
+//! A cache hit requires:
+//! 1. An entry with matching `source_hash` and `params_hash` exists
+//! 2. The previously-written output file still exists on disk
+//!
+//! When a hit is found but the output path has changed (e.g. album renamed),
+//! the cached file is copied to the new location instead of re-encoding.
 //!
 //! ## Storage
 //!
@@ -67,10 +71,18 @@ pub struct CacheEntry {
 }
 
 /// On-disk cache manifest mapping output paths to their cache entries.
+///
+/// Lookups go through a runtime `content_index` that maps
+/// `"{source_hash}:{params_hash}"` to the stored output path, making
+/// the cache resilient to album renames and file renumbering.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CacheManifest {
     pub version: u32,
     pub entries: HashMap<String, CacheEntry>,
+    /// Runtime reverse index: `"{source_hash}:{params_hash}"` → output_path.
+    /// Built at load time, maintained on insert. Never serialized.
+    #[serde(skip)]
+    content_index: HashMap<String, String>,
 }
 
 impl CacheManifest {
@@ -79,6 +91,7 @@ impl CacheManifest {
         Self {
             version: MANIFEST_VERSION,
             entries: HashMap::new(),
+            content_index: HashMap::new(),
         }
     }
 
@@ -90,13 +103,14 @@ impl CacheManifest {
             Ok(c) => c,
             Err(_) => return Self::empty(),
         };
-        let manifest: Self = match serde_json::from_str(&content) {
+        let mut manifest: Self = match serde_json::from_str(&content) {
             Ok(m) => m,
             Err(_) => return Self::empty(),
         };
         if manifest.version != MANIFEST_VERSION {
             return Self::empty();
         }
+        manifest.content_index = build_content_index(&manifest.entries);
         manifest
     }
 
@@ -107,30 +121,44 @@ impl CacheManifest {
         std::fs::write(path, json)
     }
 
-    /// Check whether an output file can be reused.
+    /// Look up a cached output file by content hashes.
     ///
-    /// Returns `true` only if the manifest has a matching entry (same
-    /// source hash, same params hash) **and** the output file still
-    /// exists on disk.
-    pub fn is_cached(
+    /// Returns `Some(stored_output_path)` if an entry with matching
+    /// `source_hash` and `params_hash` exists **and** the file is still
+    /// on disk. The returned path may differ from the caller's expected
+    /// output path (e.g. after an album rename); the caller is responsible
+    /// for copying the file to the new location if needed.
+    pub fn find_cached(
         &self,
-        output_path: &str,
         source_hash: &str,
         params_hash: &str,
         output_dir: &Path,
-    ) -> bool {
-        match self.entries.get(output_path) {
-            Some(entry) => {
-                entry.source_hash == source_hash
-                    && entry.params_hash == params_hash
-                    && output_dir.join(output_path).exists()
-            }
-            None => false,
+    ) -> Option<String> {
+        let content_key = format!("{}:{}", source_hash, params_hash);
+        let stored_path = self.content_index.get(&content_key)?;
+        if output_dir.join(stored_path).exists() {
+            Some(stored_path.clone())
+        } else {
+            None
         }
     }
 
-    /// Record a (possibly new) cache entry for an output file.
+    /// Record a cache entry for an output file.
+    ///
+    /// If an entry with the same content (source_hash + params_hash) already
+    /// exists under a different output path, the old entry is removed to keep
+    /// the manifest clean when images move (e.g. album rename).
     pub fn insert(&mut self, output_path: String, source_hash: String, params_hash: String) {
+        let content_key = format!("{}:{}", source_hash, params_hash);
+
+        // Remove stale entry if content moved to a new path
+        if let Some(old_path) = self.content_index.get(&content_key)
+            && *old_path != output_path
+        {
+            self.entries.remove(old_path.as_str());
+        }
+
+        self.content_index.insert(content_key, output_path.clone());
         self.entries.insert(
             output_path,
             CacheEntry {
@@ -139,6 +167,17 @@ impl CacheManifest {
             },
         );
     }
+}
+
+/// Build the content_index reverse map from the entries map.
+fn build_content_index(entries: &HashMap<String, CacheEntry>) -> HashMap<String, String> {
+    entries
+        .iter()
+        .map(|(output_path, entry)| {
+            let content_key = format!("{}:{}", entry.source_hash, entry.params_hash);
+            (content_key, output_path.clone())
+        })
+        .collect()
 }
 
 /// SHA-256 hash of a file's contents, returned as a hex string.
@@ -193,6 +232,7 @@ pub fn hash_thumbnail_params(
 #[derive(Debug, Default)]
 pub struct CacheStats {
     pub hits: u32,
+    pub copies: u32,
     pub misses: u32,
 }
 
@@ -201,25 +241,40 @@ impl CacheStats {
         self.hits += 1;
     }
 
+    pub fn copy(&mut self) {
+        self.copies += 1;
+    }
+
     pub fn miss(&mut self) {
         self.misses += 1;
     }
 
     pub fn total(&self) -> u32 {
-        self.hits + self.misses
+        self.hits + self.copies + self.misses
     }
 }
 
 impl fmt::Display for CacheStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.hits > 0 {
-            write!(
-                f,
-                "{} cached, {} encoded ({} total)",
-                self.hits,
-                self.misses,
-                self.total()
-            )
+        if self.hits > 0 || self.copies > 0 {
+            if self.copies > 0 {
+                write!(
+                    f,
+                    "{} cached, {} copied, {} encoded ({} total)",
+                    self.hits,
+                    self.copies,
+                    self.misses,
+                    self.total()
+                )
+            } else {
+                write!(
+                    f,
+                    "{} cached, {} encoded ({} total)",
+                    self.hits,
+                    self.misses,
+                    self.total()
+                )
+            }
         } else {
             write!(f, "{} encoded", self.misses)
         }
@@ -246,64 +301,113 @@ mod tests {
         let m = CacheManifest::empty();
         assert_eq!(m.version, MANIFEST_VERSION);
         assert!(m.entries.is_empty());
+        assert!(m.content_index.is_empty());
     }
 
     #[test]
-    fn insert_and_lookup() {
+    fn find_cached_hit() {
         let tmp = TempDir::new().unwrap();
         let mut m = CacheManifest::empty();
         m.insert("a/b.avif".into(), "src123".into(), "prm456".into());
 
-        // Create the output file so is_cached passes the existence check
         let out = tmp.path().join("a");
         fs::create_dir_all(&out).unwrap();
         fs::write(out.join("b.avif"), "data").unwrap();
 
-        assert!(m.is_cached("a/b.avif", "src123", "prm456", tmp.path()));
+        assert_eq!(
+            m.find_cached("src123", "prm456", tmp.path()),
+            Some("a/b.avif".to_string())
+        );
     }
 
     #[test]
-    fn cache_miss_wrong_source_hash() {
+    fn find_cached_miss_wrong_source_hash() {
         let tmp = TempDir::new().unwrap();
         let mut m = CacheManifest::empty();
         m.insert("out.avif".into(), "hash_a".into(), "params".into());
         fs::write(tmp.path().join("out.avif"), "data").unwrap();
 
-        assert!(!m.is_cached("out.avif", "hash_b", "params", tmp.path()));
+        assert_eq!(m.find_cached("hash_b", "params", tmp.path()), None);
     }
 
     #[test]
-    fn cache_miss_wrong_params_hash() {
+    fn find_cached_miss_wrong_params_hash() {
         let tmp = TempDir::new().unwrap();
         let mut m = CacheManifest::empty();
         m.insert("out.avif".into(), "hash".into(), "params_a".into());
         fs::write(tmp.path().join("out.avif"), "data").unwrap();
 
-        assert!(!m.is_cached("out.avif", "hash", "params_b", tmp.path()));
+        assert_eq!(m.find_cached("hash", "params_b", tmp.path()), None);
     }
 
     #[test]
-    fn cache_miss_file_deleted() {
-        let m = CacheManifest {
-            version: MANIFEST_VERSION,
-            entries: HashMap::from([(
-                "gone.avif".into(),
-                CacheEntry {
-                    source_hash: "h".into(),
-                    params_hash: "p".into(),
-                },
-            )]),
-        };
+    fn find_cached_miss_file_deleted() {
+        let mut m = CacheManifest::empty();
+        m.insert("gone.avif".into(), "h".into(), "p".into());
         let tmp = TempDir::new().unwrap();
         // File doesn't exist
-        assert!(!m.is_cached("gone.avif", "h", "p", tmp.path()));
+        assert_eq!(m.find_cached("h", "p", tmp.path()), None);
     }
 
     #[test]
-    fn cache_miss_no_entry() {
+    fn find_cached_miss_no_entry() {
         let m = CacheManifest::empty();
         let tmp = TempDir::new().unwrap();
-        assert!(!m.is_cached("nope.avif", "h", "p", tmp.path()));
+        assert_eq!(m.find_cached("h", "p", tmp.path()), None);
+    }
+
+    #[test]
+    fn find_cached_returns_old_path_after_content_match() {
+        let tmp = TempDir::new().unwrap();
+        let mut m = CacheManifest::empty();
+        m.insert(
+            "old-album/01-800.avif".into(),
+            "srchash".into(),
+            "prmhash".into(),
+        );
+
+        let old_dir = tmp.path().join("old-album");
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::write(old_dir.join("01-800.avif"), "avif data").unwrap();
+
+        let result = m.find_cached("srchash", "prmhash", tmp.path());
+        assert_eq!(result, Some("old-album/01-800.avif".to_string()));
+    }
+
+    #[test]
+    fn insert_removes_stale_entry_on_path_change() {
+        let mut m = CacheManifest::empty();
+        m.insert("old-album/img-800.avif".into(), "src".into(), "prm".into());
+        assert!(m.entries.contains_key("old-album/img-800.avif"));
+
+        // Insert same content under new path
+        m.insert("new-album/img-800.avif".into(), "src".into(), "prm".into());
+
+        assert!(!m.entries.contains_key("old-album/img-800.avif"));
+        assert!(m.entries.contains_key("new-album/img-800.avif"));
+    }
+
+    #[test]
+    fn content_index_rebuilt_on_load() {
+        let tmp = TempDir::new().unwrap();
+        let mut m = CacheManifest::empty();
+        m.insert("a/x.avif".into(), "s1".into(), "p1".into());
+        m.insert("b/y.avif".into(), "s2".into(), "p2".into());
+        m.save(tmp.path()).unwrap();
+
+        let loaded = CacheManifest::load(tmp.path());
+        assert_eq!(
+            loaded.find_cached("s1", "p1", tmp.path()),
+            None // files don't exist, but index was built
+        );
+        assert_eq!(
+            loaded.content_index.get("s1:p1"),
+            Some(&"a/x.avif".to_string())
+        );
+        assert_eq!(
+            loaded.content_index.get("s2:p2"),
+            Some(&"b/y.avif".to_string())
+        );
     }
 
     // =========================================================================
@@ -444,6 +548,15 @@ mod tests {
         s.hits = 5;
         s.misses = 2;
         assert_eq!(format!("{}", s), "5 cached, 2 encoded (7 total)");
+    }
+
+    #[test]
+    fn cache_stats_display_with_copies() {
+        let mut s = CacheStats::default();
+        s.hits = 3;
+        s.copies = 2;
+        s.misses = 1;
+        assert_eq!(format!("{}", s), "3 cached, 2 copied, 1 encoded (6 total)");
     }
 
     #[test]
