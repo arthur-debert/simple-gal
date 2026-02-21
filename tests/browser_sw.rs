@@ -214,10 +214,6 @@ fn sw_caches_core_assets_on_install() {
         "should cache /index.html, got: {urls:?}"
     );
     assert!(
-        urls.contains(&"/offline.html".to_string()),
-        "should cache /offline.html, got: {urls:?}"
-    );
-    assert!(
         urls.contains(&"/site.webmanifest".to_string()),
         "should cache /site.webmanifest, got: {urls:?}"
     );

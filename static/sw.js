@@ -4,7 +4,6 @@ const MAX_CACHED_IMAGES = 200;
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
-    '/offline.html',
     '/site.webmanifest',
     '/icon-192.png',
     '/icon-512.png',
@@ -41,33 +40,10 @@ self.addEventListener('fetch', (event) => {
     // Ignore cross-origin requests (analytics, fonts, etc.)
     if (url.origin !== location.origin) return;
 
-    // Navigation requests (HTML) - Network First, fall back to cache
-    if (event.request.mode === 'navigate') {
-        event.respondWith(
-            fetch(event.request)
-                .then((response) => {
-                    if (response.ok) {
-                        const cloned = response.clone();
-                        caches.open(CACHE_NAME).then((cache) => {
-                            cache.put(event.request, cloned);
-                        });
-                    }
-                    return response;
-                })
-                .catch(() => {
-                    return caches.match(event.request).then((cached) => {
-                        return cached || caches.match('/offline.html');
-                    });
-                })
-                .then((response) => {
-                    return response || new Response('Offline', {
-                        status: 503,
-                        headers: { 'Content-Type': 'text/plain' },
-                    });
-                })
-        );
-        return;
-    }
+    // Navigation requests (HTML) — let the browser handle natively.
+    // Intercepting with respondWith() breaks CSS View Transitions
+    // (cross-document @view-transition { navigation: auto }).
+    if (event.request.mode === 'navigate') return;
 
     // Image requests - Cache First, fall back to network
     // Uses a separate bounded cache (MAX_CACHED_IMAGES) to prevent unbounded storage growth.
