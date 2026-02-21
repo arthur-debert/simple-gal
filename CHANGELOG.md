@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- `content_root` config key — it was redundant since the config file already lives inside the content directory, so the content root is known by the time the config is found. The `--source` CLI flag is the sole way to specify the content directory.
+
 ## [0.10.0] - 2026-02-21
 
 ### Changed

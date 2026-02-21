@@ -6,13 +6,11 @@ Every configuration key, its type, default value, and purpose. All keys are opti
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `content_root` | string | `"content"` | Path to the content directory. Only meaningful in the root config. |
 | `site_title` | string | `"Gallery"` | Site title used in breadcrumbs and the browser tab for the index page. |
 | `assets_dir` | string | `"assets"` | Directory for static assets (favicon, fonts, etc.), relative to content root. Contents are copied verbatim to the output root. Silently skipped if it does not exist. |
 | `site_description_file` | string | `"site"` | Stem of the site description file in the content root. If `site.md` or `site.txt` exists, its content is rendered on the index page. |
 
 ```toml
-content_root = "content"
 site_title = "My Portfolio"
 assets_dir = "assets"
 site_description_file = "site"

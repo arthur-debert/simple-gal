@@ -113,9 +113,6 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct SiteConfig {
-    /// Path to the content root directory (only meaningful at root level).
-    #[serde(default = "default_content_root")]
-    pub content_root: String,
     /// Site title used in breadcrumbs and the browser tab for the home page.
     #[serde(default = "default_site_title")]
     pub site_title: String,
@@ -145,7 +142,6 @@ pub struct SiteConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PartialSiteConfig {
-    pub content_root: Option<String>,
     pub site_title: Option<String>,
     pub assets_dir: Option<String>,
     pub site_description_file: Option<String>,
@@ -155,10 +151,6 @@ pub struct PartialSiteConfig {
     pub theme: Option<PartialThemeConfig>,
     pub font: Option<PartialFontConfig>,
     pub processing: Option<PartialProcessingConfig>,
-}
-
-fn default_content_root() -> String {
-    "content".to_string()
 }
 
 fn default_site_title() -> String {
@@ -176,7 +168,6 @@ fn default_site_description_file() -> String {
 impl Default for SiteConfig {
     fn default() -> Self {
         Self {
-            content_root: default_content_root(),
             site_title: default_site_title(),
             assets_dir: default_assets_dir(),
             site_description_file: default_site_description_file(),
@@ -213,9 +204,6 @@ impl SiteConfig {
 
     /// Merge a partial config on top of this one.
     pub fn merge(mut self, other: PartialSiteConfig) -> Self {
-        if let Some(cr) = other.content_root {
-            self.content_root = cr;
-        }
         if let Some(st) = other.site_title {
             self.site_title = st;
         }
@@ -782,9 +770,6 @@ pub fn stock_config_toml() -> &'static str {
 # Each level only needs the keys it wants to override.
 # Unknown keys will cause an error.
 
-# Path to content directory (only meaningful at root level)
-content_root = "content"
-
 # Site title shown in breadcrumbs and the browser tab for the home page.
 site_title = "Gallery"
 
@@ -997,12 +982,6 @@ mod tests {
         let config = SiteConfig::default();
         assert_eq!(config.colors.light.background, "#ffffff");
         assert_eq!(config.colors.dark.background, "#000000");
-    }
-
-    #[test]
-    fn default_config_has_content_root() {
-        let config = SiteConfig::default();
-        assert_eq!(config.content_root, "content");
     }
 
     #[test]
