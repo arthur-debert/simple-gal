@@ -430,3 +430,53 @@ fn nav_dots_bottom_anchored_with_caption() {
         vh * 0.75
     );
 }
+
+// ===========================================================================
+// Navigation click zones overlap with image edges
+// ===========================================================================
+
+#[test]
+#[ignore]
+fn nav_zones_overlap_image_portrait_wide_viewport() {
+    // Wide viewport + portrait image: the image is narrow and centered,
+    // so the click zones should extend from the page edges into the image.
+    let tab = load_page_with_viewport(page::with_caption::PORTRAIT, &[], 1920, 1080);
+    let frame = bounding_box(&tab, ".image-frame");
+    let prev = bounding_box(&tab, ".nav-prev");
+    let next = bounding_box(&tab, ".nav-next");
+    let vw: f64 = 1920.0;
+    let overlap = 0.2;
+
+    let expected_prev_right = frame.x + frame.width * overlap;
+    let expected_next_left = frame.x + frame.width * (1.0 - overlap);
+
+    // .nav-prev: left edge at 0, right edge 20% into the image
+    assert_close(prev.x, 0.0, 1.0);
+    assert_close(prev.x + prev.width, expected_prev_right, 2.0);
+
+    // .nav-next: left edge at 80% of image, right edge at viewport edge
+    assert_close(next.x, expected_next_left, 2.0);
+    assert_close(next.x + next.width, vw, 2.0);
+}
+
+#[test]
+#[ignore]
+fn nav_zones_overlap_image_landscape() {
+    let tab = load_page(page::no_description::LANDSCAPE, &[]);
+    let frame = bounding_box(&tab, ".image-frame");
+    let prev = bounding_box(&tab, ".nav-prev");
+    let next = bounding_box(&tab, ".nav-next");
+    let vw: f64 = 1280.0;
+    let overlap = 0.2;
+
+    let expected_prev_right = frame.x + frame.width * overlap;
+    let expected_next_left = frame.x + frame.width * (1.0 - overlap);
+
+    // .nav-prev: left edge at 0, right edge 20% into the image
+    assert_close(prev.x, 0.0, 1.0);
+    assert_close(prev.x + prev.width, expected_prev_right, 2.0);
+
+    // .nav-next: left edge at 80% of image, right edge at viewport edge
+    assert_close(next.x, expected_next_left, 2.0);
+    assert_close(next.x + next.width, vw, 2.0);
+}
