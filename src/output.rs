@@ -325,7 +325,7 @@ pub fn format_process_event(event: &crate::process::ProcessEvent) -> Vec<String>
 
             lines.push(format!(
                 "    {}",
-                image_line(*index, Some(title), &filename)
+                image_line(*index, title.as_deref(), &filename)
             ));
             lines.push(format!("        Source: {}", source_path));
 
@@ -675,11 +675,11 @@ mod tests {
     }
 
     #[test]
-    fn format_process_image_processed() {
+    fn format_process_image_with_title() {
         use crate::process::{ProcessEvent, VariantInfo, VariantStatus};
         let event = ProcessEvent::ImageProcessed {
             index: 1,
-            title: "The Sunset".to_string(),
+            title: Some("The Sunset".to_string()),
             source_path: "010-Landscapes/001-sunset.jpg".to_string(),
             variants: vec![
                 VariantInfo {
@@ -702,5 +702,22 @@ mod tests {
         assert_eq!(lines[2], "        800px: cached");
         assert_eq!(lines[3], "        1400px: encoded");
         assert_eq!(lines[4], "        thumbnail: copied");
+    }
+
+    #[test]
+    fn format_process_image_without_title() {
+        use crate::process::{ProcessEvent, VariantInfo, VariantStatus};
+        let event = ProcessEvent::ImageProcessed {
+            index: 3,
+            title: None,
+            source_path: "002-NY/38.avif".to_string(),
+            variants: vec![VariantInfo {
+                label: "800px".to_string(),
+                status: VariantStatus::Cached,
+            }],
+        };
+        let lines = format_process_event(&event);
+        assert_eq!(lines[0], "    003 (38.avif)");
+        assert_eq!(lines[1], "        Source: 002-NY/38.avif");
     }
 }

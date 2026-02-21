@@ -227,8 +227,10 @@ pub enum ProcessEvent {
     ImageProcessed {
         /// 1-based positional index within the album.
         index: usize,
-        /// Display title (from IPTC, filename, or slug fallback).
-        title: String,
+        /// Title if the image has one (from IPTC or filename). `None` for
+        /// untitled images like `38.avif` — the output formatter shows
+        /// the filename instead.
+        title: Option<String>,
         /// Relative source path (e.g., "010-Landscapes/001-dawn.jpg").
         source_path: String,
         /// Per-variant cache/encode status.
@@ -396,15 +398,9 @@ pub fn process_with_backend(
                     .collect();
 
                 if let Some(ref tx) = progress {
-                    let display_title = title
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| Some(slug.as_str()).filter(|s| !s.is_empty()))
-                        .unwrap_or(stem)
-                        .to_string();
                     tx.send(ProcessEvent::ImageProcessed {
                         index: idx + 1,
-                        title: display_title,
+                        title: title.clone(),
                         source_path: image.source_path.clone(),
                         variants: variant_infos,
                     })
