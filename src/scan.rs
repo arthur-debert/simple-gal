@@ -552,10 +552,9 @@ fn build_album(
 
     let preview_rel = preview_image.strip_prefix(root).unwrap();
 
-    // Build image list (exclude thumb-designated image — it's only used as preview)
+    // Build image list (thumb-designated images stay in the gallery, they're just also used as preview)
     let images: Vec<Image> = numbered_images
         .iter()
-        .filter(|&(&num, _)| thumb_key != Some(num))
         .map(|(&num, (img_path, parsed))| {
             let filename = img_path.file_name().unwrap().to_string_lossy().to_string();
 
@@ -667,7 +666,7 @@ mod tests {
             .iter()
             .map(|i| i.number)
             .collect();
-        assert_eq!(numbers, vec![1, 2, 10]);
+        assert_eq!(numbers, vec![1, 2, 5, 10]);
     }
 
     #[test]
@@ -1287,11 +1286,12 @@ mod tests {
         let tmp = setup_fixtures();
         let manifest = scan(tmp.path()).unwrap();
 
-        // Landscapes: dawn has sidecar; dusk and night do not (thumb excluded from images)
+        // Landscapes: dawn has sidecar; dusk, thumb, and night do not
         assert_eq!(
             image_descriptions(find_album(&manifest, "Landscapes")),
             vec![
                 Some("First light breaking over the mountain ridge."),
+                None,
                 None,
                 None,
             ]
@@ -1312,7 +1312,7 @@ mod tests {
 
         assert_eq!(
             image_titles(find_album(&manifest, "Landscapes")),
-            vec![Some("dawn"), Some("dusk"), Some("night")]
+            vec![Some("dawn"), Some("dusk"), Some("thumb"), Some("night")]
         );
     }
 
@@ -1588,7 +1588,7 @@ mod tests {
     }
 
     #[test]
-    fn thumb_image_excluded_from_images() {
+    fn thumb_image_included_in_images() {
         let tmp = TempDir::new().unwrap();
         let album = tmp.path().join("010-Test");
         fs::create_dir_all(&album).unwrap();
@@ -1599,13 +1599,13 @@ mod tests {
         let manifest = scan(tmp.path()).unwrap();
         // Thumb is used as preview
         assert!(manifest.albums[0].preview_image.contains("003-thumb"));
-        // But NOT included in the image list
-        assert_eq!(manifest.albums[0].images.len(), 2);
-        assert!(manifest.albums[0].images.iter().all(|i| i.number != 3));
+        // And still included in the image list
+        assert_eq!(manifest.albums[0].images.len(), 3);
+        assert!(manifest.albums[0].images.iter().any(|i| i.number == 3));
     }
 
     #[test]
-    fn thumb_image_with_title_excluded_from_images() {
+    fn thumb_image_with_title_included_in_images() {
         let tmp = TempDir::new().unwrap();
         let album = tmp.path().join("010-Test");
         fs::create_dir_all(&album).unwrap();
@@ -1619,9 +1619,9 @@ mod tests {
                 .preview_image
                 .contains("003-thumb-The-Sunset")
         );
-        // Thumb is NOT in the image list
-        assert_eq!(manifest.albums[0].images.len(), 1);
-        assert_eq!(manifest.albums[0].images[0].number, 1);
+        // Thumb is also in the image list
+        assert_eq!(manifest.albums[0].images.len(), 2);
+        assert!(manifest.albums[0].images.iter().any(|i| i.number == 3));
     }
 
     #[test]
