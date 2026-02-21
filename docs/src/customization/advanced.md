@@ -12,7 +12,7 @@ Simple Gal generates CSS custom properties from your `config.toml` values and in
 |----------|---------|----------|
 | `--color-bg` | `#ffffff` | Page background |
 | `--color-text` | `#1a1a1a` | Primary text |
-| `--color-text-muted` | `#6b6b6b` | Secondary text (captions, descriptions, nav groups) |
+| `--color-text-muted` | `#6b6b6b` | Secondary text (captions, descriptions) |
 | `--color-border` | `#e0e0e0` | Borders, image placeholder background |
 | `--color-link` | `#1a1a1a` | Link text |
 | `--color-link-hover` | `#4a4a4a` | Link hover state |
@@ -61,15 +61,17 @@ These are the main classes in the generated HTML. Target them in `custom.css` fo
 | `.site-nav` | `<nav>` | Navigation container (hamburger menu) |
 | `.nav-panel` | `<div>` | Slide-in navigation panel |
 
-### Index Page
+### Index and Gallery-List Pages
+
+The index page and group gallery-list pages (e.g. `/Travel/`) share the same HTML structure and CSS classes.
 
 | Class | Element | Description |
 |-------|---------|-------------|
-| `.index-page` | `<main>` | Index page main container |
-| `.index-header` | `<div>` | Site title and description block |
-| `.album-grid` | `<div>` | Grid of album cards |
-| `.album-card` | `<a>` | Individual album link with thumbnail and title |
-| `.album-title` | `<span>` | Album title text below thumbnail |
+| `.index-page` | `<main>` | Page main container (used on both index and gallery-list pages) |
+| `.index-header` | `<div>` | Title and description block |
+| `.album-grid` | `<div>` | Grid of album/group cards |
+| `.album-card` | `<a>` | Individual card with thumbnail and title |
+| `.album-title` | `<span>` | Title text below thumbnail |
 
 ### Album Page
 

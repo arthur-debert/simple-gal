@@ -5,7 +5,8 @@
 //!
 //! ## Generated Pages
 //!
-//! - **Index page** (`/index.html`): Album grid showing thumbnails of all albums
+//! - **Index page** (`/index.html`): Gallery list showing top-level album/group cards
+//! - **Gallery-list pages** (`/{group}/index.html`): Gallery list for a container directory, showing cards for each child album or sub-group
 //! - **Album pages** (`/{album}/index.html`): Thumbnail grid for an album
 //! - **Image pages** (`/{album}/{n}-{slug}.html`): Full-screen image viewer with navigation
 //! - **Content pages** (`/{slug}.html`): Markdown pages (e.g. about, contact)
@@ -22,16 +23,21 @@
 //!
 //! ```text
 //! dist/
-//! ├── index.html                 # Home/gallery page
+//! ├── index.html                 # Gallery list (top-level cards)
 //! ├── about.html                 # Content page (from 040-about.md)
 //! ├── Landscapes/
-//! │   ├── index.html             # Album page
+//! │   ├── index.html             # Album page (thumbnail grid)
 //! │   ├── 1-dawn.html            # Image viewer pages
 //! │   ├── 2-sunset.html
 //! │   ├── 001-dawn-800.avif      # Processed images (copied)
 //! │   └── ...
 //! └── Travel/
-//!     └── ...
+//!     ├── index.html             # Gallery-list page (child album cards)
+//!     ├── Japan/
+//!     │   ├── index.html         # Album page
+//!     │   └── ...
+//!     └── Italy/
+//!         └── ...
 //! ```
 //!
 //! ## CSS and JavaScript
@@ -132,6 +138,73 @@ const APPLE_TOUCH_ICON: &[u8] = include_bytes!("../static/apple-touch-icon.png")
 const FAVICON_PNG: &[u8] = include_bytes!("../static/favicon.png");
 
 const IMAGE_SIZES: &str = "(max-width: 800px) 100vw, 80vw";
+
+/// An entry in a gallery-list page (index or container page).
+struct GalleryEntry {
+    title: String,
+    path: String,
+    thumbnail: Option<String>,
+}
+
+/// Find a thumbnail for a nav item by walking into its first child recursively.
+fn find_nav_thumbnail(item: &NavItem, albums: &[Album]) -> Option<String> {
+    if item.children.is_empty() {
+        // Leaf: find the matching album
+        albums
+            .iter()
+            .find(|a| a.path == item.path)
+            .map(|a| a.thumbnail.clone())
+    } else {
+        // Container: recurse into first child
+        item.children
+            .first()
+            .and_then(|c| find_nav_thumbnail(c, albums))
+    }
+}
+
+/// Build gallery entries from nav children for a gallery-list page.
+fn collect_gallery_entries(children: &[NavItem], albums: &[Album]) -> Vec<GalleryEntry> {
+    children
+        .iter()
+        .map(|item| GalleryEntry {
+            title: item.title.clone(),
+            path: item.path.clone(),
+            thumbnail: find_nav_thumbnail(item, albums),
+        })
+        .collect()
+}
+
+/// Walk the navigation tree and find breadcrumb segments for a given path.
+///
+/// Returns a list of (title, path) pairs from root to the matching node (exclusive).
+fn path_to_breadcrumb_segments<'a>(
+    path: &str,
+    navigation: &'a [NavItem],
+) -> Vec<(&'a str, &'a str)> {
+    fn find_segments<'a>(
+        path: &str,
+        items: &'a [NavItem],
+        segments: &mut Vec<(&'a str, &'a str)>,
+    ) -> bool {
+        for item in items {
+            if item.path == path {
+                return true;
+            }
+            if path.starts_with(&format!("{}/", item.path)) {
+                segments.push((&item.title, &item.path));
+                if find_segments(path, &item.children, segments) {
+                    return true;
+                }
+                segments.pop();
+            }
+        }
+        false
+    }
+
+    let mut segments = Vec::new();
+    find_segments(path, navigation, &mut segments);
+    segments
+}
 
 /// User-provided snippets discovered via convention files in the assets directory.
 ///
@@ -353,6 +426,20 @@ pub fn generate(
         let filename = format!("{}.html", page.slug);
         fs::write(output_dir.join(&filename), page_html.into_string())?;
     }
+
+    // Generate gallery-list pages for container directories
+    generate_gallery_list_pages(
+        &manifest.navigation,
+        &manifest.albums,
+        &manifest.navigation,
+        &manifest.pages,
+        &css,
+        font_url.as_deref(),
+        &manifest.config.site_title,
+        favicon_href.as_deref(),
+        &snippets,
+        output_dir,
+    )?;
 
     // Generate album pages
     for album in &manifest.albums {
@@ -584,7 +671,7 @@ fn render_nav_item(item: &NavItem, current_path: &str) -> Markup {
             @if item.children.is_empty() {
                 a href={ "/" (item.path) "/" } { (item.title) }
             } @else {
-                span.nav-group { (item.title) }
+                a.nav-group href={ "/" (item.path) "/" } { (item.title) }
                 ul {
                     @for child in &item.children {
                         (render_nav_item(child, current_path))
@@ -599,7 +686,10 @@ fn render_nav_item(item: &NavItem, current_path: &str) -> Markup {
 // Page Renderers
 // ============================================================================
 
-/// Renders the index/home page with album grid
+/// Renders the index/home page with album grid.
+///
+/// Delegates to `render_gallery_list_page` — the index is just a gallery-list
+/// of top-level navigation entries.
 fn render_index(
     manifest: &Manifest,
     css: &str,
@@ -607,50 +697,18 @@ fn render_index(
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
 ) -> Markup {
-    let nav = render_nav(&manifest.navigation, "", &manifest.pages);
-
-    let breadcrumb = html! {
-        a href="/" { (&manifest.config.site_title) }
-    };
-
-    let main_class = match manifest.description {
-        Some(_) => "index-page has-description",
-        None => "index-page",
-    };
-    let content = html! {
-        (site_header(breadcrumb, nav))
-        main class=(main_class) {
-            @if let Some(desc) = &manifest.description {
-                header.index-header {
-                    h1 { (&manifest.config.site_title) }
-                    input.desc-toggle type="checkbox" id="desc-toggle";
-                    div.album-description { (PreEscaped(desc)) }
-                    label.desc-expand for="desc-toggle" {
-                        span.expand-more { "Read more" }
-                        span.expand-less { "Show less" }
-                    }
-                }
-            }
-            div.album-grid {
-                @for album in manifest.albums.iter().filter(|a| a.in_nav) {
-                    a.album-card href={ (album.path) "/" } {
-                        img src=(album.thumbnail) alt=(album.title) loading="lazy";
-                        span.album-title { (album.title) }
-                    }
-                }
-            }
-        }
-    };
-
-    base_document(
+    render_gallery_list_page(
         &manifest.config.site_title,
+        "",
+        &collect_gallery_entries(&manifest.navigation, &manifest.albums),
+        manifest.description.as_deref(),
+        &manifest.navigation,
+        &manifest.pages,
         css,
         font_url,
-        None,
-        None,
+        &manifest.config.site_title,
         favicon_href,
         snippets,
-        content,
     )
 }
 
@@ -668,15 +726,23 @@ fn render_album_page(
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
+    let segments = path_to_breadcrumb_segments(&album.path, navigation);
     let breadcrumb = html! {
         a href="/" { (site_title) }
+        @for (seg_title, seg_path) in &segments {
+            " › "
+            a href={ "/" (seg_path) "/" } { (seg_title) }
+        }
         " › "
         (album.title)
     };
 
-    // Strip album path prefix since album page is inside the album directory
+    // Strip album directory name prefix since album page is inside the album directory.
+    // Process-stage paths are relative to the parent dir (e.g. "Night/03-thumb.avif"
+    // for album "NY/Night"), so strip the last segment, not the full nested path.
+    let album_dir_name = album.path.rsplit('/').next().unwrap_or(&album.path);
     let strip_prefix = |path: &str| -> String {
-        path.strip_prefix(&album.path)
+        path.strip_prefix(album_dir_name)
             .and_then(|p| p.strip_prefix('/'))
             .unwrap_or(path)
             .to_string()
@@ -756,10 +822,12 @@ fn render_image_page(
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages);
 
-    // Strip album path prefix and add ../ since image pages are in subdirectories
+    // Strip album directory name and add ../ since image pages are in subdirectories.
+    // Process-stage paths are relative to the parent dir, so strip the last segment.
+    let album_dir_name = album.path.rsplit('/').next().unwrap_or(&album.path);
     let strip_prefix = |path: &str| -> String {
         let relative = path
-            .strip_prefix(&album.path)
+            .strip_prefix(album_dir_name)
             .and_then(|p| p.strip_prefix('/'))
             .unwrap_or(path);
         format!("../{}", relative)
@@ -828,8 +896,13 @@ fn render_image_page(
     let image_label = format_image_label(display_idx, album.images.len(), image.title.as_deref());
     let page_title = format!("{} - {}", album.title, image_label);
 
+    let segments = path_to_breadcrumb_segments(&album.path, navigation);
     let breadcrumb = html! {
         a href="/" { (site_title) }
+        @for (seg_title, seg_path) in &segments {
+            " › "
+            a href={ "/" (seg_path) "/" } { (seg_title) }
+        }
         " › "
         a href="../" { (album.title) }
         " › "
@@ -968,6 +1041,135 @@ fn render_page(
     )
 }
 
+/// Renders a gallery-list page for a container directory (e.g. /NY/).
+///
+/// Structurally identical to the index page but parameterized: shows a grid
+/// of album cards for the container's children.
+#[allow(clippy::too_many_arguments)]
+fn render_gallery_list_page(
+    title: &str,
+    path: &str,
+    entries: &[GalleryEntry],
+    description: Option<&str>,
+    navigation: &[NavItem],
+    pages: &[Page],
+    css: &str,
+    font_url: Option<&str>,
+    site_title: &str,
+    favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
+) -> Markup {
+    let nav = render_nav(navigation, path, pages);
+
+    let is_root = path.is_empty();
+    let segments = path_to_breadcrumb_segments(path, navigation);
+    let breadcrumb = html! {
+        a href="/" { (site_title) }
+        @if !is_root {
+            @for (seg_title, seg_path) in &segments {
+                " › "
+                a href={ "/" (seg_path) "/" } { (seg_title) }
+            }
+            " › "
+            (title)
+        }
+    };
+
+    let main_class = match description {
+        Some(_) => "index-page has-description",
+        None => "index-page",
+    };
+    let content = html! {
+        (site_header(breadcrumb, nav))
+        main class=(main_class) {
+            @if let Some(desc) = description {
+                header.index-header {
+                    h1 { (title) }
+                    input.desc-toggle type="checkbox" id="desc-toggle";
+                    div.album-description { (PreEscaped(desc)) }
+                    label.desc-expand for="desc-toggle" {
+                        span.expand-more { "Read more" }
+                        span.expand-less { "Show less" }
+                    }
+                }
+            }
+            div.album-grid {
+                @for entry in entries {
+                    a.album-card href={ "/" (entry.path) "/" } {
+                        @if let Some(ref thumb) = entry.thumbnail {
+                            img src={ "/" (thumb) } alt=(entry.title) loading="lazy";
+                        }
+                        span.album-title { (entry.title) }
+                    }
+                }
+            }
+        }
+    };
+
+    base_document(
+        title,
+        css,
+        font_url,
+        None,
+        None,
+        favicon_href,
+        snippets,
+        content,
+    )
+}
+
+/// Walk the navigation tree and generate gallery-list pages for every container.
+#[allow(clippy::too_many_arguments)]
+fn generate_gallery_list_pages(
+    items: &[NavItem],
+    albums: &[Album],
+    navigation: &[NavItem],
+    pages: &[Page],
+    css: &str,
+    font_url: Option<&str>,
+    site_title: &str,
+    favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
+    output_dir: &Path,
+) -> Result<(), GenerateError> {
+    for item in items {
+        if !item.children.is_empty() {
+            let entries = collect_gallery_entries(&item.children, albums);
+            let page_html = render_gallery_list_page(
+                &item.title,
+                &item.path,
+                &entries,
+                item.description.as_deref(),
+                navigation,
+                pages,
+                css,
+                font_url,
+                site_title,
+                favicon_href,
+                snippets,
+            );
+            let dir = output_dir.join(&item.path);
+            fs::create_dir_all(&dir)?;
+            fs::write(dir.join("index.html"), page_html.into_string())?;
+
+            // Recurse into children
+            generate_gallery_list_pages(
+                &item.children,
+                albums,
+                navigation,
+                pages,
+                css,
+                font_url,
+                site_title,
+                favicon_href,
+                snippets,
+                output_dir,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1002,6 +1204,7 @@ mod tests {
             title: "Album One".to_string(),
             path: "010-one".to_string(),
             source_dir: String::new(),
+            description: None,
             children: vec![],
         }];
         let html = render_nav(&items, "", &[]).into_string();
@@ -1042,12 +1245,14 @@ mod tests {
                 title: "First".to_string(),
                 path: "010-first".to_string(),
                 source_dir: String::new(),
+                description: None,
                 children: vec![],
             },
             NavItem {
                 title: "Second".to_string(),
                 path: "020-second".to_string(),
                 source_dir: String::new(),
+                description: None,
                 children: vec![],
             },
         ];
@@ -1069,10 +1274,12 @@ mod tests {
             title: "Parent".to_string(),
             path: "010-parent".to_string(),
             source_dir: String::new(),
+            description: None,
             children: vec![NavItem {
                 title: "Child".to_string(),
                 path: "010-parent/010-child".to_string(),
                 source_dir: String::new(),
+                description: None,
                 children: vec![],
             }],
         }];
@@ -1210,6 +1417,90 @@ mod tests {
             config: SiteConfig::default(),
             support_files: vec![],
         }
+    }
+
+    /// A nested album (e.g. NY/Night) with process-stage path conventions.
+    ///
+    /// The process stage outputs image paths relative to the album's parent
+    /// directory, NOT the full nested path. So for album "NY/Night", thumbnail
+    /// paths are "Night/..." not "NY/Night/...".
+    fn create_nested_test_album() -> Album {
+        Album {
+            path: "NY/Night".to_string(),
+            title: "Night".to_string(),
+            description: None,
+            thumbnail: "Night/001-image-thumb.avif".to_string(),
+            images: vec![Image {
+                number: 1,
+                source_path: "NY/Night/001-city.jpg".to_string(),
+                title: Some("City".to_string()),
+                description: None,
+                dimensions: (1600, 1200),
+                generated: {
+                    let mut map = BTreeMap::new();
+                    map.insert(
+                        "800".to_string(),
+                        GeneratedVariant {
+                            avif: "Night/001-city-800.avif".to_string(),
+                            width: 800,
+                            height: 600,
+                        },
+                    );
+                    map.insert(
+                        "1400".to_string(),
+                        GeneratedVariant {
+                            avif: "Night/001-city-1400.avif".to_string(),
+                            width: 1400,
+                            height: 1050,
+                        },
+                    );
+                    map
+                },
+                thumbnail: "Night/001-city-thumb.avif".to_string(),
+            }],
+            in_nav: true,
+            config: SiteConfig::default(),
+            support_files: vec![],
+        }
+    }
+
+    #[test]
+    fn nested_album_thumbnail_paths_are_relative_to_album_dir() {
+        let album = create_nested_test_album();
+        let html = render_album_page(&album, &[], &[], "", None, "Gallery", None, &no_snippets())
+            .into_string();
+
+        // Thumbnail src must be relative to the album directory (no parent prefix).
+        // "001-city-thumb.avif" is correct; "Night/001-city-thumb.avif" would break
+        // because the page is already served from /NY/Night/.
+        assert!(html.contains(r#"src="001-city-thumb.avif""#));
+        assert!(!html.contains("Night/001-city-thumb.avif"));
+    }
+
+    #[test]
+    fn nested_album_image_page_srcset_paths_are_relative() {
+        let album = create_nested_test_album();
+        let image = &album.images[0];
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            None,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+        )
+        .into_string();
+
+        // Image page is at /NY/Night/1-City/, so srcset paths use ../ to reach
+        // the album directory. Must NOT contain the album dir name again.
+        assert!(html.contains("../001-city-800.avif"));
+        assert!(html.contains("../001-city-1400.avif"));
+        assert!(!html.contains("Night/001-city-800.avif"));
     }
 
     #[test]
@@ -1740,6 +2031,7 @@ mod tests {
             title: "<script>alert('xss')</script>".to_string(),
             path: "test".to_string(),
             source_dir: String::new(),
+            description: None,
             children: vec![],
         }];
         let html = render_nav(&items, "", &[]).into_string();
@@ -2024,7 +2316,13 @@ mod tests {
     #[test]
     fn index_page_excludes_non_nav_albums() {
         let manifest = Manifest {
-            navigation: vec![],
+            navigation: vec![NavItem {
+                title: "Visible".to_string(),
+                path: "visible".to_string(),
+                source_dir: String::new(),
+                description: None,
+                children: vec![],
+            }],
             albums: vec![
                 Album {
                     path: "visible".to_string(),

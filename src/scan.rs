@@ -40,7 +40,8 @@
 //! ## Output
 //!
 //! Produces a [`Manifest`] containing:
-//! - Navigation tree (numbered directories only)
+//! - Navigation tree (numbered directories only) — container directories carry an
+//!   optional `description` field read from `description.md`/`description.txt`
 //! - All albums with their images
 //! - Pages from markdown files (content pages and external links)
 //! - Site configuration
@@ -313,6 +314,7 @@ fn scan_directory(
                 title,
                 path: album_path,
                 source_dir: source_dir_name,
+                description: None,
                 children: vec![],
             });
         }
@@ -344,10 +346,12 @@ fn scan_directory(
             let parsed = parse_entry_name(&dir_name);
             if parsed.number.is_some() {
                 let rel_path = path.strip_prefix(root).unwrap();
+                let description = read_album_description(path)?;
                 nav_items.push(NavItem {
                     title: parsed.display_title,
                     path: rel_path.to_string_lossy().to_string(),
                     source_dir: dir_name.to_string(),
+                    description,
                     children: child_nav,
                 });
             } else {

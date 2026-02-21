@@ -31,12 +31,20 @@ pub struct Page {
 }
 
 /// Navigation tree item (only numbered directories).
+///
+/// Leaf items (no children) correspond to albums. Items with children are
+/// container directories (groups) that generate gallery-list pages. Container
+/// items can carry an optional `description` read from `description.md`/`.txt`
+/// in the container directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NavItem {
     pub title: String,
     pub path: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source_dir: String,
+    /// Optional description for container directories, rendered on their gallery-list page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<NavItem>,
 }
