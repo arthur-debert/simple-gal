@@ -304,7 +304,6 @@ main {
 
 /* ===== Album Page ===== */
 .album-page {
-    max-width: 1400px;
 }
 
 .album-header {
@@ -517,13 +516,13 @@ body.has-description .image-nav {
 
 /* ===== Large Desktop: side-by-side description + thumbnails ===== */
 @media (min-width: 1200px) {
-    .album-page {
+    .album-page.has-description {
         display: grid;
-        grid-template-columns: 2fr 5fr;
+        grid-template-columns: 300px 1fr;
         gap: 0 var(--thumbnail-gap);
     }
 
-    .album-header {
+    .album-page.has-description .album-header {
         position: sticky;
         top: calc(var(--header-height) + 2rem);
         align-self: start;
@@ -531,7 +530,7 @@ body.has-description .image-nav {
         padding-top: var(--grid-padding);
     }
 
-    .album-description {
+    .album-page.has-description .album-description {
         max-width: none;
     }
 

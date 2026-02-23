@@ -748,9 +748,10 @@ fn render_album_page(
             .to_string()
     };
 
+    let has_desc = album.description.is_some();
     let content = html! {
         (site_header(breadcrumb, nav))
-        main.album-page {
+        main.album-page.has-description[has_desc] {
             header.album-header {
                 h1 { (album.title) }
                 @if let Some(desc) = &album.description {
