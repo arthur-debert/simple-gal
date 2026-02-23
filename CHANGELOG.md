@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-02-23
+
 ### Changed
 - URL slugs are now normalized: lowercased with underscores and spaces replaced by hyphens. For example, `Magna Graecia With Theo` becomes `magna-graecia-with-theo` instead of `Magna%20Graecia%20With%20Theo`. Affects album paths, image page URLs, and page slugs.
 
