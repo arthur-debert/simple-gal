@@ -174,7 +174,7 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
 }
 
 /// Convert a relative path to a slug path by stripping number prefixes from each component.
-/// `"020-Travel/010-Japan"` → `"Travel/Japan"`
+/// `"020-Travel/010-Japan"` → `"travel/japan"`
 fn slug_path(rel_path: &str) -> String {
     rel_path
         .split('/')
@@ -1064,8 +1064,8 @@ mod tests {
         let manifest = scan(tmp.path()).unwrap();
 
         let japan = find_album(&manifest, "Japan");
-        assert!(japan.path.contains("Travel"));
-        assert!(japan.path.contains("Japan"));
+        assert!(japan.path.contains("travel"));
+        assert!(japan.path.contains("japan"));
         assert!(!japan.path.contains("020-"));
         assert!(!japan.path.contains("010-"));
     }
