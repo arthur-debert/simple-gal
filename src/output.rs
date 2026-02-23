@@ -339,6 +339,9 @@ pub fn format_process_event(event: &crate::process::ProcessEvent) -> Vec<String>
             }
             lines
         }
+        ProcessEvent::CachePruned { removed } => {
+            vec![format!("    Pruned {} stale cache entries", removed)]
+        }
     }
 }
 

@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - URL slugs are now normalized: lowercased with underscores and spaces replaced by hyphens. For example, `Magna Graecia With Theo` becomes `magna-graecia-with-theo` instead of `Magna%20Graecia%20With%20Theo`. Affects album paths, image page URLs, and page slugs.
 
+### Fixed
+- Race condition in content-addressed cache: when images swap positions (e.g. reordering photos), parallel processing threads could clobber each other's cached files, causing two gallery positions to show the same image. The cache mutex now spans the entire find+copy+insert sequence, and `insert` invalidates stale content-index entries for displaced content.
+- Cache now prunes stale entries after each build: processed files for deleted/renumbered images and renamed albums are removed instead of accumulating indefinitely.
+- Nested album cache paths used only the leaf directory name (`Japan/`) instead of the full relative path (`Travel/Japan/`), causing incorrect cache lookups for nested albums.
+
 ## [0.11.1] - 2026-02-23
 
 ## [0.11.0] - 2026-02-21
