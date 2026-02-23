@@ -25,9 +25,9 @@ pub struct ParsedName {
     pub display_title: String,
 }
 
-/// Normalize a name part into a URL-friendly slug: lowercase, underscores → hyphens.
+/// Normalize a name part into a URL-friendly slug: lowercase, spaces and underscores → hyphens.
 fn slugify(s: &str) -> String {
-    s.to_lowercase().replace('_', "-")
+    s.to_lowercase().replace([' ', '_'], "-")
 }
 
 /// Parse an entry name following the `NNN-name` convention.
@@ -166,5 +166,13 @@ mod tests {
         assert_eq!(p.number, Some(10));
         assert_eq!(p.name, "my-photos");
         assert_eq!(p.display_title, "My_Photos");
+    }
+
+    #[test]
+    fn spaces_become_hyphens_in_slug() {
+        let p = parse_entry_name("001-Magna Graecia With Theo");
+        assert_eq!(p.number, Some(1));
+        assert_eq!(p.name, "magna-graecia-with-theo");
+        assert_eq!(p.display_title, "Magna Graecia With Theo");
     }
 }
