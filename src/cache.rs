@@ -51,7 +51,7 @@
 //! old output files are overwritten naturally.
 
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -148,6 +148,11 @@ impl CacheManifest {
     /// If an entry with the same content (source_hash + params_hash) already
     /// exists under a different output path, the old entry is removed to keep
     /// the manifest clean when images move (e.g. album rename).
+    ///
+    /// If the output path already has an entry for *different* content (e.g.
+    /// image swap: file A moved to where B used to be), the old content's
+    /// `content_index` entry is removed so stale lookups don't return a file
+    /// whose content has been overwritten.
     pub fn insert(&mut self, output_path: String, source_hash: String, params_hash: String) {
         let content_key = format!("{}:{}", source_hash, params_hash);
 
@@ -158,6 +163,15 @@ impl CacheManifest {
             self.entries.remove(old_path.as_str());
         }
 
+        // If this output path previously held different content, invalidate
+        // that content's lookup entry — the file on disk no longer matches.
+        if let Some(displaced) = self.entries.get(&output_path) {
+            let displaced_key = format!("{}:{}", displaced.source_hash, displaced.params_hash);
+            if displaced_key != content_key {
+                self.content_index.remove(&displaced_key);
+            }
+        }
+
         self.content_index.insert(content_key, output_path.clone());
         self.entries.insert(
             output_path,
@@ -166,6 +180,34 @@ impl CacheManifest {
                 params_hash,
             },
         );
+    }
+
+    /// Remove all entries whose output path is not in `live_paths`, and
+    /// delete the corresponding files from `output_dir`.
+    ///
+    /// Call this after a full build to clean up processed files for images
+    /// that were deleted, renumbered, or belong to renamed/removed albums.
+    pub fn prune(&mut self, live_paths: &HashSet<String>, output_dir: &Path) -> u32 {
+        let stale: Vec<String> = self
+            .entries
+            .keys()
+            .filter(|p| !live_paths.contains(p.as_str()))
+            .cloned()
+            .collect();
+
+        let mut removed = 0u32;
+        for path in &stale {
+            if let Some(entry) = self.entries.remove(path) {
+                let content_key = format!("{}:{}", entry.source_hash, entry.params_hash);
+                self.content_index.remove(&content_key);
+            }
+            let file = output_dir.join(path);
+            if file.exists() {
+                let _ = std::fs::remove_file(&file);
+            }
+            removed += 1;
+        }
+        removed
     }
 }
 
@@ -385,6 +427,60 @@ mod tests {
 
         assert!(!m.entries.contains_key("old-album/img-800.avif"));
         assert!(m.entries.contains_key("new-album/img-800.avif"));
+    }
+
+    #[test]
+    fn insert_invalidates_displaced_content_index() {
+        let mut m = CacheManifest::empty();
+        // Path "album/309-800.avif" holds content A
+        m.insert(
+            "album/309-800.avif".into(),
+            "hash_A".into(),
+            "params".into(),
+        );
+        assert_eq!(
+            m.content_index.get("hash_A:params"),
+            Some(&"album/309-800.avif".to_string())
+        );
+
+        // Now content B overwrites that path (image swap)
+        m.insert(
+            "album/309-800.avif".into(),
+            "hash_B".into(),
+            "params".into(),
+        );
+
+        // hash_A's content_index entry should be gone (file overwritten)
+        assert_eq!(m.content_index.get("hash_A:params"), None);
+        // hash_B points to the path
+        assert_eq!(
+            m.content_index.get("hash_B:params"),
+            Some(&"album/309-800.avif".to_string())
+        );
+    }
+
+    #[test]
+    fn prune_removes_stale_entries_and_files() {
+        let tmp = TempDir::new().unwrap();
+        let mut m = CacheManifest::empty();
+        m.insert("album/live.avif".into(), "s1".into(), "p1".into());
+        m.insert("album/stale.avif".into(), "s2".into(), "p2".into());
+
+        // Create both files on disk
+        let dir = tmp.path().join("album");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("live.avif"), "data").unwrap();
+        fs::write(dir.join("stale.avif"), "data").unwrap();
+
+        let mut live = HashSet::new();
+        live.insert("album/live.avif".to_string());
+        let removed = m.prune(&live, tmp.path());
+
+        assert_eq!(removed, 1);
+        assert!(m.entries.contains_key("album/live.avif"));
+        assert!(!m.entries.contains_key("album/stale.avif"));
+        assert!(dir.join("live.avif").exists());
+        assert!(!dir.join("stale.avif").exists());
     }
 
     #[test]
