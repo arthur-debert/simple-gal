@@ -264,18 +264,18 @@ pub(crate) fn image_page_url(position: usize, total: usize, title: Option<&str>)
 
 /// Escape a display title for use in URL paths.
 ///
-/// Replaces spaces and dots with hyphens and collapses consecutive hyphens.
+/// Lowercases, replaces spaces/dots/underscores with hyphens, and collapses consecutive hyphens.
 fn escape_for_url(title: &str) -> String {
     let mut result = String::with_capacity(title.len());
     let mut prev_dash = false;
     for c in title.chars() {
-        if c == ' ' || c == '.' {
+        if c == ' ' || c == '.' || c == '_' {
             if !prev_dash {
                 result.push('-');
             }
             prev_dash = true;
         } else {
-            result.push(c);
+            result.extend(c.to_lowercase());
             prev_dash = false;
         }
     }
@@ -1533,8 +1533,8 @@ mod tests {
         let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
             .into_string();
 
-        // Should have links to image pages (1-Dawn/, 2/)
-        assert!(html.contains("1-Dawn/"));
+        // Should have links to image pages (1-dawn/, 2/)
+        assert!(html.contains("1-dawn/"));
         assert!(html.contains("2/"));
         // Thumbnails should have paths relative to album dir
         assert!(html.contains("001-dawn-thumb.avif"));
@@ -1668,7 +1668,7 @@ mod tests {
             &no_snippets(),
         )
         .into_string();
-        assert!(html2.contains(r#"class="nav-prev" href="../1-Dawn/""#));
+        assert!(html2.contains(r#"class="nav-prev" href="../1-dawn/""#));
         assert!(html2.contains(r#"class="nav-next" href="../""#));
     }
 
@@ -2048,32 +2048,37 @@ mod tests {
 
     #[test]
     fn escape_for_url_spaces_become_dashes() {
-        assert_eq!(escape_for_url("My Title"), "My-Title");
+        assert_eq!(escape_for_url("My Title"), "my-title");
     }
 
     #[test]
     fn escape_for_url_dots_become_dashes() {
-        assert_eq!(escape_for_url("St. Louis"), "St-Louis");
+        assert_eq!(escape_for_url("St. Louis"), "st-louis");
     }
 
     #[test]
     fn escape_for_url_collapses_consecutive() {
-        assert_eq!(escape_for_url("A.  B"), "A-B");
+        assert_eq!(escape_for_url("A.  B"), "a-b");
     }
 
     #[test]
     fn escape_for_url_strips_leading_trailing() {
-        assert_eq!(escape_for_url(". Title ."), "Title");
+        assert_eq!(escape_for_url(". Title ."), "title");
     }
 
     #[test]
     fn escape_for_url_preserves_dashes() {
-        assert_eq!(escape_for_url("My-Title"), "My-Title");
+        assert_eq!(escape_for_url("My-Title"), "my-title");
+    }
+
+    #[test]
+    fn escape_for_url_underscores_become_dashes() {
+        assert_eq!(escape_for_url("My_Title"), "my-title");
     }
 
     #[test]
     fn image_page_url_with_title() {
-        assert_eq!(image_page_url(3, 15, Some("Dawn")), "03-Dawn/");
+        assert_eq!(image_page_url(3, 15, Some("Dawn")), "03-dawn/");
     }
 
     #[test]
@@ -2083,12 +2088,12 @@ mod tests {
 
     #[test]
     fn image_page_url_title_with_spaces() {
-        assert_eq!(image_page_url(1, 5, Some("My Museum")), "1-My-Museum/");
+        assert_eq!(image_page_url(1, 5, Some("My Museum")), "1-my-museum/");
     }
 
     #[test]
     fn image_page_url_title_with_dot() {
-        assert_eq!(image_page_url(1, 5, Some("St. Louis")), "1-St-Louis/");
+        assert_eq!(image_page_url(1, 5, Some("St. Louis")), "1-st-louis/");
     }
 
     // =========================================================================
@@ -2505,7 +2510,7 @@ mod tests {
         // Current image dot should have aria-current
         assert!(html.contains(r#"aria-current="true""#));
         // Should have links to both image pages
-        assert!(html.contains(r#"href="../1-Dawn/""#));
+        assert!(html.contains(r#"href="../1-dawn/""#));
         assert!(html.contains(r#"href="../2/""#));
     }
 
@@ -2531,9 +2536,9 @@ mod tests {
         // The second dot (href="../2/") should have aria-current
         // The first dot (href="../1-Dawn/") should NOT
         assert!(html.contains(r#"<a href="../2/" aria-current="true">"#));
-        assert!(html.contains(r#"<a href="../1-Dawn/">"#));
+        assert!(html.contains(r#"<a href="../1-dawn/">"#));
         // Verify the first dot does NOT have aria-current
-        assert!(!html.contains(r#"<a href="../1-Dawn/" aria-current"#));
+        assert!(!html.contains(r#"<a href="../1-dawn/" aria-current"#));
     }
 
     // =========================================================================
