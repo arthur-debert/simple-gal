@@ -236,6 +236,8 @@ pub enum ProcessEvent {
         /// Per-variant cache/encode status.
         variants: Vec<VariantInfo>,
     },
+    /// Stale cache entries were pruned after processing.
+    CachePruned { removed: u32 },
 }
 
 pub fn process(
@@ -463,8 +465,30 @@ pub fn process_with_backend(
         });
     }
 
+    // Collect all output paths that are live in this build
+    let live_paths: std::collections::HashSet<String> = output_albums
+        .iter()
+        .flat_map(|album| {
+            let image_paths = album.images.iter().flat_map(|img| {
+                let mut paths: Vec<String> =
+                    img.generated.values().map(|v| v.avif.clone()).collect();
+                paths.push(img.thumbnail.clone());
+                paths
+            });
+            std::iter::once(album.thumbnail.clone()).chain(image_paths)
+        })
+        .collect();
+
+    let mut final_cache = cache.into_inner().unwrap();
+    let pruned = final_cache.prune(&live_paths, output_dir);
     let final_stats = stats.into_inner().unwrap();
-    cache.into_inner().unwrap().save(output_dir)?;
+    final_cache.save(output_dir)?;
+
+    if let Some(ref tx) = progress
+        && pruned > 0
+    {
+        tx.send(ProcessEvent::CachePruned { removed: pruned }).ok();
+    }
 
     Ok(ProcessResult {
         manifest: OutputManifest {
@@ -502,17 +526,18 @@ enum CacheLookup {
 /// `Copied` when a file with matching content was found elsewhere and
 /// copied to `expected_path`, or `Miss` when no cached version exists
 /// (or the copy failed).
+///
+/// The cache mutex is held across the entire find+copy+insert sequence to
+/// prevent a race where two threads processing swapped images clobber each
+/// other's source files (Thread A copies over B's file before B reads it).
 fn check_cache_and_copy(
     expected_path: &str,
     source_hash: &str,
     params_hash: &str,
     ctx: &CacheContext<'_>,
 ) -> CacheLookup {
-    let cached_path =
-        ctx.cache
-            .lock()
-            .unwrap()
-            .find_cached(source_hash, params_hash, ctx.cache_root);
+    let mut cache = ctx.cache.lock().unwrap();
+    let cached_path = cache.find_cached(source_hash, params_hash, ctx.cache_root);
 
     match cached_path {
         Some(ref stored) if stored == expected_path => CacheLookup::ExactHit,
@@ -524,7 +549,7 @@ fn check_cache_and_copy(
             }
             match std::fs::copy(&old_file, &new_file) {
                 Ok(_) => {
-                    ctx.cache.lock().unwrap().insert(
+                    cache.insert(
                         expected_path.to_string(),
                         source_hash.to_string(),
                         params_hash.to_string(),
@@ -565,9 +590,10 @@ fn create_responsive_images_cached(
     let mut statuses = Vec::new();
 
     let relative_dir = output_dir
-        .file_name()
-        .map(|s| s.to_str().unwrap())
-        .unwrap_or("");
+        .strip_prefix(ctx.cache_root)
+        .unwrap()
+        .to_str()
+        .unwrap();
 
     for size in sizes {
         let avif_name = format!("{}-{}.avif", filename_stem, size.target);
@@ -623,9 +649,10 @@ fn create_thumbnail_cached(
 ) -> Result<(String, VariantStatus), ProcessError> {
     let thumb_name = format!("{}-thumb.avif", filename_stem);
     let relative_dir = output_dir
-        .file_name()
-        .map(|s| s.to_str().unwrap())
-        .unwrap_or("");
+        .strip_prefix(ctx.cache_root)
+        .unwrap()
+        .to_str()
+        .unwrap();
     let relative_path = format!("{}/{}", relative_dir, thumb_name);
 
     let sharpening_tuple = config.sharpening.map(|s| (s.sigma, s.threshold));
