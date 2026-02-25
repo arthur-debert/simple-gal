@@ -65,12 +65,12 @@ Layout spacing values. All values are CSS length strings.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `thumbnail_gap` | string | `"1rem"` | Gap between thumbnails in album and image grids. |
+| `thumbnail_gap` | string | `"0.2rem"` | Gap between thumbnails in album and image grids. |
 | `grid_padding` | string | `"2rem"` | Padding around the thumbnail grid container. |
 
 ```toml
 [theme]
-thumbnail_gap = "1rem"
+thumbnail_gap = "0.2rem"
 grid_padding = "2rem"
 ```
 

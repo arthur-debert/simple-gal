@@ -94,7 +94,7 @@ The generated CSS:
 :root {
     --mat-x: clamp(1rem, 3vw, 2.5rem);
     --mat-y: clamp(2rem, 6vw, 5rem);
-    --thumbnail-gap: 1rem;
+    --thumbnail-gap: 0.2rem;
     --grid-padding: 2rem;
 }
 ```
@@ -142,7 +142,7 @@ Two values control the thumbnail grid layout:
 
 | Key | Default | Effect |
 |---|---|---|
-| `thumbnail_gap` | `"1rem"` | Space between individual thumbnails in the grid |
+| `thumbnail_gap` | `"0.2rem"` | Space between individual thumbnails in the grid |
 | `grid_padding` | `"2rem"` | Padding around the entire grid container |
 
 ```toml

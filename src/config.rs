@@ -38,7 +38,7 @@
 //! quality = 90              # AVIF quality (0-100)
 //!
 //! [theme]
-//! thumbnail_gap = "1rem"    # Gap between thumbnails in grids
+//! thumbnail_gap = "0.2rem"  # Gap between thumbnails in grids
 //! grid_padding = "2rem"     # Padding around thumbnail grids
 //!
 //! [theme.mat_x]
@@ -587,7 +587,7 @@ impl Default for ThemeConfig {
                 min: "2rem".to_string(),
                 max: "5rem".to_string(),
             },
-            thumbnail_gap: "1rem".to_string(),
+            thumbnail_gap: "0.2rem".to_string(),
             grid_padding: "2rem".to_string(),
         }
     }
@@ -808,7 +808,7 @@ quality = 90
 # ---------------------------------------------------------------------------
 [theme]
 # Gap between thumbnails in album and image grids (CSS value).
-thumbnail_gap = "1rem"
+thumbnail_gap = "0.2rem"
 
 # Padding around the thumbnail grid container (CSS value).
 grid_padding = "2rem"
@@ -1209,7 +1209,7 @@ link_hover = "#f88"
         let css = generate_theme_css(&theme);
         assert!(css.contains("--mat-x: clamp(1rem, 3vw, 2.5rem)"));
         assert!(css.contains("--mat-y: clamp(2rem, 6vw, 5rem)"));
-        assert!(css.contains("--thumbnail-gap: 1rem"));
+        assert!(css.contains("--thumbnail-gap: 0.2rem"));
         assert!(css.contains("--grid-padding: 2rem"));
     }
 
@@ -1229,7 +1229,7 @@ grid_padding = "1rem"
     #[test]
     fn default_thumbnail_gap_and_grid_padding() {
         let config = SiteConfig::default();
-        assert_eq!(config.theme.thumbnail_gap, "1rem");
+        assert_eq!(config.theme.thumbnail_gap, "0.2rem");
         assert_eq!(config.theme.grid_padding, "2rem");
     }
 
@@ -1500,7 +1500,7 @@ quality = 200
         assert_eq!(config.thumbnails.aspect_ratio, [4, 5]);
         assert_eq!(config.colors.light.background, "#ffffff");
         assert_eq!(config.colors.dark.background, "#000000");
-        assert_eq!(config.theme.thumbnail_gap, "1rem");
+        assert_eq!(config.theme.thumbnail_gap, "0.2rem");
     }
 
     #[test]
@@ -1548,7 +1548,7 @@ quality = 200
         assert_eq!(config.theme.mat_y.min, "2rem");
         assert_eq!(config.theme.mat_y.max, "5rem");
         // Other theme fields untouched
-        assert_eq!(config.theme.thumbnail_gap, "1rem");
+        assert_eq!(config.theme.thumbnail_gap, "0.2rem");
         assert_eq!(config.theme.grid_padding, "2rem");
     }
 
