@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-03-25
+
 ### Fixed
 - Responsive `srcset` used the target size (longer edge) as the `w` descriptor instead of the actual pixel width — portrait images reported inflated widths, causing browsers to select too-small variants on desktop viewports
 - Responsive `sizes` attribute was a hardcoded `80vw` that ignored aspect ratio — portrait images on wide screens are height-constrained and display much narrower than 80vw, causing mismatched browser selection. Now computed per-image from aspect ratio with a pixel cap at the largest generated width
