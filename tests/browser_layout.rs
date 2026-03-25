@@ -29,14 +29,16 @@ struct BoundingBox {
 
 mod page {
     pub mod no_description {
-        pub const LANDSCAPE: &str = "No-Description/1-landscape/index.html";
+        pub const LANDSCAPE: &str = "no-description/1-landscape/index.html";
+        pub const WIDE: &str = "no-description/2-wide/index.html";
     }
     pub mod with_caption {
-        pub const LANDSCAPE: &str = "With-Caption/1-landscape/index.html";
-        pub const PORTRAIT: &str = "With-Caption/2-portrait/index.html";
+        pub const LANDSCAPE: &str = "with-caption/1-landscape/index.html";
+        pub const PORTRAIT: &str = "with-caption/2-portrait/index.html";
+        pub const TALL: &str = "with-caption/3-tall/index.html";
     }
     pub mod with_description {
-        pub const LANDSCAPE: &str = "With-Description/1-landscape/index.html";
+        pub const LANDSCAPE: &str = "with-description/1-landscape/index.html";
     }
 }
 
@@ -479,4 +481,242 @@ fn nav_zones_overlap_image_landscape() {
     // .nav-next: left edge at 80% of image, right edge at viewport edge
     assert_close(next.x, expected_next_left, 2.0);
     assert_close(next.x + next.width, vw, 2.0);
+}
+
+// ===========================================================================
+// Responsive image srcset and sizes
+// ===========================================================================
+
+/// Extract the `srcset` attribute from `#main-image` as a string.
+fn get_srcset(tab: &Tab) -> String {
+    tab.evaluate(
+        "document.querySelector('#main-image').getAttribute('srcset')",
+        false,
+    )
+    .unwrap()
+    .value
+    .unwrap()
+    .as_str()
+    .unwrap()
+    .to_string()
+}
+
+/// Extract the `sizes` attribute from `#main-image` as a string.
+fn get_sizes(tab: &Tab) -> String {
+    tab.evaluate(
+        "document.querySelector('#main-image').getAttribute('sizes')",
+        false,
+    )
+    .unwrap()
+    .value
+    .unwrap()
+    .as_str()
+    .unwrap()
+    .to_string()
+}
+
+/// Parse srcset into Vec<(url, width_descriptor)>.
+fn parse_srcset(srcset: &str) -> Vec<(String, u32)> {
+    srcset
+        .split(',')
+        .map(|entry| {
+            let parts: Vec<&str> = entry.trim().split_whitespace().collect();
+            let url = parts[0].to_string();
+            let w: u32 = parts[1].trim_end_matches('w').parse().unwrap();
+            (url, w)
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Landscape image with multiple responsive sizes (2400x1600 source)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn srcset_landscape_has_three_variants() {
+    let tab = load_page(page::no_description::WIDE, &[]);
+    let srcset = get_srcset(&tab);
+    let entries = parse_srcset(&srcset);
+
+    assert_eq!(
+        entries.len(),
+        3,
+        "landscape 2400x1600 should have 3 variants: {srcset}"
+    );
+
+    let widths: Vec<u32> = entries.iter().map(|e| e.1).collect();
+    assert!(widths.contains(&800), "should have 800w: {srcset}");
+    assert!(widths.contains(&1400), "should have 1400w: {srcset}");
+    assert!(widths.contains(&2080), "should have 2080w: {srcset}");
+}
+
+#[test]
+#[ignore]
+fn srcset_landscape_w_descriptors_are_actual_widths() {
+    // Source: 2400x1600, sizes on longer edge: 800→800x533, 1400→1400x933, 2080→2080x1387
+    // For landscape, longer edge = width, so w descriptors should match target
+    let tab = load_page(page::no_description::WIDE, &[]);
+    let srcset = get_srcset(&tab);
+    let entries = parse_srcset(&srcset);
+
+    for (url, w) in &entries {
+        // URL pattern: ../002-wide-{target}.avif — the target in filename is the longer edge
+        // For landscape, width = target, so w descriptor should match the number in the filename
+        let file_size: u32 = url
+            .rsplit('-')
+            .next()
+            .unwrap()
+            .trim_end_matches(".avif")
+            .parse()
+            .unwrap();
+        assert_eq!(
+            *w, file_size,
+            "landscape w descriptor should match file target size: url={url} w={w}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Portrait image with multiple responsive sizes (1200x1800 source)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn srcset_portrait_w_descriptors_are_actual_widths() {
+    // Source: 1200x1800, sizes on longer edge: 800→533x800, 1400→933x1400, 1800→1200x1800
+    // For portrait, longer edge = height, so w descriptors should be the *width* not the target
+    let tab = load_page(page::with_caption::TALL, &[]);
+    let srcset = get_srcset(&tab);
+    let entries = parse_srcset(&srcset);
+
+    // w descriptors should be 533, 933, 1200 — NOT 800, 1400, 1800
+    let widths: Vec<u32> = entries.iter().map(|e| e.1).collect();
+    assert!(
+        !widths.contains(&800) && !widths.contains(&1400) && !widths.contains(&1800),
+        "portrait w descriptors must not use height (longer edge): widths={widths:?}"
+    );
+    assert!(
+        widths.contains(&533),
+        "should have 533w (width at target 800): widths={widths:?}"
+    );
+    assert!(
+        widths.contains(&933),
+        "should have 933w (width at target 1400): widths={widths:?}"
+    );
+    assert!(
+        widths.contains(&1200),
+        "should have 1200w (source width, capped from 2080): widths={widths:?}"
+    );
+}
+
+#[test]
+#[ignore]
+fn srcset_portrait_sizes_uses_vh_not_vw() {
+    // Portrait images are height-constrained on desktop: sizes should reference vh
+    let tab = load_page(page::with_caption::TALL, &[]);
+    let sizes = get_sizes(&tab);
+
+    assert!(
+        sizes.contains("vh"),
+        "portrait sizes should use vh for desktop condition: {sizes}"
+    );
+    assert!(
+        !sizes.contains("95vw"),
+        "portrait sizes should NOT use 95vw (that's for landscape): {sizes}"
+    );
+}
+
+#[test]
+#[ignore]
+fn srcset_landscape_sizes_uses_vw() {
+    // Landscape images are width-constrained: sizes should reference vw
+    let tab = load_page(page::no_description::WIDE, &[]);
+    let sizes = get_sizes(&tab);
+
+    assert!(
+        sizes.contains("95vw"),
+        "landscape sizes should use 95vw for desktop: {sizes}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Source smaller than largest configured size — caps at source
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn srcset_caps_at_source_dimensions() {
+    // Source: 1200x1800, configured sizes [800, 1400, 2080]
+    // 2080 > 1800 (longer edge), so should cap at 1800 → width 1200
+    // Should produce 3 variants, not 2 (the old behavior would drop 2080 entirely)
+    let tab = load_page(page::with_caption::TALL, &[]);
+    let srcset = get_srcset(&tab);
+    let entries = parse_srcset(&srcset);
+
+    assert_eq!(
+        entries.len(),
+        3,
+        "should have 3 variants (800→533w, 1400→933w, capped 1800→1200w): {srcset}"
+    );
+
+    // The largest variant should be the source width (1200), not 2080
+    let max_w = entries.iter().map(|e| e.1).max().unwrap();
+    assert_eq!(
+        max_w, 1200,
+        "largest variant should be capped at source width 1200: {srcset}"
+    );
+}
+
+#[test]
+#[ignore]
+fn srcset_small_source_gets_full_resolution_variant() {
+    // Source: 600x400 — all configured sizes [800, 1400, 2080] exceed source
+    // Should still produce a variant at source dimensions (600w)
+    let tab = load_page(page::no_description::LANDSCAPE, &[]);
+    let srcset = get_srcset(&tab);
+    let entries = parse_srcset(&srcset);
+
+    assert_eq!(
+        entries.len(),
+        1,
+        "small source should produce one variant at original size: {srcset}"
+    );
+    assert_eq!(
+        entries[0].1, 600,
+        "variant should be source width (600): {srcset}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Sizes attribute caps at max generated width
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn sizes_attr_caps_at_max_generated_width() {
+    // The sizes attr should include a px cap matching the largest generated width
+    // so the browser never requests more than what's available.
+    let tab = load_page(page::with_caption::TALL, &[]);
+    let sizes = get_sizes(&tab);
+
+    // Largest generated width for 1200x1800 source is 1200
+    assert!(
+        sizes.contains("1200px"),
+        "sizes should cap at max generated width 1200px: {sizes}"
+    );
+}
+
+#[test]
+#[ignore]
+fn sizes_attr_mobile_always_100vw() {
+    // Both landscape and portrait should use 100vw on mobile
+    for path in [page::no_description::WIDE, page::with_caption::TALL] {
+        let tab = load_page(path, &[]);
+        let sizes = get_sizes(&tab);
+        assert!(
+            sizes.contains("(max-width: 800px) min(100vw,"),
+            "mobile should use 100vw for {path}: {sizes}"
+        );
+    }
 }
