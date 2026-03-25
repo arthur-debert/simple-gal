@@ -65,34 +65,32 @@ pub fn calculate_responsive_sizes(original: (u32, u32), sizes: &[u32]) -> Vec<Re
 
     let mut result: Vec<ResponsiveSize> = sizes
         .iter()
-        .filter(|&&size| size <= longer_edge)
         .map(|&target_size| {
+            // Cap at source size — never upscale
+            let capped = target_size.min(longer_edge);
+
             let (out_w, out_h) = if orig_w >= orig_h {
                 // Landscape or square
-                let ratio = target_size as f64 / orig_w as f64;
-                (target_size, (orig_h as f64 * ratio).round() as u32)
+                let ratio = capped as f64 / orig_w as f64;
+                (capped, (orig_h as f64 * ratio).round() as u32)
             } else {
                 // Portrait
-                let ratio = target_size as f64 / orig_h as f64;
-                ((orig_w as f64 * ratio).round() as u32, target_size)
+                let ratio = capped as f64 / orig_h as f64;
+                ((orig_w as f64 * ratio).round() as u32, capped)
             };
 
             ResponsiveSize {
-                target: target_size,
+                target: capped,
                 width: out_w,
                 height: out_h,
             }
         })
         .collect();
 
-    // If original is smaller than all requested sizes, use original
-    if result.is_empty() {
-        result.push(ResponsiveSize {
-            target: longer_edge,
-            width: orig_w,
-            height: orig_h,
-        });
-    }
+    // Deduplicate (multiple sizes may cap to the same source dimensions).
+    // Use a HashSet so non-adjacent duplicates are also removed.
+    let mut seen = std::collections::HashSet::new();
+    result.retain(|s| seen.insert(s.target));
 
     result
 }
@@ -140,10 +138,14 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn responsive_filters_larger_sizes() {
+    fn responsive_caps_at_source_size() {
+        // 1000x800 landscape: 800 fits, 1400 and 2080 cap to 1000 (deduped)
         let sizes = calculate_responsive_sizes((1000, 800), &[800, 1400, 2080]);
-        assert_eq!(sizes.len(), 1);
+        assert_eq!(sizes.len(), 2);
         assert_eq!(sizes[0].target, 800);
+        assert_eq!(sizes[1].target, 1000); // capped from 1400/2080
+        assert_eq!(sizes[1].width, 1000);
+        assert_eq!(sizes[1].height, 800);
     }
 
     #[test]
@@ -165,11 +167,11 @@ mod tests {
     }
 
     #[test]
-    fn responsive_falls_back_to_original_when_all_exceed() {
-        // 500x400, all sizes exceed
+    fn responsive_caps_all_when_all_exceed() {
+        // 500x400, all sizes exceed — all cap to 500, deduped to one
         let sizes = calculate_responsive_sizes((500, 400), &[800, 1400, 2080]);
         assert_eq!(sizes.len(), 1);
-        assert_eq!(sizes[0].target, 500); // Longer edge
+        assert_eq!(sizes[0].target, 500);
         assert_eq!(sizes[0].width, 500);
         assert_eq!(sizes[0].height, 400);
     }
@@ -184,9 +186,8 @@ mod tests {
     }
 
     #[test]
-    fn responsive_empty_sizes_returns_original() {
+    fn responsive_empty_sizes_returns_empty() {
         let sizes = calculate_responsive_sizes((1000, 800), &[]);
-        assert_eq!(sizes.len(), 1);
-        assert_eq!(sizes[0].target, 1000);
+        assert_eq!(sizes.len(), 0);
     }
 }

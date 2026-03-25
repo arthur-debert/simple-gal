@@ -220,14 +220,14 @@ mod tests {
     }
 
     #[test]
-    fn create_responsive_skips_larger_sizes() {
+    fn create_responsive_caps_at_source_size() {
         let backend = MockBackend::new();
         let config = ResponsiveConfig {
             sizes: vec![800, 1400, 2080],
             quality: Quality::default(),
         };
 
-        // Original is 1000px - should skip 1400 and 2080
+        // Original is 1000px - 800 fits, 1400 and 2080 cap to 1000 (deduped)
         let variants = create_responsive_images(
             &backend,
             Path::new("/source.jpg"),
@@ -238,11 +238,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(variants.len(), 1);
+        assert_eq!(variants.len(), 2);
         assert_eq!(variants[0].target_size, 800);
+        assert_eq!(variants[1].target_size, 1000); // capped from 1400
 
         let ops = backend.get_operations();
-        assert_eq!(ops.len(), 1);
+        assert_eq!(ops.len(), 2);
     }
 
     #[test]
