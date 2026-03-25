@@ -137,7 +137,24 @@ const ICON_512: &[u8] = include_bytes!("../static/icon-512.png");
 const APPLE_TOUCH_ICON: &[u8] = include_bytes!("../static/apple-touch-icon.png");
 const FAVICON_PNG: &[u8] = include_bytes!("../static/favicon.png");
 
-const IMAGE_SIZES: &str = "(max-width: 800px) 100vw, 80vw";
+/// Compute the `sizes` attribute for a responsive image based on its aspect ratio
+/// and the maximum generated width. The image frame CSS constrains display to
+/// `min(container-width, container-height * aspect-ratio)`, so for portrait images
+/// the height constraint dominates and the displayed width is much less than 100vw.
+fn image_sizes_attr(aspect_ratio: f64, max_generated_width: u32) -> String {
+    // ~90vh accounts for header + mat; multiply by aspect ratio for the
+    // height-constrained case (portrait images on wide screens).
+    let vh_factor = 90.0 * aspect_ratio;
+    // Cap so the browser never requests more than our largest variant.
+    let cap = format!("{}px", max_generated_width);
+    if vh_factor >= 100.0 {
+        // Landscape / square: width-constrained, ~100vw on mobile, ~95vw on desktop
+        format!("(max-width: 800px) min(100vw, {cap}), min(95vw, {cap})")
+    } else {
+        // Portrait: height-constrained on desktop
+        format!("(max-width: 800px) min(100vw, {cap}), min({vh_factor:.1}vh, {cap})")
+    }
+}
 
 /// An entry in a gallery-list page (index or container page).
 struct GalleryEntry {
@@ -837,8 +854,8 @@ fn render_image_page(
     // Build srcset for a given image's avif variants
     let avif_srcset_for = |img: &Image| -> String {
         img.generated
-            .iter()
-            .map(|(size, variant)| format!("{} {}w", strip_prefix(&variant.avif), size))
+            .values()
+            .map(|variant| format!("{} {}w", strip_prefix(&variant.avif), variant.width))
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -910,6 +927,14 @@ fn render_image_page(
         (image_label)
     };
 
+    let max_generated_width = image
+        .generated
+        .values()
+        .map(|v| v.width)
+        .max()
+        .unwrap_or(800);
+    let sizes_attr = image_sizes_attr(aspect_ratio, max_generated_width);
+
     let aspect_style = format!("--aspect-ratio: {};", aspect_ratio);
     let alt_text = match &image.title {
         Some(t) => format!("{} - {}", album.title, t),
@@ -955,7 +980,7 @@ fn render_image_page(
         main style=(aspect_style) {
             div.image-page {
                 figure.image-frame {
-                    img #main-image src=(default_src) srcset=(srcset_avif) sizes=(IMAGE_SIZES) alt=(alt_text);
+                    img #main-image src=(default_src) srcset=(srcset_avif) sizes=(sizes_attr) alt=(alt_text);
                 }
                 p.print-credit {
                     (album.title) " › " (image_label)
@@ -2882,5 +2907,133 @@ mod tests {
             snippets.body_end_html.as_deref(),
             Some("<script>alert(1)</script>")
         );
+    }
+
+    // =========================================================================
+    // image_sizes_attr tests
+    // =========================================================================
+
+    #[test]
+    fn sizes_attr_landscape_uses_vw() {
+        // 1600x1200 → aspect 1.333, 90*1.333 = 120 > 100 → landscape branch
+        let attr = image_sizes_attr(1600.0 / 1200.0, 1400);
+        assert!(
+            attr.contains("95vw"),
+            "desktop should use 95vw for landscape: {attr}"
+        );
+        assert!(
+            attr.contains("1400px"),
+            "should cap at max generated width: {attr}"
+        );
+    }
+
+    #[test]
+    fn sizes_attr_portrait_uses_vh() {
+        // 1200x1600 → aspect 0.75, 90*0.75 = 67.5 < 100 → portrait branch
+        let attr = image_sizes_attr(1200.0 / 1600.0, 600);
+        assert!(
+            attr.contains("vh"),
+            "desktop should use vh for portrait: {attr}"
+        );
+        assert!(
+            attr.contains("67.5vh"),
+            "should be 90 * 0.75 = 67.5vh: {attr}"
+        );
+        assert!(
+            attr.contains("600px"),
+            "should cap at max generated width: {attr}"
+        );
+    }
+
+    #[test]
+    fn sizes_attr_square_uses_vw() {
+        // 1:1 → aspect 1.0, 90*1.0 = 90 < 100 → portrait branch
+        let attr = image_sizes_attr(1.0, 2080);
+        assert!(
+            attr.contains("vh"),
+            "square treated as height-constrained: {attr}"
+        );
+        assert!(attr.contains("90.0vh"), "should be 90 * 1.0: {attr}");
+    }
+
+    #[test]
+    fn sizes_attr_mobile_always_100vw() {
+        for aspect in [0.5, 0.75, 1.0, 1.333, 2.0] {
+            let attr = image_sizes_attr(aspect, 1400);
+            assert!(
+                attr.contains("(max-width: 800px) min(100vw,"),
+                "mobile should always be 100vw: {attr}"
+            );
+        }
+    }
+
+    #[test]
+    fn sizes_attr_caps_at_max_width() {
+        let attr = image_sizes_attr(1.5, 900);
+        // Both mobile and desktop min() should reference the 900px cap
+        assert_eq!(
+            attr.matches("900px").count(),
+            2,
+            "should have px cap in both conditions: {attr}"
+        );
+    }
+
+    // =========================================================================
+    // srcset w-descriptor correctness
+    // =========================================================================
+
+    #[test]
+    fn srcset_uses_actual_width_not_target_for_portrait() {
+        let album = create_test_album();
+        let image = &album.images[1]; // portrait 1200x1600, generated width=600
+        let nav = vec![];
+        let html = render_image_page(
+            &album,
+            image,
+            Some(&album.images[0]),
+            None,
+            &nav,
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+        )
+        .into_string();
+
+        // Portrait: target key is "800" (longer edge=height) but actual width is 600
+        assert!(
+            html.contains("600w"),
+            "srcset should use actual width 600, not target 800: {html}"
+        );
+        assert!(
+            !html.contains("800w"),
+            "srcset must not use target (height) as w descriptor"
+        );
+    }
+
+    #[test]
+    fn srcset_uses_actual_width_for_landscape() {
+        let album = create_test_album();
+        let image = &album.images[0]; // landscape 1600x1200, generated widths 800 and 1400
+        let nav = vec![];
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &nav,
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+        )
+        .into_string();
+
+        assert!(html.contains("800w"));
+        assert!(html.contains("1400w"));
     }
 }
