@@ -148,10 +148,10 @@ fn image_sizes_attr(aspect_ratio: f64, max_generated_width: u32) -> String {
     // Cap so the browser never requests more than our largest variant.
     let cap = format!("{}px", max_generated_width);
     if vh_factor >= 100.0 {
-        // Landscape / square: width-constrained, ~100vw on mobile, ~95vw on desktop
+        // Wide landscape: width-constrained, ~100vw on mobile, ~95vw on desktop
         format!("(max-width: 800px) min(100vw, {cap}), min(95vw, {cap})")
     } else {
-        // Portrait: height-constrained on desktop
+        // Portrait / square: height-constrained on desktop
         format!("(max-width: 800px) min(100vw, {cap}), min({vh_factor:.1}vh, {cap})")
     }
 }
@@ -851,32 +851,39 @@ fn render_image_page(
         format!("../{}", relative)
     };
 
-    // Build srcset for a given image's avif variants
+    // Collect variants sorted by width (BTreeMap keys are strings, so lexicographic
+    // order doesn't match numeric order — "1400" < "800").
+    fn sorted_variants(img: &Image) -> Vec<&GeneratedVariant> {
+        let mut v: Vec<_> = img.generated.values().collect();
+        v.sort_by_key(|variant| variant.width);
+        v
+    }
+
+    // Build srcset for a given image's avif variants (ascending width order)
     let avif_srcset_for = |img: &Image| -> String {
-        img.generated
-            .values()
+        sorted_variants(img)
+            .iter()
             .map(|variant| format!("{} {}w", strip_prefix(&variant.avif), variant.width))
             .collect::<Vec<_>>()
             .join(", ")
     };
 
     // Build srcset
-    let sizes: Vec<_> = image.generated.iter().collect();
+    let variants = sorted_variants(image);
 
     let srcset_avif: String = avif_srcset_for(image);
 
     // Use middle size as default
-    let default_src = sizes
-        .get(sizes.len() / 2)
-        .map(|(_, v)| strip_prefix(&v.avif))
+    let default_src = variants
+        .get(variants.len() / 2)
+        .map(|v| strip_prefix(&v.avif))
         .unwrap_or_default();
 
     // Pick a single middle-size AVIF URL for adjacent image prefetch
     let mid_avif = |img: &Image| -> String {
-        let sizes: Vec<_> = img.generated.iter().collect();
-        sizes
-            .get(sizes.len() / 2)
-            .map(|(_, v)| strip_prefix(&v.avif))
+        let v = sorted_variants(img);
+        v.get(v.len() / 2)
+            .map(|variant| strip_prefix(&variant.avif))
             .unwrap_or_default()
     };
     let prev_prefetch = prev.map(&mid_avif);
@@ -2216,10 +2223,11 @@ mod tests {
         .into_string();
 
         // Should have a prefetch link with the prev image's middle-size avif
+        // Variants sorted by width: [800, 1400], middle (index 1) = 1400
         assert!(html.contains(r#"rel="prefetch""#));
-        assert!(html.contains("001-dawn-800.avif"));
+        assert!(html.contains("001-dawn-1400.avif"));
         // Single URL (href), not a srcset — should not contain both sizes
-        assert!(!html.contains("001-dawn-1400.avif"));
+        assert!(!html.contains("001-dawn-800.avif"));
     }
 
     #[test]
@@ -2946,8 +2954,8 @@ mod tests {
     }
 
     #[test]
-    fn sizes_attr_square_uses_vw() {
-        // 1:1 → aspect 1.0, 90*1.0 = 90 < 100 → portrait branch
+    fn sizes_attr_square_uses_vh() {
+        // 1:1 → aspect 1.0, 90*1.0 = 90 < 100 → portrait/square branch
         let attr = image_sizes_attr(1.0, 2080);
         assert!(
             attr.contains("vh"),

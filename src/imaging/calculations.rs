@@ -87,8 +87,10 @@ pub fn calculate_responsive_sizes(original: (u32, u32), sizes: &[u32]) -> Vec<Re
         })
         .collect();
 
-    // Deduplicate (multiple sizes may cap to the same source dimensions)
-    result.dedup_by_key(|s| s.target);
+    // Deduplicate (multiple sizes may cap to the same source dimensions).
+    // Use a HashSet so non-adjacent duplicates are also removed.
+    let mut seen = std::collections::HashSet::new();
+    result.retain(|s| seen.insert(s.target));
 
     result
 }
