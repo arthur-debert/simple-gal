@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.7] - 2026-03-26
+
 ### Added
 - Arrow Up and Escape keys navigate up one level: from a photo to its album, from an album to its parent container, no-op on the home page
 - Vim-style `j`/`k` keys for next/previous image navigation (alongside existing `l`/`h` and arrow keys)
