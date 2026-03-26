@@ -614,6 +614,7 @@ fn base_document(
             }
             body class=[body_class] {
                 (content)
+                script { (PreEscaped(JS)) }
                 @if let Some(ref html) = snippets.body_end_html {
                     (PreEscaped(html))
                 }
@@ -1013,7 +1014,6 @@ fn render_image_page(
             a.nav-prev href=(prev_url) aria-label="Previous image" {}
             a.nav-next href=(next_url) aria-label="Next image" {}
         }
-        script { (PreEscaped(JS)) }
     };
 
     base_document(
