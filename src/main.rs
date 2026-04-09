@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use simple_gal::{config, generate, output, process, scan};
 use std::path::PathBuf;
 
@@ -8,6 +8,29 @@ struct CacheArgs {
     /// Disable the processing cache — force re-encoding of all images
     #[arg(long)]
     no_cache: bool,
+}
+
+/// Output format for the scan command.
+#[derive(Clone, Copy, Default, ValueEnum)]
+enum OutputFormat {
+    /// Pretty-printed JSON manifest
+    #[default]
+    Json,
+    /// Human-readable tree display
+    Text,
+}
+
+/// Arguments for the scan command.
+#[derive(clap::Args, Clone)]
+struct ScanArgs {
+    /// Output format
+    #[arg(long, default_value = "json")]
+    format: OutputFormat,
+
+    /// Save the JSON manifest to a file.
+    /// When passed without a value, uses <temp-dir>/manifest.json.
+    #[arg(long, num_args = 0..=1, default_missing_value = "__default__")]
+    save_manifest: Option<PathBuf>,
 }
 
 fn version_string() -> &'static str {
@@ -82,7 +105,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Scan content directory into a manifest
-    Scan,
+    Scan(ScanArgs),
     /// Generate responsive image sizes and thumbnails
     Process(CacheArgs),
     /// Produce the final HTML site from processed images
@@ -99,13 +122,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Scan => {
+        Command::Scan(args) => {
             let manifest = scan::scan(&cli.source)?;
-            std::fs::create_dir_all(&cli.temp_dir)?;
-            let manifest_path = cli.temp_dir.join("manifest.json");
-            let json = serde_json::to_string_pretty(&manifest)?;
-            std::fs::write(&manifest_path, json)?;
-            output::print_scan_output(&manifest, &cli.source);
+
+            if let Some(path) = args.save_manifest {
+                let manifest_path = if path.as_os_str() == "__default__" {
+                    cli.temp_dir.join("manifest.json")
+                } else {
+                    path
+                };
+                if let Some(parent) = manifest_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let json = serde_json::to_string_pretty(&manifest)?;
+                std::fs::write(&manifest_path, json)?;
+            }
+
+            match args.format {
+                OutputFormat::Json => {
+                    let json = serde_json::to_string_pretty(&manifest)?;
+                    println!("{}", json);
+                }
+                OutputFormat::Text => {
+                    output::print_scan_output(&manifest, &cli.source);
+                }
+            }
         }
         Command::Process(cache_args) => {
             let scan_manifest_path = cli.temp_dir.join("manifest.json");
@@ -158,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let manifest = scan::scan(&source)?;
             let scan_manifest_path = cli.temp_dir.join("manifest.json");
             let json = serde_json::to_string_pretty(&manifest)?;
-            std::fs::write(&scan_manifest_path, json)?;
+            std::fs::write(&scan_manifest_path, &json)?;
             output::print_scan_output(&manifest, &source);
 
             println!("==> Stage 2: Processing images");
