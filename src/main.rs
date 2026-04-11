@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use simple_gal::{config, generate, output, process, scan};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 /// Shared flags for commands that process images.
@@ -118,7 +119,55 @@ enum Command {
     GenConfig,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(err) = run() {
+        report_error(err.as_ref());
+        std::process::exit(1);
+    }
+}
+
+/// Walk the error `source()` chain looking for a [`config::ConfigError`].
+/// Returns the matching error if one is found so the CLI can render it
+/// through clapfig's plain/rich renderers; returns `None` for every other
+/// error kind (IO, process, generate, …).
+fn find_config_error<'a>(
+    err: &'a (dyn std::error::Error + 'static),
+) -> Option<&'a config::ConfigError> {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = current {
+        if let Some(cfg) = e.downcast_ref::<config::ConfigError>() {
+            return Some(cfg);
+        }
+        current = e.source();
+    }
+    None
+}
+
+/// Print an error to stderr with the best renderer available for the
+/// current environment. Config parse failures get clapfig's rich/plain
+/// treatment (source snippet + caret); everything else falls through to a
+/// plain `Error: {message}` line.
+fn report_error(err: &(dyn std::error::Error + 'static)) {
+    if let Some(cfg_err) = find_config_error(err)
+        && let Some(clap_err) = cfg_err.to_clapfig_error()
+    {
+        let msg = if std::io::stderr().is_terminal() {
+            clapfig::render::render_rich(&clap_err)
+        } else {
+            clapfig::render::render_plain(&clap_err)
+        };
+        eprintln!("{msg}");
+        return;
+    }
+    eprintln!("Error: {err}");
+    let mut source = err.source();
+    while let Some(cause) = source {
+        eprintln!("  caused by: {cause}");
+        source = cause.source();
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Config file errors now render through [`clapfig`](https://crates.io/crates/clapfig) instead of dumping the raw `toml::de::Error` Debug struct. Parse failures show a header, the file path, the offending line as a source snippet, and a caret pointing at the exact token — e.g. an unquoted `thumbnail_gap = 0.1rem` now points at `0.1rem` with `expected newline, \`#\`` as the label. The CLI picks clapfig's `render_rich` (miette-based, colored, Unicode box drawing) when stderr is a TTY and `render_plain` (ANSI-free, pipe-safe) otherwise. `ConfigError::Toml` now carries `path` + `source_text` alongside the underlying parser error so the renderer has everything it needs.
+
 ## [0.12.0] - 2026-04-11
 
 ### Changed
