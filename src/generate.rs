@@ -1265,12 +1265,27 @@ fn render_full_index_page(
         }
     }
 
-    // Inline CSS variables: custom gap and aspect ratio just for this page,
-    // so a site can tune the full-index grid independently from album grids.
-    let aspect_ratio_css = format!("{} / {}", fi.thumb_ratio[0], fi.thumb_ratio[1]);
+    // Inline CSS variables: custom gap, aspect ratio, and grid column width
+    // just for this page, so a site can tune the full-index grid independently
+    // from album grids.
+    //
+    // The displayed column width is derived from thumb_ratio + thumb_size so
+    // the CSS grid cells match the pixel dimensions of the generated thumbnail.
+    // Without this, the grid falls back to the album-grid minmax(200px, 1fr)
+    // and a source shrunk to 100px (or stretched from 100px to 200px) would
+    // look blurry regardless of thumb_size.
+    //
+    // thumb_size is the short-edge size; long edge scales by the ratio.
+    let (rw, rh) = (fi.thumb_ratio[0].max(1), fi.thumb_ratio[1].max(1));
+    let display_width_px = if rw >= rh {
+        (fi.thumb_size as f64 * rw as f64 / rh as f64).round() as u32
+    } else {
+        fi.thumb_size
+    };
+    let aspect_ratio_css = format!("{} / {}", rw, rh);
     let main_style = format!(
-        "--thumbnail-gap: {}; --fi-thumb-aspect: {};",
-        fi.thumb_gap, aspect_ratio_css
+        "--thumbnail-gap: {}; --fi-thumb-aspect: {}; --fi-thumb-col-width: {}px;",
+        fi.thumb_gap, aspect_ratio_css, display_width_px
     );
 
     let content = html! {
@@ -2748,6 +2763,34 @@ mod tests {
         // Inline CSS vars on <main> let a site tune the grid independently.
         assert!(html.contains("--thumbnail-gap: 0.5rem"));
         assert!(html.contains("--fi-thumb-aspect: 4 / 4"));
+    }
+
+    #[test]
+    fn full_index_page_column_width_square_matches_thumb_size() {
+        // thumb_ratio = [4, 4] (square), thumb_size = 1000 → col width = 1000px
+        let manifest = make_full_index_manifest();
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+        assert!(html.contains("--fi-thumb-col-width: 1000px"));
+    }
+
+    #[test]
+    fn full_index_page_column_width_portrait_uses_short_edge() {
+        // Portrait [4, 5] thumb_size=400 → width = 400 (short edge)
+        let mut manifest = make_full_index_manifest();
+        manifest.config.full_index.thumb_ratio = [4, 5];
+        manifest.config.full_index.thumb_size = 400;
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+        assert!(html.contains("--fi-thumb-col-width: 400px"));
+    }
+
+    #[test]
+    fn full_index_page_column_width_landscape_scales_by_ratio() {
+        // Landscape [16, 9] thumb_size=400 → width = 400 * 16 / 9 ≈ 711
+        let mut manifest = make_full_index_manifest();
+        manifest.config.full_index.thumb_ratio = [16, 9];
+        manifest.config.full_index.thumb_size = 400;
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+        assert!(html.contains("--fi-thumb-col-width: 711px"));
     }
 
     #[test]

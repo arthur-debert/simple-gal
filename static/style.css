@@ -352,10 +352,21 @@ main {
     opacity: 0.9;
 }
 
-/* "All Photos" page: the full-index grid uses its own aspect ratio, set
- * inline on <main> as --fi-thumb-aspect from [full_index] thumb_ratio. */
+/* "All Photos" page: the full-index grid uses its own aspect ratio and
+ * column width, both set inline on <main> from [full_index] config:
+ *   --fi-thumb-aspect     → from thumb_ratio
+ *   --fi-thumb-col-width  → derived from thumb_ratio + thumb_size
+ * The min() wrapper keeps narrow viewports from overflowing when
+ * thumb_size is larger than the viewport. */
 .full-index-page .thumb-link img {
     aspect-ratio: var(--fi-thumb-aspect, 4 / 5);
+}
+
+.full-index-page .thumbnail-grid {
+    grid-template-columns: repeat(
+        auto-fill,
+        minmax(min(100%, var(--fi-thumb-col-width, 200px)), 1fr)
+    );
 }
 
 /* ===== Content Pages ===== */
