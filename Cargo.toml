@@ -12,6 +12,10 @@ exclude = ["fixtures/", "tests/", "scripts/", "*.config.*", "package.json", "pac
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+# Used solely for structured error data + plain/rich (miette) renderers on
+# config file parse failures. We do not use clapfig's config loader — keeping
+# default-features off skips the clap adapter we don't need.
+clapfig = { version = "0.13", default-features = false, features = ["rich-errors"] }
 image = { version = "0.25", default-features = false, features = [
     "jpeg", "png", "tiff", "webp",
     "avif",

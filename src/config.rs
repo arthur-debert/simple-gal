@@ -100,17 +100,50 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("TOML parse error: {0}")]
-    Toml(#[from] toml::de::Error),
+    /// A TOML parse failure on a specific config file.
+    ///
+    /// Carries the originating path and the full file contents so callers
+    /// (e.g. the CLI in `main.rs`) can hand the error to clapfig's renderer
+    /// for a snippet + caret view instead of showing a bare parser message.
+    #[error("failed to parse {}: {source}", path.display())]
+    Toml {
+        path: PathBuf,
+        #[source]
+        source: Box<toml::de::Error>,
+        source_text: String,
+    },
     #[error("Config validation error: {0}")]
     Validation(String),
+}
+
+impl ConfigError {
+    /// Convert a config error into the richer `clapfig::error::ClapfigError`
+    /// representation when possible, so the CLI can render it through
+    /// clapfig's plain/rich (miette) renderers. Returns `None` for error
+    /// kinds that don't carry source-file context (IO failures, range
+    /// validation failures).
+    pub fn to_clapfig_error(&self) -> Option<clapfig::error::ClapfigError> {
+        match self {
+            ConfigError::Toml {
+                path,
+                source,
+                source_text,
+            } => Some(clapfig::error::ClapfigError::ParseError {
+                path: path.clone(),
+                source: source.clone(),
+                source_text: Some(Arc::from(source_text.as_str())),
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// Site configuration loaded from `config.toml`.
@@ -824,7 +857,11 @@ pub fn load_partial_config(path: &Path) -> Result<Option<PartialSiteConfig>, Con
         return Ok(None);
     }
     let content = fs::read_to_string(&config_path)?;
-    let partial: PartialSiteConfig = toml::from_str(&content)?;
+    let partial: PartialSiteConfig = toml::from_str(&content).map_err(|e| ConfigError::Toml {
+        path: config_path.clone(),
+        source: Box::new(e),
+        source_text: content,
+    })?;
     Ok(Some(partial))
 }
 
@@ -1156,6 +1193,82 @@ quality = 85
     }
 
     #[test]
+    fn toml_error_carries_path_and_source_text() {
+        let tmp = TempDir::new().unwrap();
+        // Unquoted CSS value — the same class of mistake that produced the
+        // original "expected newline, `#`" error we want rich rendering for.
+        fs::write(
+            tmp.path().join("config.toml"),
+            "[theme]\nthumbnail_gap = 0.2rem\n",
+        )
+        .unwrap();
+        let err = load_config(tmp.path()).unwrap_err();
+        match &err {
+            ConfigError::Toml {
+                path,
+                source_text,
+                source,
+            } => {
+                assert!(path.ends_with("config.toml"));
+                assert!(source_text.contains("thumbnail_gap"));
+                assert!(source.span().is_some());
+            }
+            other => panic!("expected Toml variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn to_clapfig_error_wraps_parse_failure() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("config.toml"),
+            "[theme]\nthumbnail_gap = 0.2rem\n",
+        )
+        .unwrap();
+        let err = load_config(tmp.path()).unwrap_err();
+        let clap_err = err
+            .to_clapfig_error()
+            .expect("parse errors should be convertible to ClapfigError");
+
+        // Structural check: the data is populated — path, toml::de::Error,
+        // and the retained source text.
+        let (path, parse_err, source_text) = clap_err
+            .parse_error()
+            .expect("ClapfigError should be a ParseError");
+        assert!(path.ends_with("config.toml"));
+        assert!(parse_err.span().is_some());
+        assert!(source_text.unwrap().contains("thumbnail_gap"));
+    }
+
+    #[test]
+    fn to_clapfig_error_is_none_for_validation_failure() {
+        let err = ConfigError::Validation("quality out of range".into());
+        assert!(err.to_clapfig_error().is_none());
+    }
+
+    #[test]
+    fn clapfig_render_plain_includes_path_and_snippet() {
+        // End-to-end check that we can hand the error to clapfig's plain
+        // renderer and get back a snippet that points at the bad line.
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("config.toml"),
+            "[theme]\nthumbnail_gap = 0.2rem\n",
+        )
+        .unwrap();
+        let err = load_config(tmp.path()).unwrap_err();
+        let clap_err = err.to_clapfig_error().unwrap();
+        let out = clapfig::render::render_plain(&clap_err);
+
+        assert!(out.contains("config.toml"), "missing path in {out}");
+        assert!(
+            out.contains("thumbnail_gap"),
+            "missing source snippet in {out}"
+        );
+        assert!(out.contains('^'), "missing caret in {out}");
+    }
+
+    #[test]
     fn default_full_index_is_off() {
         let config = SiteConfig::default();
         assert!(!config.full_index.generates);
@@ -1302,7 +1415,7 @@ link_hover = "#f88"
         fs::write(&config_path, "this is not valid toml [[[").unwrap();
 
         let result = load_config(tmp.path());
-        assert!(matches!(result, Err(ConfigError::Toml(_))));
+        assert!(matches!(result, Err(ConfigError::Toml { .. })));
     }
 
     #[test]
@@ -1320,7 +1433,7 @@ link_hover = "#f88"
         .unwrap();
 
         let result = load_config(tmp.path());
-        assert!(matches!(result, Err(ConfigError::Toml(_))));
+        assert!(matches!(result, Err(ConfigError::Toml { .. })));
     }
 
     // =========================================================================
