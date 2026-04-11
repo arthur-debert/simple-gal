@@ -170,6 +170,18 @@ fn is_io_error(err: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
+/// Join the progress-printer thread and convert any panic from that
+/// thread into a tagged [`CliError`]. The printer only formats events
+/// and writes to stdout, so a panic here is very unusual — but in JSON
+/// mode we've promised exactly one envelope, and an unwrap would both
+/// skip the envelope and bypass the exit-code mapping.
+fn join_printer(handle: std::thread::JoinHandle<()>) -> Result<(), CliError> {
+    handle.join().map_err(|_| {
+        let msg: Box<dyn std::error::Error + 'static> = "progress printer thread panicked".into();
+        CliError::new(ErrorKind::Internal, msg)
+    })
+}
+
 trait TagError<T> {
     fn tag(self, kind: ErrorKind) -> Result<T, CliError>;
 }
@@ -202,7 +214,7 @@ fn resolve_format(cli: &Cli) -> OutputFormat {
     if let Some(fmt) = cli.format {
         return fmt;
     }
-    match cli.command {
+    match &cli.command {
         Command::Scan(_) => OutputFormat::Json,
         _ => OutputFormat::Text,
     }
@@ -229,7 +241,12 @@ fn find_config_error<'a>(
 fn report_error(err: &(dyn std::error::Error + 'static), kind: ErrorKind, format: OutputFormat) {
     if let OutputFormat::Json = format {
         let envelope = ErrorEnvelope::new(kind, err);
-        json_output::emit_stderr(&envelope);
+        if let Err(ser_err) = json_output::emit_stderr(&envelope) {
+            // Serializing the envelope itself failed (extraordinarily
+            // unlikely given the shapes involved) — fall back to a plain
+            // line so the user at least sees *something*.
+            eprintln!("Error: failed to render error envelope: {ser_err}");
+        }
         return;
     }
 
@@ -289,10 +306,12 @@ fn run_scan(cli: &Cli, args: &ScanArgs, format: OutputFormat) -> Result<(), CliE
         OutputFormat::Json => {
             let payload = ScanPayload::new(&manifest, &cli.source, saved_path);
             let envelope = OkEnvelope::new("scan", payload);
-            json_output::emit_stdout(&envelope);
+            json_output::emit_stdout(&envelope).tag(ErrorKind::Internal)?;
         }
         OutputFormat::Text => {
-            output::print_scan_output(&manifest, &cli.source);
+            if !cli.quiet {
+                output::print_scan_output(&manifest, &cli.source);
+            }
         }
     }
     Ok(())
@@ -333,7 +352,7 @@ fn run_process(
         Some(tx),
     )
     .tag(ErrorKind::Process)?;
-    printer.join().unwrap();
+    join_printer(printer)?;
     let output_manifest_path = processed_dir.join("manifest.json");
     let json = serde_json::to_string_pretty(&result.manifest).tag(ErrorKind::Internal)?;
     std::fs::write(&output_manifest_path, &json).tag(ErrorKind::Io)?;
@@ -344,7 +363,7 @@ fn run_process(
             manifest_path: output_manifest_path,
             cache: (&result.cache_stats).into(),
         };
-        json_output::emit_stdout(&OkEnvelope::new("process", payload));
+        json_output::emit_stdout(&OkEnvelope::new("process", payload)).tag(ErrorKind::Internal)?;
     } else if !quiet {
         println!("Cache: {}", result.cache_stats);
     }
@@ -367,7 +386,7 @@ fn run_generate(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError>
 
     if json_mode {
         let payload = GeneratePayload::new(&manifest, &cli.output);
-        json_output::emit_stdout(&OkEnvelope::new("generate", payload));
+        json_output::emit_stdout(&OkEnvelope::new("generate", payload)).tag(ErrorKind::Internal)?;
     } else if !quiet {
         output::print_generate_output(&manifest);
     }
@@ -419,7 +438,7 @@ fn run_build(
         Some(tx),
     )
     .tag(ErrorKind::Process)?;
-    printer.join().unwrap();
+    join_printer(printer)?;
     let processed_manifest_path = processed_dir.join("manifest.json");
     let json = serde_json::to_string_pretty(&result.manifest).tag(ErrorKind::Internal)?;
     std::fs::write(&processed_manifest_path, &json).tag(ErrorKind::Io)?;
@@ -458,7 +477,7 @@ fn run_build(
             },
             cache: CacheStatsPayload::from(&result.cache_stats),
         };
-        json_output::emit_stdout(&OkEnvelope::new("build", payload));
+        json_output::emit_stdout(&OkEnvelope::new("build", payload)).tag(ErrorKind::Internal)?;
     }
     Ok(())
 }
@@ -484,7 +503,7 @@ fn run_check(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
                 pages: manifest.pages.len(),
             },
         };
-        json_output::emit_stdout(&OkEnvelope::new("check", payload));
+        json_output::emit_stdout(&OkEnvelope::new("check", payload)).tag(ErrorKind::Internal)?;
     }
     Ok(())
 }
@@ -495,7 +514,8 @@ fn run_gen_config(json_mode: bool) -> Result<(), CliError> {
         let payload = GenConfigPayload {
             toml: toml.to_string(),
         };
-        json_output::emit_stdout(&OkEnvelope::new("gen-config", payload));
+        json_output::emit_stdout(&OkEnvelope::new("gen-config", payload))
+            .tag(ErrorKind::Internal)?;
     } else {
         print!("{toml}");
     }

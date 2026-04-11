@@ -84,7 +84,11 @@ impl ErrorEnvelope {
             causes.push(cause.to_string());
             src = cause.source();
         }
-        let config = find_config_error(err).map(config_error_payload);
+        // Only attach a `config` payload for parse-location-carrying
+        // variants (currently `ConfigError::Toml`). Validation/IO config
+        // errors have no file position, so we leave the field unset
+        // instead of emitting an empty `path` that would confuse clients.
+        let config = find_config_error(err).and_then(config_error_payload);
         Self {
             ok: false,
             kind,
@@ -106,7 +110,7 @@ fn find_config_error<'a>(err: &'a (dyn std::error::Error + 'static)) -> Option<&
     None
 }
 
-fn config_error_payload(cfg: &ConfigError) -> ConfigErrorPayload {
+fn config_error_payload(cfg: &ConfigError) -> Option<ConfigErrorPayload> {
     match cfg {
         ConfigError::Toml {
             path,
@@ -120,19 +124,16 @@ fn config_error_payload(cfg: &ConfigError) -> ConfigErrorPayload {
             let snippet = source
                 .span()
                 .and_then(|span| extract_snippet(source_text, span.start));
-            ConfigErrorPayload {
+            Some(ConfigErrorPayload {
                 path: path.clone(),
                 line,
                 column,
                 snippet,
-            }
+            })
         }
-        _ => ConfigErrorPayload {
-            path: PathBuf::new(),
-            line: None,
-            column: None,
-            snippet: None,
-        },
+        // Validation / IO config errors carry no file position — skip
+        // the payload entirely rather than emit an empty `path`.
+        _ => None,
     }
 }
 
@@ -342,20 +343,21 @@ pub struct GenConfigPayload {
 // ============================================================================
 
 /// Serialize `value` to pretty JSON on stdout, followed by a newline.
-pub fn emit_stdout<T: Serialize>(value: &T) {
-    match serde_json::to_string_pretty(value) {
-        Ok(s) => println!("{s}"),
-        Err(e) => eprintln!("Error: failed to serialize output: {e}"),
-    }
+/// Returns the serde error so the caller can route a serialization
+/// failure through the normal error envelope + exit-code path — we never
+/// want to print a truncated document and silently exit 0.
+pub fn emit_stdout<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
+    let s = serde_json::to_string_pretty(value)?;
+    println!("{s}");
+    Ok(())
 }
 
 /// Serialize `value` to pretty JSON on stderr, followed by a newline. Used
 /// for error envelopes so stdout stays clean on failure.
-pub fn emit_stderr<T: Serialize>(value: &T) {
-    match serde_json::to_string_pretty(value) {
-        Ok(s) => eprintln!("{s}"),
-        Err(e) => eprintln!("Error: failed to serialize error: {e}"),
-    }
+pub fn emit_stderr<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
+    let s = serde_json::to_string_pretty(value)?;
+    eprintln!("{s}");
+    Ok(())
 }
 
 #[cfg(test)]

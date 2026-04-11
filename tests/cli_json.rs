@@ -127,14 +127,22 @@ fn config_error_json_envelope() {
     assert!(cfg["snippet"].as_str().unwrap().contains("thumbnail_gap"));
 }
 
+/// Build a guaranteed-nonexistent path inside a `TempDir` (portable
+/// across Unix/Windows, and doesn't collide with anything real).
+fn missing_source(tmp: &TempDir) -> PathBuf {
+    tmp.path().join("does-not-exist-xyz")
+}
+
 #[test]
 fn scan_error_json_envelope_missing_source() {
     // Nonexistent source directory — scan stage fails with an IO error.
     // stage classification wins: kind="scan", exit code = 5.
+    let tmp = TempDir::new().unwrap();
+    let missing = missing_source(&tmp);
     let output = simple_gal()
         .args([
             "--source",
-            "/definitely/does/not/exist/xyz-simplegal-test",
+            missing.to_str().unwrap(),
             "--format",
             "json",
             "scan",
@@ -154,10 +162,12 @@ fn scan_error_json_envelope_missing_source() {
 fn text_mode_error_does_not_emit_json() {
     // Regression: in text mode the error path stays human-readable; no
     // stray JSON on stderr.
+    let tmp = TempDir::new().unwrap();
+    let missing = missing_source(&tmp);
     let output = simple_gal()
         .args([
             "--source",
-            "/definitely/does/not/exist/xyz-simplegal-test",
+            missing.to_str().unwrap(),
             "--format",
             "text",
             "scan",
@@ -194,6 +204,30 @@ fn quiet_suppresses_text_output() {
     assert!(
         output.stdout.is_empty(),
         "--quiet should suppress stdout in text mode, got: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn quiet_suppresses_scan_text_tree() {
+    // `scan` has a text-mode renderer too; --quiet must suppress it
+    // just like every other command.
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--format",
+            "text",
+            "--quiet",
+            "scan",
+        ])
+        .output()
+        .expect("run simple-gal");
+
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "--quiet should suppress scan's text tree, got: {}",
         String::from_utf8_lossy(&output.stdout)
     );
 }
