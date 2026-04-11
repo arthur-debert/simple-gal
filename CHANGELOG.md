@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-04-11
+
 ### Added
 - Machine-readable JSON output for every command, gated by a new global `--format {text,json}` flag. `scan` keeps its JSON default (from v0.12); every other command defaults to text. In JSON mode each command emits exactly one tagged envelope — `{"ok": true, "command": "<name>", "data": {...}}` — to stdout on success, so automation (GUIs, shell scripts) can parse output without scraping.
 - Structured error envelopes on stderr when a command fails in JSON mode: `{"ok": false, "kind": "<classification>", "message": "...", "causes": [...], "config": {path, line, column, snippet}?}`. Config parse failures populate the `config` field with the same snippet/line/column information clapfig shows in text mode, so a GUI can highlight the exact offending token without re-parsing the TOML.
