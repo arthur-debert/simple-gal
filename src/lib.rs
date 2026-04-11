@@ -107,6 +107,7 @@ pub mod cache;
 pub mod config;
 pub mod generate;
 pub mod imaging;
+pub mod json_output;
 pub mod metadata;
 pub mod naming;
 pub mod output;

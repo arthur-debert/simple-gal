@@ -1,7 +1,11 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use simple_gal::json_output::{
+    self, BuildPayload, CacheStatsPayload, CheckPayload, Counts, ErrorEnvelope, ErrorKind,
+    GenConfigPayload, GeneratePayload, OkEnvelope, ProcessPayload, ScanPayload,
+};
 use simple_gal::{config, generate, output, process, scan};
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Shared flags for commands that process images.
 #[derive(clap::Args, Clone)]
@@ -11,23 +15,21 @@ struct CacheArgs {
     no_cache: bool,
 }
 
-/// Output format for the scan command.
-#[derive(Clone, Copy, Default, ValueEnum)]
+/// Output format for all commands.
+///
+/// `text` is the human-readable default; `json` is the machine-readable
+/// envelope format documented in [`json_output`] and used by scripts and
+/// GUIs. In JSON mode every command emits exactly one JSON document — to
+/// stdout on success, to stderr on error — so callers can always `jq` it.
+#[derive(Clone, Copy, ValueEnum)]
 enum OutputFormat {
-    /// Pretty-printed JSON manifest
-    #[default]
-    Json,
-    /// Human-readable tree display
     Text,
+    Json,
 }
 
 /// Arguments for the scan command.
 #[derive(clap::Args, Clone)]
 struct ScanArgs {
-    /// Output format
-    #[arg(long, default_value = "json")]
-    format: OutputFormat,
-
     /// Save the JSON manifest to a file.
     /// When passed without a value, uses <temp-dir>/manifest.json.
     #[arg(long, num_args = 0..=1, default_missing_value = "__default__")]
@@ -99,6 +101,16 @@ struct Cli {
     #[arg(long, default_value = ".simple-gal-temp", global = true)]
     temp_dir: PathBuf,
 
+    /// Output format: `text` (human-readable, default for most commands)
+    /// or `json` (machine-readable envelope, one document on stdout or stderr).
+    /// The `scan` command defaults to `json` for backwards compatibility.
+    #[arg(long, global = true, value_enum)]
+    format: Option<OutputFormat>,
+
+    /// Suppress non-error output in text mode. No effect on JSON mode.
+    #[arg(long, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -119,17 +131,84 @@ enum Command {
     GenConfig,
 }
 
+/// Wrapper around any command error tagged with an [`ErrorKind`] so the
+/// CLI can render it appropriately and pick a matching exit code.
+struct CliError {
+    kind: ErrorKind,
+    source: Box<dyn std::error::Error + 'static>,
+}
+
+impl CliError {
+    fn new(kind: ErrorKind, source: Box<dyn std::error::Error + 'static>) -> Self {
+        // If the error chain contains a ConfigError, reclassify — a config
+        // parse failure inside the scan stage is still a config error from
+        // the user's point of view.
+        let kind = if find_config_error(source.as_ref()).is_some() {
+            ErrorKind::Config
+        } else if is_io_error(source.as_ref()) {
+            // Promote raw IO errors out of Internal classification when
+            // nothing more specific is available.
+            match kind {
+                ErrorKind::Internal => ErrorKind::Io,
+                other => other,
+            }
+        } else {
+            kind
+        };
+        CliError { kind, source }
+    }
+}
+
+fn is_io_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = cur {
+        if e.downcast_ref::<std::io::Error>().is_some() {
+            return true;
+        }
+        cur = e.source();
+    }
+    false
+}
+
+trait TagError<T> {
+    fn tag(self, kind: ErrorKind) -> Result<T, CliError>;
+}
+
+impl<T, E> TagError<T> for Result<T, E>
+where
+    E: Into<Box<dyn std::error::Error + 'static>>,
+{
+    fn tag(self, kind: ErrorKind) -> Result<T, CliError> {
+        self.map_err(|e| CliError::new(kind, e.into()))
+    }
+}
+
 fn main() {
-    if let Err(err) = run() {
-        report_error(err.as_ref());
-        std::process::exit(1);
+    let cli = Cli::parse();
+    let format = resolve_format(&cli);
+    match run(&cli, format) {
+        Ok(()) => {}
+        Err(err) => {
+            report_error(err.source.as_ref(), err.kind, format);
+            std::process::exit(err.kind.exit_code());
+        }
+    }
+}
+
+/// Resolve the effective output format: explicit `--format`, else the
+/// command's default. `scan` defaults to JSON (historical behavior from
+/// v0.12); everything else defaults to text.
+fn resolve_format(cli: &Cli) -> OutputFormat {
+    if let Some(fmt) = cli.format {
+        return fmt;
+    }
+    match cli.command {
+        Command::Scan(_) => OutputFormat::Json,
+        _ => OutputFormat::Text,
     }
 }
 
 /// Walk the error `source()` chain looking for a [`config::ConfigError`].
-/// Returns the matching error if one is found so the CLI can render it
-/// through clapfig's plain/rich renderers; returns `None` for every other
-/// error kind (IO, process, generate, …).
 fn find_config_error<'a>(
     err: &'a (dyn std::error::Error + 'static),
 ) -> Option<&'a config::ConfigError> {
@@ -143,11 +222,17 @@ fn find_config_error<'a>(
     None
 }
 
-/// Print an error to stderr with the best renderer available for the
-/// current environment. Config parse failures get clapfig's rich/plain
-/// treatment (source snippet + caret); everything else falls through to a
-/// plain `Error: {message}` line.
-fn report_error(err: &(dyn std::error::Error + 'static)) {
+/// Print an error using the best renderer available:
+///   - JSON mode: serialize [`ErrorEnvelope`] to stderr
+///   - text mode with a config parse failure: clapfig rich/plain
+///   - text mode fallback: plain `Error:` + cause chain
+fn report_error(err: &(dyn std::error::Error + 'static), kind: ErrorKind, format: OutputFormat) {
+    if let OutputFormat::Json = format {
+        let envelope = ErrorEnvelope::new(kind, err);
+        json_output::emit_stderr(&envelope);
+        return;
+    }
+
     if let Some(cfg_err) = find_config_error(err)
         && let Some(clap_err) = cfg_err.to_clapfig_error()
     {
@@ -167,139 +252,253 @@ fn report_error(err: &(dyn std::error::Error + 'static)) {
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+fn run(cli: &Cli, format: OutputFormat) -> Result<(), CliError> {
+    let json_mode = matches!(format, OutputFormat::Json);
+    let quiet = cli.quiet;
 
-    match cli.command {
-        Command::Scan(args) => {
-            let manifest = scan::scan(&cli.source)?;
+    match &cli.command {
+        Command::Scan(args) => run_scan(cli, args, format),
+        Command::Process(cache_args) => run_process(cli, cache_args, json_mode, quiet),
+        Command::Generate => run_generate(cli, json_mode, quiet),
+        Command::Build(cache_args) => run_build(cli, cache_args, json_mode, quiet),
+        Command::Check => run_check(cli, json_mode, quiet),
+        Command::GenConfig => run_gen_config(json_mode),
+    }
+}
 
-            if let Some(path) = args.save_manifest {
-                let manifest_path = if path.as_os_str() == "__default__" {
-                    cli.temp_dir.join("manifest.json")
-                } else {
-                    path
-                };
-                if let Some(parent) = manifest_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                let json = serde_json::to_string_pretty(&manifest)?;
-                std::fs::write(&manifest_path, json)?;
-            }
+fn run_scan(cli: &Cli, args: &ScanArgs, format: OutputFormat) -> Result<(), CliError> {
+    let manifest = scan::scan(&cli.source).tag(ErrorKind::Scan)?;
 
-            match args.format {
-                OutputFormat::Json => {
-                    let json = serde_json::to_string_pretty(&manifest)?;
-                    println!("{}", json);
-                }
-                OutputFormat::Text => {
-                    output::print_scan_output(&manifest, &cli.source);
-                }
-            }
+    let saved_path = if let Some(path) = &args.save_manifest {
+        let manifest_path = if path.as_os_str() == "__default__" {
+            cli.temp_dir.join("manifest.json")
+        } else {
+            path.clone()
+        };
+        if let Some(parent) = manifest_path.parent() {
+            std::fs::create_dir_all(parent).tag(ErrorKind::Io)?;
         }
-        Command::Process(cache_args) => {
-            let scan_manifest_path = cli.temp_dir.join("manifest.json");
-            let manifest_content = std::fs::read_to_string(&scan_manifest_path)?;
-            let input_manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
-            let site_config: config::SiteConfig =
-                serde_json::from_value(input_manifest.get("config").cloned().unwrap_or_default())?;
-            init_thread_pool(&site_config.processing);
-            let processed_dir = cli.temp_dir.join("processed");
-            let (tx, rx) = std::sync::mpsc::channel();
-            let printer = std::thread::spawn(move || {
-                for event in rx {
-                    for line in output::format_process_event(&event) {
-                        println!("{}", line);
-                    }
-                }
-            });
-            let result = process::process(
-                &scan_manifest_path,
-                &cli.source,
-                &processed_dir,
-                !cache_args.no_cache,
-                Some(tx),
-            )?;
-            printer.join().unwrap();
-            let output_manifest = processed_dir.join("manifest.json");
-            let json = serde_json::to_string_pretty(&result.manifest)?;
-            std::fs::write(&output_manifest, &json)?;
-            println!("Cache: {}", result.cache_stats);
+        let json = serde_json::to_string_pretty(&manifest).tag(ErrorKind::Internal)?;
+        std::fs::write(&manifest_path, json).tag(ErrorKind::Io)?;
+        Some(manifest_path)
+    } else {
+        None
+    };
+
+    match format {
+        OutputFormat::Json => {
+            let payload = ScanPayload::new(&manifest, &cli.source, saved_path);
+            let envelope = OkEnvelope::new("scan", payload);
+            json_output::emit_stdout(&envelope);
         }
-        Command::Generate => {
-            let processed_dir = cli.temp_dir.join("processed");
-            let processed_manifest_path = processed_dir.join("manifest.json");
-            generate::generate(
-                &processed_manifest_path,
-                &processed_dir,
-                &cli.output,
-                &cli.source,
-            )?;
-            let manifest_content = std::fs::read_to_string(&processed_manifest_path)?;
-            let manifest: generate::Manifest = serde_json::from_str(&manifest_content)?;
-            output::print_generate_output(&manifest);
-        }
-        Command::Build(cache_args) => {
-            let source = resolve_build_source(&cli.source);
-
-            std::fs::create_dir_all(&cli.temp_dir)?;
-
-            println!("==> Stage 1: Scanning {}", source.display());
-            let manifest = scan::scan(&source)?;
-            let scan_manifest_path = cli.temp_dir.join("manifest.json");
-            let json = serde_json::to_string_pretty(&manifest)?;
-            std::fs::write(&scan_manifest_path, &json)?;
-            output::print_scan_output(&manifest, &source);
-
-            println!("==> Stage 2: Processing images");
-            init_thread_pool(&manifest.config.processing);
-            let processed_dir = cli.temp_dir.join("processed");
-            let (tx, rx) = std::sync::mpsc::channel();
-            let printer = std::thread::spawn(move || {
-                for event in rx {
-                    for line in output::format_process_event(&event) {
-                        println!("{}", line);
-                    }
-                }
-            });
-            let result = process::process(
-                &scan_manifest_path,
-                &source,
-                &processed_dir,
-                !cache_args.no_cache,
-                Some(tx),
-            )?;
-            printer.join().unwrap();
-            let processed_manifest_path = processed_dir.join("manifest.json");
-            let json = serde_json::to_string_pretty(&result.manifest)?;
-            std::fs::write(&processed_manifest_path, &json)?;
-            println!("Cache: {}", result.cache_stats);
-
-            println!("==> Stage 3: Generating HTML → {}", cli.output.display());
-            generate::generate(
-                &processed_manifest_path,
-                &processed_dir,
-                &cli.output,
-                &source,
-            )?;
-            let gen_manifest_content = std::fs::read_to_string(&processed_manifest_path)?;
-            let gen_manifest: generate::Manifest = serde_json::from_str(&gen_manifest_content)?;
-            output::print_generate_output(&gen_manifest);
-
-            println!("==> Build complete: {}", cli.output.display());
-        }
-        Command::Check => {
-            let source = resolve_build_source(&cli.source);
-            println!("==> Checking {}", source.display());
-            let manifest = scan::scan(&source)?;
-            output::print_scan_output(&manifest, &source);
-            println!("==> Content is valid");
-        }
-        Command::GenConfig => {
-            print!("{}", config::stock_config_toml());
+        OutputFormat::Text => {
+            output::print_scan_output(&manifest, &cli.source);
         }
     }
+    Ok(())
+}
 
+fn run_process(
+    cli: &Cli,
+    cache_args: &CacheArgs,
+    json_mode: bool,
+    quiet: bool,
+) -> Result<(), CliError> {
+    let scan_manifest_path = cli.temp_dir.join("manifest.json");
+    let manifest_content = std::fs::read_to_string(&scan_manifest_path).tag(ErrorKind::Io)?;
+    let input_manifest: serde_json::Value =
+        serde_json::from_str(&manifest_content).tag(ErrorKind::Internal)?;
+    let site_config: config::SiteConfig =
+        serde_json::from_value(input_manifest.get("config").cloned().unwrap_or_default())
+            .tag(ErrorKind::Config)?;
+    init_thread_pool(&site_config.processing);
+    let processed_dir = cli.temp_dir.join("processed");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let suppress = json_mode || quiet;
+    let printer = std::thread::spawn(move || {
+        for event in rx {
+            if suppress {
+                continue;
+            }
+            for line in output::format_process_event(&event) {
+                println!("{}", line);
+            }
+        }
+    });
+    let result = process::process(
+        &scan_manifest_path,
+        &cli.source,
+        &processed_dir,
+        !cache_args.no_cache,
+        Some(tx),
+    )
+    .tag(ErrorKind::Process)?;
+    printer.join().unwrap();
+    let output_manifest_path = processed_dir.join("manifest.json");
+    let json = serde_json::to_string_pretty(&result.manifest).tag(ErrorKind::Internal)?;
+    std::fs::write(&output_manifest_path, &json).tag(ErrorKind::Io)?;
+
+    if json_mode {
+        let payload = ProcessPayload {
+            processed_dir: processed_dir.clone(),
+            manifest_path: output_manifest_path,
+            cache: (&result.cache_stats).into(),
+        };
+        json_output::emit_stdout(&OkEnvelope::new("process", payload));
+    } else if !quiet {
+        println!("Cache: {}", result.cache_stats);
+    }
+    Ok(())
+}
+
+fn run_generate(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
+    let processed_dir = cli.temp_dir.join("processed");
+    let processed_manifest_path = processed_dir.join("manifest.json");
+    generate::generate(
+        &processed_manifest_path,
+        &processed_dir,
+        &cli.output,
+        &cli.source,
+    )
+    .tag(ErrorKind::Generate)?;
+    let manifest_content = std::fs::read_to_string(&processed_manifest_path).tag(ErrorKind::Io)?;
+    let manifest: generate::Manifest =
+        serde_json::from_str(&manifest_content).tag(ErrorKind::Internal)?;
+
+    if json_mode {
+        let payload = GeneratePayload::new(&manifest, &cli.output);
+        json_output::emit_stdout(&OkEnvelope::new("generate", payload));
+    } else if !quiet {
+        output::print_generate_output(&manifest);
+    }
+    Ok(())
+}
+
+fn run_build(
+    cli: &Cli,
+    cache_args: &CacheArgs,
+    json_mode: bool,
+    quiet: bool,
+) -> Result<(), CliError> {
+    let source = resolve_build_source(&cli.source);
+    let stage_text = !json_mode && !quiet;
+
+    std::fs::create_dir_all(&cli.temp_dir).tag(ErrorKind::Io)?;
+
+    if stage_text {
+        println!("==> Stage 1: Scanning {}", source.display());
+    }
+    let manifest = scan::scan(&source).tag(ErrorKind::Scan)?;
+    let scan_manifest_path = cli.temp_dir.join("manifest.json");
+    let json = serde_json::to_string_pretty(&manifest).tag(ErrorKind::Internal)?;
+    std::fs::write(&scan_manifest_path, &json).tag(ErrorKind::Io)?;
+    if stage_text {
+        output::print_scan_output(&manifest, &source);
+        println!("==> Stage 2: Processing images");
+    }
+
+    init_thread_pool(&manifest.config.processing);
+    let processed_dir = cli.temp_dir.join("processed");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let suppress = !stage_text;
+    let printer = std::thread::spawn(move || {
+        for event in rx {
+            if suppress {
+                continue;
+            }
+            for line in output::format_process_event(&event) {
+                println!("{}", line);
+            }
+        }
+    });
+    let result = process::process(
+        &scan_manifest_path,
+        &source,
+        &processed_dir,
+        !cache_args.no_cache,
+        Some(tx),
+    )
+    .tag(ErrorKind::Process)?;
+    printer.join().unwrap();
+    let processed_manifest_path = processed_dir.join("manifest.json");
+    let json = serde_json::to_string_pretty(&result.manifest).tag(ErrorKind::Internal)?;
+    std::fs::write(&processed_manifest_path, &json).tag(ErrorKind::Io)?;
+    if stage_text {
+        println!("Cache: {}", result.cache_stats);
+        println!("==> Stage 3: Generating HTML → {}", cli.output.display());
+    }
+
+    generate::generate(
+        &processed_manifest_path,
+        &processed_dir,
+        &cli.output,
+        &source,
+    )
+    .tag(ErrorKind::Generate)?;
+    let gen_manifest_content =
+        std::fs::read_to_string(&processed_manifest_path).tag(ErrorKind::Io)?;
+    let gen_manifest: generate::Manifest =
+        serde_json::from_str(&gen_manifest_content).tag(ErrorKind::Internal)?;
+
+    if stage_text {
+        output::print_generate_output(&gen_manifest);
+        println!("==> Build complete: {}", cli.output.display());
+    }
+
+    if json_mode {
+        let image_pages: usize = gen_manifest.albums.iter().map(|a| a.images.len()).sum();
+        let pages_count = gen_manifest.pages.iter().filter(|p| !p.is_link).count();
+        let payload = BuildPayload {
+            source: &source,
+            output: &cli.output,
+            counts: simple_gal::json_output::GenerateCounts {
+                albums: gen_manifest.albums.len(),
+                image_pages,
+                pages: pages_count,
+            },
+            cache: CacheStatsPayload::from(&result.cache_stats),
+        };
+        json_output::emit_stdout(&OkEnvelope::new("build", payload));
+    }
+    Ok(())
+}
+
+fn run_check(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
+    let source = resolve_build_source(&cli.source);
+    if !json_mode && !quiet {
+        println!("==> Checking {}", source.display());
+    }
+    let manifest = scan::scan(&source).tag(ErrorKind::Scan)?;
+    if !json_mode && !quiet {
+        output::print_scan_output(&manifest, &source);
+        println!("==> Content is valid");
+    }
+    if json_mode {
+        let images = manifest.albums.iter().map(|a| a.images.len()).sum();
+        let payload = CheckPayload {
+            valid: true,
+            source: &source,
+            counts: Counts {
+                albums: manifest.albums.len(),
+                images,
+                pages: manifest.pages.len(),
+            },
+        };
+        json_output::emit_stdout(&OkEnvelope::new("check", payload));
+    }
+    Ok(())
+}
+
+fn run_gen_config(json_mode: bool) -> Result<(), CliError> {
+    let toml = config::stock_config_toml();
+    if json_mode {
+        let payload = GenConfigPayload {
+            toml: toml.to_string(),
+        };
+        json_output::emit_stdout(&OkEnvelope::new("gen-config", payload));
+    } else {
+        print!("{toml}");
+    }
     Ok(())
 }
 
@@ -315,6 +514,6 @@ fn init_thread_pool(processing: &config::ProcessingConfig) {
 }
 
 /// Resolve the content source directory for the build command.
-fn resolve_build_source(cli_source: &std::path::Path) -> PathBuf {
+fn resolve_build_source(cli_source: &Path) -> PathBuf {
     cli_source.to_path_buf()
 }

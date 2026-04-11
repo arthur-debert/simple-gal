@@ -31,9 +31,14 @@ fn scan_default_format_is_json() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("default output should be valid JSON");
-    assert!(parsed.get("navigation").is_some());
-    assert!(parsed.get("albums").is_some());
-    assert!(parsed.get("config").is_some());
+    // New envelope format: ok/command/data wrapper around the manifest.
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"], "scan");
+    let data = &parsed["data"];
+    assert!(data.get("manifest").is_some());
+    assert!(data["manifest"].get("navigation").is_some());
+    assert!(data["manifest"].get("albums").is_some());
+    assert!(data.get("counts").is_some());
 }
 
 #[test]
@@ -42,9 +47,9 @@ fn scan_format_json_outputs_valid_manifest() {
         .args([
             "--source",
             fixtures_dir().to_str().unwrap(),
-            "scan",
             "--format",
             "json",
+            "scan",
         ])
         .output()
         .expect("failed to run simple-gal");
@@ -53,7 +58,7 @@ fn scan_format_json_outputs_valid_manifest() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let albums = parsed["albums"].as_array().unwrap();
+    let albums = parsed["data"]["manifest"]["albums"].as_array().unwrap();
     assert!(!albums.is_empty(), "should discover at least one album");
 }
 
@@ -63,9 +68,9 @@ fn scan_format_text_outputs_tree() {
         .args([
             "--source",
             fixtures_dir().to_str().unwrap(),
-            "scan",
             "--format",
             "text",
+            "scan",
         ])
         .output()
         .expect("failed to run simple-gal");
@@ -181,9 +186,9 @@ fn scan_text_format_with_save_manifest() {
             fixtures_dir().to_str().unwrap(),
             "--temp-dir",
             tmp.path().to_str().unwrap(),
-            "scan",
             "--format",
             "text",
+            "scan",
             "--save-manifest",
         ])
         .output()
@@ -195,7 +200,7 @@ fn scan_text_format_with_save_manifest() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Albums"));
 
-    // but the file is JSON
+    // but the file is JSON — saved_manifest is always the raw scan manifest
     assert!(manifest_path.exists());
     let content = std::fs::read_to_string(&manifest_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -213,9 +218,9 @@ fn scan_json_format_with_save_manifest() {
             fixtures_dir().to_str().unwrap(),
             "--temp-dir",
             tmp.path().to_str().unwrap(),
-            "scan",
             "--format",
             "json",
+            "scan",
             "--save-manifest",
         ])
         .output()
@@ -223,11 +228,18 @@ fn scan_json_format_with_save_manifest() {
 
     assert!(output.status.success());
 
-    // stdout is JSON
+    // stdout is the envelope
     let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str::<serde_json::Value>(&stdout).expect("stdout should be valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(
+        parsed["data"]["saved_manifest_path"],
+        manifest_path.to_string_lossy().as_ref()
+    );
 
-    // file is also JSON
+    // file is the raw manifest (albums at top level)
     let content = std::fs::read_to_string(&manifest_path).unwrap();
-    serde_json::from_str::<serde_json::Value>(&content).expect("saved file should be valid JSON");
+    let saved: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert!(saved.get("albums").is_some());
 }

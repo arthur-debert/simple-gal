@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Machine-readable JSON output for every command, gated by a new global `--format {text,json}` flag. `scan` keeps its JSON default (from v0.12); every other command defaults to text. In JSON mode each command emits exactly one tagged envelope — `{"ok": true, "command": "<name>", "data": {...}}` — to stdout on success, so automation (GUIs, shell scripts) can parse output without scraping.
+- Structured error envelopes on stderr when a command fails in JSON mode: `{"ok": false, "kind": "<classification>", "message": "...", "causes": [...], "config": {path, line, column, snippet}?}`. Config parse failures populate the `config` field with the same snippet/line/column information clapfig shows in text mode, so a GUI can highlight the exact offending token without re-parsing the TOML.
+- Granular process exit codes that let callers branch on failure type without parsing messages: `0` success, `1` internal, `2` usage (clap), `3` config, `4` io, `5` scan, `6` process, `7` generate, `8` validation. Previously every failure exited `1`.
+- Global `--quiet` flag suppresses non-error stdout in text mode (no effect in JSON mode, which is already a single document).
+
+### Changed
+- Text-mode error rendering is unchanged (clapfig rich/plain for config errors, plain `Error:` + cause chain otherwise). JSON-mode error rendering replaces it with the structured envelope on stderr; stdout stays empty on failure so scripts can always `jq` stderr.
+- `--format` moved from a `scan`-only flag to a global flag. `simple-gal scan --format json` still works; `simple-gal --format json scan` is now the canonical form and the same flag applies to every other command.
+
 ## [0.13.0] - 2026-04-11
 
 ### Changed

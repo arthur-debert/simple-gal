@@ -68,12 +68,20 @@ fn build_with_bad_config_renders_clapfig_plain_error() {
 
 #[test]
 fn scan_with_bad_config_renders_clapfig_plain_error() {
-    // Same check for the scan command, which also touches config loading.
+    // Same check for the scan command. `scan` defaults to JSON output, so
+    // we have to explicitly ask for text mode to exercise the clapfig
+    // renderer path (JSON mode is covered by cli_json.rs).
     let tmp = TempDir::new().unwrap();
     write_bad_config(tmp.path());
 
     let output = simple_gal()
-        .args(["--source", tmp.path().to_str().unwrap(), "scan"])
+        .args([
+            "--source",
+            tmp.path().to_str().unwrap(),
+            "--format",
+            "text",
+            "scan",
+        ])
         .output()
         .expect("failed to run simple-gal");
 
