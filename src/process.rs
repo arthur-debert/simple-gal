@@ -393,6 +393,7 @@ pub fn process_with_backend(
                         &album_output_dir,
                         stem,
                         "fi-thumb",
+                        "full-index",
                         fi_cfg,
                         &ctx,
                     )?;
@@ -708,19 +709,29 @@ fn create_thumbnail_cached(
         output_dir,
         filename_stem,
         "thumb",
+        "",
         config,
         ctx,
     )
 }
 
-/// Create a thumbnail with cache awareness, using a custom suffix so multiple
-/// thumbnail variants (e.g. regular + full-index) can coexist per image.
+/// Create a thumbnail with cache awareness, using a custom filename suffix
+/// and cache-variant tag so multiple thumbnail variants (e.g. regular +
+/// full-index) can coexist per image.
+///
+/// `variant_tag` is mixed into the cache `params_hash`. Use `""` for the
+/// legacy per-album thumbnail (matches the pre-variant hash exactly, so
+/// existing caches are preserved), and a distinct string like
+/// `"full-index"` for any other variant so its cache key never collides
+/// with the regular thumbnail even when encode settings happen to match.
+#[allow(clippy::too_many_arguments)]
 fn create_thumbnail_cached_with_suffix(
     backend: &impl ImageBackend,
     source: &Path,
     output_dir: &Path,
     filename_stem: &str,
     suffix: &str,
+    variant_tag: &str,
     config: &ThumbnailConfig,
     ctx: &CacheContext<'_>,
 ) -> Result<(String, VariantStatus), ProcessError> {
@@ -733,11 +744,12 @@ fn create_thumbnail_cached_with_suffix(
     let relative_path = format!("{}/{}", relative_dir, thumb_name);
 
     let sharpening_tuple = config.sharpening.map(|s| (s.sigma, s.threshold));
-    let params_hash = cache::hash_thumbnail_params(
+    let params_hash = cache::hash_thumbnail_variant_params(
         config.aspect,
         config.short_edge,
         config.quality.value(),
         sharpening_tuple,
+        variant_tag,
     );
 
     let lookup = check_cache_and_copy(&relative_path, ctx.source_hash, &params_hash, ctx);
@@ -1050,6 +1062,85 @@ mod tests {
         let image = &result.manifest.albums[0].images[0];
         assert_eq!(image.generated.len(), 1);
         assert!(image.generated.contains_key("500"));
+    }
+
+    #[test]
+    fn full_index_thumbnail_cache_does_not_collide_with_regular_thumbnail() {
+        // Regression: when `[full_index]` and `[thumbnails]` share the same
+        // ratio/size/quality/sharpening, the two thumbnail variants computed
+        // identical `params_hash` values. CacheManifest::insert then evicted
+        // the first entry when the second was inserted, making the cache
+        // manifest lose track of one of the two files on disk.
+        //
+        // With the fix, the full-index thumbnail mixes a variant tag into its
+        // hash so the two cache keys never collide, even when encode settings
+        // match.
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+
+        let image_path = source_dir.join("test-album/001-test.jpg");
+        create_dummy_source(&image_path);
+
+        // full_index.generates = true at the site level, with defaults that
+        // match [thumbnails] — the exact collision scenario.
+        let manifest = r##"{
+            "navigation": [],
+            "albums": [{
+                "path": "test-album",
+                "title": "Test Album",
+                "description": null,
+                "preview_image": "test-album/001-test.jpg",
+                "images": [{
+                    "number": 1,
+                    "source_path": "test-album/001-test.jpg",
+                    "filename": "001-test.jpg"
+                }],
+                "in_nav": true,
+                "config": {
+                    "full_index": {"generates": true}
+                }
+            }],
+            "config": {
+                "full_index": {"generates": true}
+            }
+        }"##;
+        let manifest_path = tmp.path().join("manifest.json");
+        fs::write(&manifest_path, manifest).unwrap();
+
+        let backend = MockBackend::with_dimensions(vec![Dimensions {
+            width: 2000,
+            height: 1500,
+        }]);
+
+        process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            true,
+            None,
+        )
+        .unwrap();
+
+        // Both thumbnail files must be recorded in the cache manifest. If the
+        // two variants share a params_hash, the second insert evicts the first.
+        let cache_manifest = cache::CacheManifest::load(&output_dir);
+        let paths: Vec<&String> = cache_manifest.entries.keys().collect();
+
+        let has_regular = paths.iter().any(|p| p.ends_with("001-test-thumb.avif"));
+        let has_fi = paths.iter().any(|p| p.ends_with("001-test-fi-thumb.avif"));
+
+        assert!(
+            has_regular,
+            "regular thumbnail missing from cache manifest; entries: {:?}",
+            paths
+        );
+        assert!(
+            has_fi,
+            "full-index thumbnail missing from cache manifest; entries: {:?}",
+            paths
+        );
     }
 
     #[test]

@@ -251,6 +251,27 @@ pub fn hash_thumbnail_params(
     quality: u32,
     sharpening: Option<(f32, i32)>,
 ) -> String {
+    hash_thumbnail_variant_params(aspect, short_edge, quality, sharpening, "")
+}
+
+/// SHA-256 hash of encoding parameters for a named thumbnail variant.
+///
+/// When a single source image produces multiple thumbnails (e.g. the
+/// per-album thumbnail plus a full-index thumbnail), each variant must
+/// map to a distinct cache key even when ratio/size/quality/sharpening
+/// happen to match — otherwise `CacheManifest::insert` treats the second
+/// variant as a moved copy of the first and evicts its entry.
+///
+/// `variant` is a short discriminator (e.g. `"full-index"`). Passing an
+/// empty string reproduces the legacy `hash_thumbnail_params` hash, so
+/// existing per-album thumbnail caches are not invalidated.
+pub fn hash_thumbnail_variant_params(
+    aspect: (u32, u32),
+    short_edge: u32,
+    quality: u32,
+    sharpening: Option<(f32, i32)>,
+    variant: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"thumbnail\0");
     hasher.update(aspect.0.to_le_bytes());
@@ -266,6 +287,10 @@ pub fn hash_thumbnail_params(
         None => {
             hasher.update(b"\x00");
         }
+    }
+    if !variant.is_empty() {
+        hasher.update(b"\0variant\0");
+        hasher.update(variant.as_bytes());
     }
     format!("{:x}", hasher.finalize())
 }
@@ -632,6 +657,50 @@ mod tests {
             hash_thumbnail_params((4, 5), 400, 90, Some((0.5, 0))),
             hash_thumbnail_params((4, 5), 400, 90, None)
         );
+    }
+
+    #[test]
+    fn hash_thumbnail_variant_empty_tag_matches_legacy() {
+        // Passing an empty variant tag must produce the exact same hash as
+        // hash_thumbnail_params so existing per-album thumbnail caches are
+        // not silently invalidated by the new variant-aware call.
+        let legacy = hash_thumbnail_params((4, 5), 400, 90, Some((0.5, 0)));
+        let empty_tag = hash_thumbnail_variant_params((4, 5), 400, 90, Some((0.5, 0)), "");
+        assert_eq!(legacy, empty_tag);
+    }
+
+    #[test]
+    fn hash_thumbnail_variant_differs_from_untagged_even_when_settings_match() {
+        // Regression: when [full_index] and [thumbnails] use matching
+        // ratio/size/quality/sharpening, the two variants must still map
+        // to distinct cache keys so one doesn't evict the other on insert.
+        let regular = hash_thumbnail_params((4, 5), 400, 90, Some((0.5, 0)));
+        let full_index =
+            hash_thumbnail_variant_params((4, 5), 400, 90, Some((0.5, 0)), "full-index");
+        assert_ne!(regular, full_index);
+    }
+
+    #[test]
+    fn hash_thumbnail_variant_different_tags_differ() {
+        let a = hash_thumbnail_variant_params((4, 5), 400, 90, None, "full-index");
+        let b = hash_thumbnail_variant_params((4, 5), 400, 90, None, "print-sheet");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn insert_does_not_evict_regular_thumbnail_when_variant_tag_differs() {
+        // Full regression at the cache manifest level: inserting a regular
+        // thumbnail and then a variant thumbnail with matching encode
+        // settings must leave BOTH entries in the manifest.
+        let mut m = CacheManifest::empty();
+        let regular_hash = hash_thumbnail_variant_params((4, 5), 400, 90, None, "");
+        let fi_hash = hash_thumbnail_variant_params((4, 5), 400, 90, None, "full-index");
+
+        m.insert("a/001-test-thumb.avif".into(), "src".into(), regular_hash);
+        m.insert("a/001-test-fi-thumb.avif".into(), "src".into(), fi_hash);
+
+        assert!(m.entries.contains_key("a/001-test-thumb.avif"));
+        assert!(m.entries.contains_key("a/001-test-fi-thumb.avif"));
     }
 
     // =========================================================================
