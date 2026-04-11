@@ -170,6 +170,10 @@ pub struct OutputImage {
     pub generated: std::collections::BTreeMap<String, GeneratedVariant>,
     /// Thumbnail path
     pub thumbnail: String,
+    /// Extra thumbnail generated for the site-wide "All Photos" page, when
+    /// `[full_index] generates = true`. Uses full_index.thumb_ratio/thumb_size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_index_thumbnail: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -304,6 +308,22 @@ pub fn process_with_backend(
             quality: Quality::new(album_process.quality),
             sharpening: Some(Sharpening::light()),
         };
+
+        // Extra thumbnail for the site-wide "All Photos" page. Uses its own
+        // ratio/size, encoded only when the feature is enabled. The cache
+        // params_hash differs from the regular thumbnail so both can coexist.
+        let full_index_thumbnail_config: Option<ThumbnailConfig> =
+            if input.config.full_index.generates {
+                let fi = &input.config.full_index;
+                Some(ThumbnailConfig {
+                    aspect: (fi.thumb_ratio[0], fi.thumb_ratio[1]),
+                    short_edge: fi.thumb_size,
+                    quality: Quality::new(album_process.quality),
+                    sharpening: Some(Sharpening::light()),
+                })
+            } else {
+                None
+            };
         let album_output_dir = output_dir.join(&album.path);
         std::fs::create_dir_all(&album_output_dir)?;
 
@@ -366,6 +386,21 @@ pub fn process_with_backend(
                     &ctx,
                 )?;
 
+                let full_index_thumb = if let Some(ref fi_cfg) = full_index_thumbnail_config {
+                    let (path, status) = create_thumbnail_cached_with_suffix(
+                        backend,
+                        &source_path,
+                        &album_output_dir,
+                        stem,
+                        "fi-thumb",
+                        fi_cfg,
+                        &ctx,
+                    )?;
+                    Some((path, status))
+                } else {
+                    None
+                };
+
                 // Build variant infos for progress event (before consuming raw_variants)
                 let variant_infos: Vec<VariantInfo> = if progress.is_some() {
                     let mut infos: Vec<VariantInfo> = raw_variants
@@ -380,6 +415,12 @@ pub fn process_with_backend(
                         label: "thumbnail".to_string(),
                         status: thumb_status,
                     });
+                    if let Some((_, ref fi_status)) = full_index_thumb {
+                        infos.push(VariantInfo {
+                            label: "all-photos thumbnail".to_string(),
+                            status: fi_status.clone(),
+                        });
+                    }
                     infos
                 } else {
                     Vec::new()
@@ -414,6 +455,7 @@ pub fn process_with_backend(
                     dimensions,
                     generated,
                     thumbnail_path,
+                    full_index_thumb.map(|(p, _)| p),
                     title,
                     description,
                     slug,
@@ -426,7 +468,16 @@ pub fn process_with_backend(
         let mut output_images: Vec<OutputImage> = processed_images
             .into_iter()
             .map(
-                |(image, dimensions, generated, thumbnail_path, title, description, slug)| {
+                |(
+                    image,
+                    dimensions,
+                    generated,
+                    thumbnail_path,
+                    full_index_thumbnail,
+                    title,
+                    description,
+                    slug,
+                )| {
                     OutputImage {
                         number: image.number,
                         source_path: image.source_path.clone(),
@@ -436,6 +487,7 @@ pub fn process_with_backend(
                         dimensions,
                         generated,
                         thumbnail: thumbnail_path,
+                        full_index_thumbnail,
                     }
                 },
             )
@@ -473,6 +525,9 @@ pub fn process_with_backend(
                 let mut paths: Vec<String> =
                     img.generated.values().map(|v| v.avif.clone()).collect();
                 paths.push(img.thumbnail.clone());
+                if let Some(ref fi) = img.full_index_thumbnail {
+                    paths.push(fi.clone());
+                }
                 paths
             });
             std::iter::once(album.thumbnail.clone()).chain(image_paths)
@@ -647,7 +702,29 @@ fn create_thumbnail_cached(
     config: &ThumbnailConfig,
     ctx: &CacheContext<'_>,
 ) -> Result<(String, VariantStatus), ProcessError> {
-    let thumb_name = format!("{}-thumb.avif", filename_stem);
+    create_thumbnail_cached_with_suffix(
+        backend,
+        source,
+        output_dir,
+        filename_stem,
+        "thumb",
+        config,
+        ctx,
+    )
+}
+
+/// Create a thumbnail with cache awareness, using a custom suffix so multiple
+/// thumbnail variants (e.g. regular + full-index) can coexist per image.
+fn create_thumbnail_cached_with_suffix(
+    backend: &impl ImageBackend,
+    source: &Path,
+    output_dir: &Path,
+    filename_stem: &str,
+    suffix: &str,
+    config: &ThumbnailConfig,
+    ctx: &CacheContext<'_>,
+) -> Result<(String, VariantStatus), ProcessError> {
+    let thumb_name = format!("{}-{}.avif", filename_stem, suffix);
     let relative_dir = output_dir
         .strip_prefix(ctx.cache_root)
         .unwrap()

@@ -352,6 +352,12 @@ main {
     opacity: 0.9;
 }
 
+/* "All Photos" page: the full-index grid uses its own aspect ratio, set
+ * inline on <main> as --fi-thumb-aspect from [full_index] thumb_ratio. */
+.full-index-page .thumb-link img {
+    aspect-ratio: var(--fi-thumb-aspect, 4 / 5);
+}
+
 /* ===== Content Pages ===== */
 .page {
     max-width: 700px;

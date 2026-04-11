@@ -33,6 +33,13 @@
 //! [thumbnails]
 //! aspect_ratio = [4, 5]     # width:height ratio
 //!
+//! [full_index]
+//! generates = false         # If true, render an "All Photos" page with every image
+//! show_link = false         # If true, add an "All Photos" item to the nav menu
+//! thumb_ratio = [4, 5]      # Aspect ratio for full-index thumbnails
+//! thumb_size = 400          # Short-edge size in pixels for full-index thumbnails
+//! thumb_gap = "0.2rem"      # Gap between thumbnails on the All Photos grid
+//!
 //! [images]
 //! sizes = [800, 1400, 2080] # Responsive sizes to generate
 //! quality = 90              # AVIF quality (0-100)
@@ -128,6 +135,8 @@ pub struct SiteConfig {
     pub colors: ColorConfig,
     /// Thumbnail generation settings (aspect ratio).
     pub thumbnails: ThumbnailsConfig,
+    /// Site-wide "All Photos" index settings.
+    pub full_index: FullIndexConfig,
     /// Responsive image generation settings (sizes, quality).
     pub images: ImagesConfig,
     /// Theme/layout settings (frame padding, grid spacing).
@@ -147,6 +156,7 @@ pub struct PartialSiteConfig {
     pub site_description_file: Option<String>,
     pub colors: Option<PartialColorConfig>,
     pub thumbnails: Option<PartialThumbnailsConfig>,
+    pub full_index: Option<PartialFullIndexConfig>,
     pub images: Option<PartialImagesConfig>,
     pub theme: Option<PartialThemeConfig>,
     pub font: Option<PartialFontConfig>,
@@ -173,6 +183,7 @@ impl Default for SiteConfig {
             site_description_file: default_site_description_file(),
             colors: ColorConfig::default(),
             thumbnails: ThumbnailsConfig::default(),
+            full_index: FullIndexConfig::default(),
             images: ImagesConfig::default(),
             theme: ThemeConfig::default(),
             font: FontConfig::default(),
@@ -192,6 +203,16 @@ impl SiteConfig {
         if self.thumbnails.aspect_ratio[0] == 0 || self.thumbnails.aspect_ratio[1] == 0 {
             return Err(ConfigError::Validation(
                 "thumbnails.aspect_ratio values must be non-zero".into(),
+            ));
+        }
+        if self.full_index.thumb_ratio[0] == 0 || self.full_index.thumb_ratio[1] == 0 {
+            return Err(ConfigError::Validation(
+                "full_index.thumb_ratio values must be non-zero".into(),
+            ));
+        }
+        if self.full_index.thumb_size == 0 {
+            return Err(ConfigError::Validation(
+                "full_index.thumb_size must be non-zero".into(),
             ));
         }
         if self.images.sizes.is_empty() {
@@ -218,6 +239,9 @@ impl SiteConfig {
         }
         if let Some(t) = other.thumbnails {
             self.thumbnails = self.thumbnails.merge(t);
+        }
+        if let Some(fi) = other.full_index {
+            self.full_index = self.full_index.merge(fi);
         }
         if let Some(i) = other.images {
             self.images = self.images.merge(i);
@@ -443,6 +467,70 @@ impl Default for ThumbnailsConfig {
         Self {
             aspect_ratio: [4, 5],
             size: 400,
+        }
+    }
+}
+
+/// Settings for the site-wide "All Photos" index page.
+///
+/// When `generates` is true, the generate stage renders an extra page at
+/// `/all-photos/` showing every image from every public album in a single
+/// thumbnail grid. Thumbnails are generated at the ratio/size specified here,
+/// independent of the regular per-album `[thumbnails]` settings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct FullIndexConfig {
+    /// Whether the All Photos page is rendered.
+    pub generates: bool,
+    /// Whether to add an "All Photos" item to the navigation menu.
+    pub show_link: bool,
+    /// Aspect ratio `[width, height]` for full-index thumbnails.
+    pub thumb_ratio: [u32; 2],
+    /// Short-edge size (in pixels) for full-index thumbnails.
+    pub thumb_size: u32,
+    /// Gap between thumbnails on the All Photos grid (CSS value).
+    pub thumb_gap: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialFullIndexConfig {
+    pub generates: Option<bool>,
+    pub show_link: Option<bool>,
+    pub thumb_ratio: Option<[u32; 2]>,
+    pub thumb_size: Option<u32>,
+    pub thumb_gap: Option<String>,
+}
+
+impl FullIndexConfig {
+    pub fn merge(mut self, other: PartialFullIndexConfig) -> Self {
+        if let Some(g) = other.generates {
+            self.generates = g;
+        }
+        if let Some(l) = other.show_link {
+            self.show_link = l;
+        }
+        if let Some(r) = other.thumb_ratio {
+            self.thumb_ratio = r;
+        }
+        if let Some(s) = other.thumb_size {
+            self.thumb_size = s;
+        }
+        if let Some(g) = other.thumb_gap {
+            self.thumb_gap = g;
+        }
+        self
+    }
+}
+
+impl Default for FullIndexConfig {
+    fn default() -> Self {
+        Self {
+            generates: false,
+            show_link: false,
+            thumb_ratio: [4, 5],
+            thumb_size: 400,
+            thumb_gap: "0.2rem".to_string(),
         }
     }
 }
@@ -794,6 +882,27 @@ aspect_ratio = [4, 5]
 size = 400
 
 # ---------------------------------------------------------------------------
+# Full index ("All Photos") page
+# ---------------------------------------------------------------------------
+# When enabled, generates a single page at /all-photos/ showing every image
+# from every public album in one thumbnail grid. Off by default.
+[full_index]
+# If true, renders the All Photos page.
+generates = false
+
+# If true, adds an "All Photos" entry to the navigation menu.
+show_link = false
+
+# Aspect ratio [width, height] for full-index thumbnails.
+thumb_ratio = [4, 5]
+
+# Short-edge size in pixels for full-index thumbnails.
+thumb_size = 400
+
+# Gap between thumbnails on the All Photos grid (CSS value).
+thumb_gap = "0.2rem"
+
+# ---------------------------------------------------------------------------
 # Responsive image generation
 # ---------------------------------------------------------------------------
 [images]
@@ -1044,6 +1153,59 @@ quality = 85
         assert_eq!(config.images.quality, 85);
         // Unspecified defaults preserved
         assert_eq!(config.colors.light.background, "#ffffff");
+    }
+
+    #[test]
+    fn default_full_index_is_off() {
+        let config = SiteConfig::default();
+        assert!(!config.full_index.generates);
+        assert!(!config.full_index.show_link);
+        assert_eq!(config.full_index.thumb_ratio, [4, 5]);
+        assert_eq!(config.full_index.thumb_size, 400);
+        assert_eq!(config.full_index.thumb_gap, "0.2rem");
+    }
+
+    #[test]
+    fn parse_full_index_settings() {
+        let toml = r##"
+[full_index]
+generates = true
+show_link = true
+thumb_ratio = [4, 4]
+thumb_size = 1000
+thumb_gap = "0.5rem"
+"##;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+
+        assert!(config.full_index.generates);
+        assert!(config.full_index.show_link);
+        assert_eq!(config.full_index.thumb_ratio, [4, 4]);
+        assert_eq!(config.full_index.thumb_size, 1000);
+        assert_eq!(config.full_index.thumb_gap, "0.5rem");
+    }
+
+    #[test]
+    fn full_index_partial_merge_preserves_defaults() {
+        let toml = r##"
+[full_index]
+generates = true
+"##;
+        let partial: PartialSiteConfig = toml::from_str(toml).unwrap();
+        let config = SiteConfig::default().merge(partial);
+
+        assert!(config.full_index.generates);
+        // Other fields keep defaults
+        assert!(!config.full_index.show_link);
+        assert_eq!(config.full_index.thumb_ratio, [4, 5]);
+        assert_eq!(config.full_index.thumb_size, 400);
+    }
+
+    #[test]
+    fn full_index_validation_rejects_zero_ratio() {
+        let mut config = SiteConfig::default();
+        config.full_index.thumb_ratio = [0, 1];
+        assert!(config.validate().is_err());
     }
 
     #[test]
@@ -1507,6 +1669,7 @@ quality = 200
     fn stock_config_toml_contains_all_sections() {
         let content = stock_config_toml();
         assert!(content.contains("[thumbnails]"));
+        assert!(content.contains("[full_index]"));
         assert!(content.contains("[images]"));
         assert!(content.contains("[theme]"));
         assert!(content.contains("[theme.mat_x]"));
