@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `--format` flag on `scan` command: `json` (default) for machine-readable output, `text` for human-readable tree display
 - `--save-manifest [path]` flag on `scan` command: explicitly save the JSON manifest to disk
+- Site-wide "All Photos" page: a single thumbnail grid containing every image from every public (numbered) album across the site. Opt-in via the new `[full_index]` config section, off by default:
+  - `generates` — render `/all-photos/` when `true`
+  - `show_link` — add an "All Photos" entry to the navigation menu (only surfaced when `generates` is also `true`, to avoid dangling links)
+  - `thumb_ratio` — aspect ratio `[width, height]` for full-index thumbnails, independent of the per-album `[thumbnails]` ratio
+  - `thumb_size` — short-edge size in pixels for full-index thumbnails
+  - `thumb_gap` — CSS gap between thumbnails on the All Photos grid
+  - Each full-index thumbnail links back to the image's normal page. Full-index thumbnails are cached separately from album thumbnails via a distinct params hash, so both sets coexist without collisions.
 
 ## [0.11.7] - 2026-03-26
 

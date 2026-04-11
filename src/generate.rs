@@ -116,6 +116,8 @@ pub struct Image {
     pub dimensions: (u32, u32),
     pub generated: BTreeMap<String, GeneratedVariant>,
     pub thumbnail: String,
+    #[serde(default)]
+    pub full_index_thumbnail: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -428,6 +430,8 @@ pub fn generate(
     );
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
 
+    let show_all_photos = show_all_photos_link(&manifest.config);
+
     // Generate pages (content pages only, not link pages)
     for page in manifest.pages.iter().filter(|p| !p.is_link) {
         let page_html = render_page(
@@ -439,6 +443,7 @@ pub fn generate(
             &manifest.config.site_title,
             favicon_href.as_deref(),
             &snippets,
+            show_all_photos,
         );
         let filename = format!("{}.html", page.slug);
         fs::write(output_dir.join(&filename), page_html.into_string())?;
@@ -455,6 +460,7 @@ pub fn generate(
         &manifest.config.site_title,
         favicon_href.as_deref(),
         &snippets,
+        show_all_photos,
         output_dir,
     )?;
 
@@ -472,6 +478,7 @@ pub fn generate(
             &manifest.config.site_title,
             favicon_href.as_deref(),
             &snippets,
+            show_all_photos,
         );
         fs::write(album_dir.join("index.html"), album_html.into_string())?;
 
@@ -496,6 +503,7 @@ pub fn generate(
                 &manifest.config.site_title,
                 favicon_href.as_deref(),
                 &snippets,
+                show_all_photos,
             );
             let image_dir_name =
                 image_page_url(idx + 1, album.images.len(), image.title.as_deref());
@@ -503,6 +511,23 @@ pub fn generate(
             fs::create_dir_all(&image_dir)?;
             fs::write(image_dir.join("index.html"), image_html.into_string())?;
         }
+    }
+
+    // Site-wide "All Photos" page (opt-in via [full_index] generates = true)
+    if manifest.config.full_index.generates {
+        let all_photos_html = render_full_index_page(
+            &manifest,
+            &css,
+            font_url.as_deref(),
+            favicon_href.as_deref(),
+            &snippets,
+        );
+        let all_photos_dir = output_dir.join("all-photos");
+        fs::create_dir_all(&all_photos_dir)?;
+        fs::write(
+            all_photos_dir.join("index.html"),
+            all_photos_html.into_string(),
+        )?;
     }
 
     Ok(())
@@ -641,8 +666,18 @@ fn site_header(breadcrumb: Markup, nav: Markup) -> Markup {
 ///
 /// Albums are listed first, then a separator, then pages (numbered pages only).
 /// Link pages render as direct external links; content pages link to `/{slug}.html`.
-pub fn render_nav(items: &[NavItem], current_path: &str, pages: &[Page]) -> Markup {
+///
+/// When `show_all_photos` is true, an "All Photos" item is appended after the
+/// album list — it points at `/all-photos/` which is rendered only when
+/// `[full_index] generates = true`.
+pub fn render_nav(
+    items: &[NavItem],
+    current_path: &str,
+    pages: &[Page],
+    show_all_photos: bool,
+) -> Markup {
     let nav_pages: Vec<&Page> = pages.iter().filter(|p| p.in_nav).collect();
+    let all_photos_current = current_path == "all-photos";
 
     html! {
         input.nav-toggle type="checkbox" id="nav-toggle";
@@ -656,6 +691,11 @@ pub fn render_nav(items: &[NavItem], current_path: &str, pages: &[Page]) -> Mark
             ul {
                 @for item in items {
                     (render_nav_item(item, current_path))
+                }
+                @if show_all_photos {
+                    li class=[all_photos_current.then_some("current")] {
+                        a href="/all-photos/" { "All Photos" }
+                    }
                 }
                 @if !nav_pages.is_empty() {
                     li.nav-separator role="separator" {}
@@ -727,7 +767,15 @@ fn render_index(
         &manifest.config.site_title,
         favicon_href,
         snippets,
+        show_all_photos_link(&manifest.config),
     )
+}
+
+/// Whether the nav menu should include the "All Photos" entry. Requires both
+/// `full_index.generates` and `full_index.show_link`, since a link without a
+/// generated target would be broken.
+fn show_all_photos_link(config: &SiteConfig) -> bool {
+    config.full_index.generates && config.full_index.show_link
 }
 
 /// Renders an album page with thumbnail grid
@@ -741,8 +789,9 @@ fn render_album_page(
     site_title: &str,
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
+    show_all_photos: bool,
 ) -> Markup {
-    let nav = render_nav(navigation, &album.path, pages);
+    let nav = render_nav(navigation, &album.path, pages, show_all_photos);
 
     let segments = path_to_breadcrumb_segments(&album.path, navigation);
     let breadcrumb = html! {
@@ -838,8 +887,9 @@ fn render_image_page(
     site_title: &str,
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
+    show_all_photos: bool,
 ) -> Markup {
-    let nav = render_nav(navigation, &album.path, pages);
+    let nav = render_nav(navigation, &album.path, pages, show_all_photos);
 
     // Strip album directory name and add ../ since image pages are in subdirectories.
     // Process-stage paths are relative to the parent dir, so strip the last segment.
@@ -1039,8 +1089,9 @@ fn render_page(
     site_title: &str,
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
+    show_all_photos: bool,
 ) -> Markup {
-    let nav = render_nav(navigation, &page.slug, pages);
+    let nav = render_nav(navigation, &page.slug, pages, show_all_photos);
 
     // Convert markdown to HTML
     let parser = Parser::new(&page.body);
@@ -1091,8 +1142,9 @@ fn render_gallery_list_page(
     site_title: &str,
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
+    show_all_photos: bool,
 ) -> Markup {
-    let nav = render_nav(navigation, path, pages);
+    let nav = render_nav(navigation, path, pages, show_all_photos);
 
     let is_root = path.is_empty();
     let segments = path_to_breadcrumb_segments(path, navigation);
@@ -1151,6 +1203,119 @@ fn render_gallery_list_page(
     )
 }
 
+/// Renders the site-wide "All Photos" page — a single thumbnail grid containing
+/// every image from every public (numbered) album. Uses the full-index thumbnails
+/// generated in the process stage, with gap and aspect ratio controlled by
+/// `[full_index]` config. Each thumbnail links to the image's normal page.
+fn render_full_index_page(
+    manifest: &Manifest,
+    css: &str,
+    font_url: Option<&str>,
+    favicon_href: Option<&str>,
+    snippets: &CustomSnippets,
+) -> Markup {
+    let title = "All Photos";
+    let path = "all-photos";
+    let fi = &manifest.config.full_index;
+
+    let nav = render_nav(
+        &manifest.navigation,
+        path,
+        &manifest.pages,
+        show_all_photos_link(&manifest.config),
+    );
+
+    let breadcrumb = html! {
+        a href="/" { (manifest.config.site_title) }
+        " › "
+        (title)
+    };
+
+    // Collect entries: every image from every in-nav album, in album order.
+    struct FullIndexEntry<'a> {
+        thumbnail: String,
+        link: String,
+        alt: String,
+        #[allow(dead_code)]
+        album_title: &'a str,
+    }
+
+    let mut entries: Vec<FullIndexEntry> = Vec::new();
+    for album in &manifest.albums {
+        if !album.in_nav {
+            continue;
+        }
+        let total = album.images.len();
+        for (idx, image) in album.images.iter().enumerate() {
+            let Some(ref thumb) = image.full_index_thumbnail else {
+                continue;
+            };
+            let image_dir = image_page_url(idx + 1, total, image.title.as_deref());
+            let link = format!("/{}/{}", album.path, image_dir);
+            let alt = match &image.title {
+                Some(t) => format!("{} - {}", album.title, t),
+                None => format!("{} - Image {}", album.title, idx + 1),
+            };
+            entries.push(FullIndexEntry {
+                thumbnail: format!("/{}", thumb),
+                link,
+                alt,
+                album_title: &album.title,
+            });
+        }
+    }
+
+    // Inline CSS variables: custom gap, aspect ratio, and grid column width
+    // just for this page, so a site can tune the full-index grid independently
+    // from album grids.
+    //
+    // The displayed column width is derived from thumb_ratio + thumb_size so
+    // the CSS grid cells match the pixel dimensions of the generated thumbnail.
+    // Without this, the grid falls back to the album-grid minmax(200px, 1fr)
+    // and a source shrunk to 100px (or stretched from 100px to 200px) would
+    // look blurry regardless of thumb_size.
+    //
+    // thumb_size is the short-edge size; long edge scales by the ratio.
+    let (rw, rh) = (fi.thumb_ratio[0].max(1), fi.thumb_ratio[1].max(1));
+    let display_width_px = if rw >= rh {
+        (fi.thumb_size as f64 * rw as f64 / rh as f64).round() as u32
+    } else {
+        fi.thumb_size
+    };
+    let aspect_ratio_css = format!("{} / {}", rw, rh);
+    let main_style = format!(
+        "--thumbnail-gap: {}; --fi-thumb-aspect: {}; --fi-thumb-col-width: {}px;",
+        fi.thumb_gap, aspect_ratio_css, display_width_px
+    );
+
+    let content = html! {
+        (site_header(breadcrumb, nav))
+        main.album-page.full-index-page style=(main_style) {
+            header.album-header {
+                h1 { (title) }
+            }
+            div.thumbnail-grid {
+                @for entry in &entries {
+                    a.thumb-link href=(entry.link) {
+                        img src=(entry.thumbnail) alt=(entry.alt) loading="lazy";
+                    }
+                }
+            }
+        }
+    };
+
+    base_document(
+        title,
+        css,
+        font_url,
+        None,
+        None,
+        favicon_href,
+        snippets,
+        content,
+    )
+}
+
 /// Walk the navigation tree and generate gallery-list pages for every container.
 #[allow(clippy::too_many_arguments)]
 fn generate_gallery_list_pages(
@@ -1163,6 +1328,7 @@ fn generate_gallery_list_pages(
     site_title: &str,
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
+    show_all_photos: bool,
     output_dir: &Path,
 ) -> Result<(), GenerateError> {
     for item in items {
@@ -1180,6 +1346,7 @@ fn generate_gallery_list_pages(
                 site_title,
                 favicon_href,
                 snippets,
+                show_all_photos,
             );
             let dir = output_dir.join(&item.path);
             fs::create_dir_all(&dir)?;
@@ -1196,6 +1363,7 @@ fn generate_gallery_list_pages(
                 site_title,
                 favicon_href,
                 snippets,
+                show_all_photos,
                 output_dir,
             )?;
         }
@@ -1240,7 +1408,7 @@ mod tests {
             description: None,
             children: vec![],
         }];
-        let html = render_nav(&items, "", &[]).into_string();
+        let html = render_nav(&items, "", &[], false).into_string();
         assert!(html.contains("Album One"));
         assert!(html.contains("/010-one/"));
     }
@@ -1248,7 +1416,7 @@ mod tests {
     #[test]
     fn nav_includes_pages() {
         let pages = vec![make_page("about", "About", true, false)];
-        let html = render_nav(&[], "", &pages).into_string();
+        let html = render_nav(&[], "", &pages, false).into_string();
         assert!(html.contains("About"));
         assert!(html.contains("/about.html"));
     }
@@ -1256,7 +1424,7 @@ mod tests {
     #[test]
     fn nav_hides_unnumbered_pages() {
         let pages = vec![make_page("notes", "Notes", false, false)];
-        let html = render_nav(&[], "", &pages).into_string();
+        let html = render_nav(&[], "", &pages, false).into_string();
         assert!(!html.contains("Notes"));
         // No separator either when no nav pages
         assert!(!html.contains("nav-separator"));
@@ -1265,7 +1433,7 @@ mod tests {
     #[test]
     fn nav_renders_link_page_as_external() {
         let pages = vec![make_page("github", "GitHub", true, true)];
-        let html = render_nav(&[], "", &pages).into_string();
+        let html = render_nav(&[], "", &pages, false).into_string();
         assert!(html.contains("GitHub"));
         assert!(html.contains("https://example.com"));
         assert!(html.contains("target=\"_blank\""));
@@ -1289,7 +1457,7 @@ mod tests {
                 children: vec![],
             },
         ];
-        let html = render_nav(&items, "020-second", &[]).into_string();
+        let html = render_nav(&items, "020-second", &[], false).into_string();
         // The second item should have the current class
         assert!(html.contains(r#"class="current"#));
     }
@@ -1297,7 +1465,7 @@ mod tests {
     #[test]
     fn nav_marks_current_page() {
         let pages = vec![make_page("about", "About", true, false)];
-        let html = render_nav(&[], "about", &pages).into_string();
+        let html = render_nav(&[], "about", &pages, false).into_string();
         assert!(html.contains(r#"class="current"#));
     }
 
@@ -1316,7 +1484,7 @@ mod tests {
                 children: vec![],
             }],
         }];
-        let html = render_nav(&items, "", &[]).into_string();
+        let html = render_nav(&items, "", &[], false).into_string();
         assert!(html.contains("Parent"));
         assert!(html.contains("Child"));
         assert!(html.contains("nav-group")); // Parent should have nav-group class
@@ -1325,12 +1493,12 @@ mod tests {
     #[test]
     fn nav_separator_only_when_pages() {
         // No pages = no separator
-        let html_no_pages = render_nav(&[], "", &[]).into_string();
+        let html_no_pages = render_nav(&[], "", &[], false).into_string();
         assert!(!html_no_pages.contains("nav-separator"));
 
         // With nav pages = separator
         let pages = vec![make_page("about", "About", true, false)];
-        let html_with_pages = render_nav(&[], "", &pages).into_string();
+        let html_with_pages = render_nav(&[], "", &pages, false).into_string();
         assert!(html_with_pages.contains("nav-separator"));
     }
 
@@ -1424,6 +1592,7 @@ mod tests {
                         map
                     },
                     thumbnail: "test/001-dawn-thumb.avif".to_string(),
+                    full_index_thumbnail: None,
                 },
                 Image {
                     number: 2,
@@ -1444,6 +1613,7 @@ mod tests {
                         map
                     },
                     thumbnail: "test/002-night-thumb.avif".to_string(),
+                    full_index_thumbnail: None,
                 },
             ],
             in_nav: true,
@@ -1490,6 +1660,7 @@ mod tests {
                     map
                 },
                 thumbnail: "Night/001-city-thumb.avif".to_string(),
+                full_index_thumbnail: None,
             }],
             in_nav: true,
             config: SiteConfig::default(),
@@ -1500,8 +1671,18 @@ mod tests {
     #[test]
     fn nested_album_thumbnail_paths_are_relative_to_album_dir() {
         let album = create_nested_test_album();
-        let html = render_album_page(&album, &[], &[], "", None, "Gallery", None, &no_snippets())
-            .into_string();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         // Thumbnail src must be relative to the album directory (no parent prefix).
         // "001-city-thumb.avif" is correct; "Night/001-city-thumb.avif" would break
@@ -1526,6 +1707,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1540,8 +1722,18 @@ mod tests {
     fn render_album_page_includes_title() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
-            .into_string();
+        let html = render_album_page(
+            &album,
+            &nav,
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         assert!(html.contains("Test Album"));
         assert!(html.contains("<h1>"));
@@ -1551,8 +1743,18 @@ mod tests {
     fn render_album_page_includes_description() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
-            .into_string();
+        let html = render_album_page(
+            &album,
+            &nav,
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         assert!(html.contains("A test album description"));
         assert!(html.contains("album-description"));
@@ -1562,8 +1764,18 @@ mod tests {
     fn render_album_page_thumbnail_links() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
-            .into_string();
+        let html = render_album_page(
+            &album,
+            &nav,
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         // Should have links to image pages (1-dawn/, 2/)
         assert!(html.contains("1-dawn/"));
@@ -1576,8 +1788,18 @@ mod tests {
     fn render_album_page_breadcrumb() {
         let album = create_test_album();
         let nav = vec![];
-        let html = render_album_page(&album, &nav, &[], "", None, "Gallery", None, &no_snippets())
-            .into_string();
+        let html = render_album_page(
+            &album,
+            &nav,
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         // Breadcrumb should link to gallery root
         assert!(html.contains(r#"href="/""#));
@@ -1601,6 +1823,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1627,6 +1850,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1653,6 +1877,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1680,6 +1905,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
         assert!(html1.contains(r#"class="nav-prev" href="../""#));
@@ -1698,6 +1924,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
         assert!(html2.contains(r#"class="nav-prev" href="../1-dawn/""#));
@@ -1721,6 +1948,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1739,8 +1967,18 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html =
-            render_page(&page, &[], &[], "", None, "Gallery", None, &no_snippets()).into_string();
+        let html = render_page(
+            &page,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         // Markdown should be converted to HTML
         assert!(html.contains("<strong>bold</strong>"));
@@ -1758,8 +1996,18 @@ mod tests {
             sort_key: 40,
             is_link: false,
         };
-        let html =
-            render_page(&page, &[], &[], "", None, "Gallery", None, &no_snippets()).into_string();
+        let html = render_page(
+            &page,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         assert!(html.contains("<title>About Me</title>"));
         assert!(html.contains("class=\"page\""));
@@ -1813,6 +2061,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1838,6 +2087,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1864,6 +2114,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1887,6 +2138,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1941,6 +2193,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1967,6 +2220,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -1995,6 +2249,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2022,6 +2277,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2047,6 +2303,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2067,7 +2324,7 @@ mod tests {
             description: None,
             children: vec![],
         }];
-        let html = render_nav(&items, "", &[]).into_string();
+        let html = render_nav(&items, "", &[], false).into_string();
 
         // Should be escaped, not raw script tag
         assert!(!html.contains("<script>alert"));
@@ -2148,6 +2405,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2170,6 +2428,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2194,6 +2453,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2219,6 +2479,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2247,6 +2508,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2281,6 +2543,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2310,6 +2573,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2339,6 +2603,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2393,6 +2658,203 @@ mod tests {
 
         assert!(html.contains("Visible"));
         assert!(!html.contains("Hidden"));
+    }
+
+    // =========================================================================
+    // Full-index ("All Photos") tests
+    // =========================================================================
+
+    fn make_full_index_manifest() -> Manifest {
+        // Two public albums with one image each. Each image has a full-index
+        // thumbnail populated as if the process stage ran with generates=true.
+        let mut cfg = SiteConfig::default();
+        cfg.full_index.generates = true;
+        cfg.full_index.show_link = true;
+        cfg.full_index.thumb_ratio = [4, 4];
+        cfg.full_index.thumb_size = 1000;
+        cfg.full_index.thumb_gap = "0.5rem".to_string();
+
+        let make_image = |album: &str, n: u32, slug: &str, title: &str| Image {
+            number: n,
+            source_path: format!("{}/00{}-{}.jpg", album, n, slug),
+            title: Some(title.to_string()),
+            description: None,
+            dimensions: (1600, 1200),
+            generated: {
+                let mut map = BTreeMap::new();
+                map.insert(
+                    "800".to_string(),
+                    GeneratedVariant {
+                        avif: format!("{}/00{}-{}-800.avif", album, n, slug),
+                        width: 800,
+                        height: 600,
+                    },
+                );
+                map
+            },
+            thumbnail: format!("{}/00{}-{}-thumb.avif", album, n, slug),
+            full_index_thumbnail: Some(format!("{}/00{}-{}-fi-thumb.avif", album, n, slug)),
+        };
+
+        Manifest {
+            navigation: vec![
+                NavItem {
+                    title: "Alpha".to_string(),
+                    path: "alpha".to_string(),
+                    source_dir: "010-Alpha".to_string(),
+                    description: None,
+                    children: vec![],
+                },
+                NavItem {
+                    title: "Beta".to_string(),
+                    path: "beta".to_string(),
+                    source_dir: "020-Beta".to_string(),
+                    description: None,
+                    children: vec![],
+                },
+            ],
+            albums: vec![
+                Album {
+                    path: "alpha".to_string(),
+                    title: "Alpha".to_string(),
+                    description: None,
+                    thumbnail: "alpha/001-dawn-thumb.avif".to_string(),
+                    images: vec![make_image("alpha", 1, "dawn", "Dawn")],
+                    in_nav: true,
+                    config: cfg.clone(),
+                    support_files: vec![],
+                },
+                Album {
+                    path: "beta".to_string(),
+                    title: "Beta".to_string(),
+                    description: None,
+                    thumbnail: "beta/001-dusk-thumb.avif".to_string(),
+                    images: vec![make_image("beta", 1, "dusk", "Dusk")],
+                    in_nav: true,
+                    config: cfg.clone(),
+                    support_files: vec![],
+                },
+            ],
+            pages: vec![],
+            description: None,
+            config: cfg,
+        }
+    }
+
+    #[test]
+    fn full_index_page_contains_every_image() {
+        let manifest = make_full_index_manifest();
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+
+        assert!(html.contains("All Photos"));
+        assert!(html.contains("full-index-page"));
+        assert!(html.contains("/alpha/001-dawn-fi-thumb.avif"));
+        assert!(html.contains("/beta/001-dusk-fi-thumb.avif"));
+        // Each thumbnail should link to the image's normal page.
+        assert!(html.contains(r#"href="/alpha/1-dawn/""#));
+        assert!(html.contains(r#"href="/beta/1-dusk/""#));
+    }
+
+    #[test]
+    fn full_index_page_applies_thumb_gap_and_aspect() {
+        let manifest = make_full_index_manifest();
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+
+        // Inline CSS vars on <main> let a site tune the grid independently.
+        assert!(html.contains("--thumbnail-gap: 0.5rem"));
+        assert!(html.contains("--fi-thumb-aspect: 4 / 4"));
+    }
+
+    #[test]
+    fn full_index_page_column_width_square_matches_thumb_size() {
+        // thumb_ratio = [4, 4] (square), thumb_size = 1000 → col width = 1000px
+        let manifest = make_full_index_manifest();
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+        assert!(html.contains("--fi-thumb-col-width: 1000px"));
+    }
+
+    #[test]
+    fn full_index_page_column_width_portrait_uses_short_edge() {
+        // Portrait [4, 5] thumb_size=400 → width = 400 (short edge)
+        let mut manifest = make_full_index_manifest();
+        manifest.config.full_index.thumb_ratio = [4, 5];
+        manifest.config.full_index.thumb_size = 400;
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+        assert!(html.contains("--fi-thumb-col-width: 400px"));
+    }
+
+    #[test]
+    fn full_index_page_column_width_landscape_scales_by_ratio() {
+        // Landscape [16, 9] thumb_size=400 → width = 400 * 16 / 9 ≈ 711
+        let mut manifest = make_full_index_manifest();
+        manifest.config.full_index.thumb_ratio = [16, 9];
+        manifest.config.full_index.thumb_size = 400;
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+        assert!(html.contains("--fi-thumb-col-width: 711px"));
+    }
+
+    #[test]
+    fn full_index_page_excludes_hidden_albums() {
+        let mut manifest = make_full_index_manifest();
+        // Add a hidden album whose image must NOT appear on the All Photos page.
+        let hidden = Album {
+            path: "hidden".to_string(),
+            title: "Hidden".to_string(),
+            description: None,
+            thumbnail: "hidden/001-secret-thumb.avif".to_string(),
+            images: vec![Image {
+                number: 1,
+                source_path: "hidden/001-secret.jpg".to_string(),
+                title: Some("Secret".to_string()),
+                description: None,
+                dimensions: (1600, 1200),
+                generated: BTreeMap::new(),
+                thumbnail: "hidden/001-secret-thumb.avif".to_string(),
+                full_index_thumbnail: Some("hidden/001-secret-fi-thumb.avif".to_string()),
+            }],
+            in_nav: false,
+            config: manifest.config.clone(),
+            support_files: vec![],
+        };
+        manifest.albums.push(hidden);
+
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+
+        assert!(!html.contains("secret-fi-thumb"));
+        assert!(!html.contains("/hidden/"));
+    }
+
+    #[test]
+    fn all_photos_nav_link_appears_when_enabled() {
+        let mut cfg = SiteConfig::default();
+        cfg.full_index.generates = true;
+        cfg.full_index.show_link = true;
+        let html = render_nav(&[], "", &[], show_all_photos_link(&cfg)).into_string();
+        assert!(html.contains("All Photos"));
+        assert!(html.contains(r#"href="/all-photos/""#));
+    }
+
+    #[test]
+    fn all_photos_nav_link_absent_by_default() {
+        let cfg = SiteConfig::default();
+        let html = render_nav(&[], "", &[], show_all_photos_link(&cfg)).into_string();
+        assert!(!html.contains("All Photos"));
+    }
+
+    #[test]
+    fn all_photos_nav_link_requires_generation() {
+        // show_link alone does not produce a link — the target must be generated.
+        let mut cfg = SiteConfig::default();
+        cfg.full_index.show_link = true;
+        cfg.full_index.generates = false;
+        assert!(!show_all_photos_link(&cfg));
+    }
+
+    #[test]
+    fn all_photos_nav_link_marked_current_on_page() {
+        let html = render_nav(&[], "all-photos", &[], true).into_string();
+        assert!(html.contains(r#"class="current""#));
+        assert!(html.contains("All Photos"));
     }
 
     #[test]
@@ -2481,6 +2943,7 @@ mod tests {
                     map
                 },
                 thumbnail: "solo/001-photo-thumb.avif".to_string(),
+                full_index_thumbnail: None,
             }],
             in_nav: true,
             config: SiteConfig::default(),
@@ -2500,6 +2963,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2512,8 +2976,18 @@ mod tests {
     fn album_page_no_description() {
         let mut album = create_test_album();
         album.description = None;
-        let html = render_album_page(&album, &[], &[], "", None, "Gallery", None, &no_snippets())
-            .into_string();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+        )
+        .into_string();
 
         assert!(!html.contains("album-description"));
         assert!(html.contains("Test Album"));
@@ -2535,6 +3009,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2563,6 +3038,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2609,6 +3085,7 @@ mod tests {
             "My Portfolio",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2632,6 +3109,7 @@ mod tests {
             "My Portfolio",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2659,6 +3137,7 @@ mod tests {
             "My Portfolio",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -2847,15 +3326,26 @@ mod tests {
 
         // Album page
         let album = create_test_album();
-        let html =
-            render_album_page(&album, &[], &[], "", None, "Gallery", None, &snippets).into_string();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &snippets,
+            false,
+        )
+        .into_string();
         assert!(html.contains("custom.css"));
         assert!(html.contains("<!-- head -->"));
         assert!(html.contains("<!-- body -->"));
 
         // Content page
         let page = make_page("about", "About", true, false);
-        let html = render_page(&page, &[], &[], "", None, "Gallery", None, &snippets).into_string();
+        let html =
+            render_page(&page, &[], &[], "", None, "Gallery", None, &snippets, false).into_string();
         assert!(html.contains("custom.css"));
         assert!(html.contains("<!-- head -->"));
         assert!(html.contains("<!-- body -->"));
@@ -2873,6 +3363,7 @@ mod tests {
             "Gallery",
             None,
             &snippets,
+            false,
         )
         .into_string();
         assert!(html.contains("custom.css"));
@@ -3007,6 +3498,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
@@ -3038,6 +3530,7 @@ mod tests {
             "Gallery",
             None,
             &no_snippets(),
+            false,
         )
         .into_string();
 
