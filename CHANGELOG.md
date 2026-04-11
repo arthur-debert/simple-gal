@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-04-11
+
 ### Changed
 - `scan` command now outputs JSON to stdout by default instead of the human-readable tree — use `--format text` for the previous behavior
 - `scan` no longer saves `manifest.json` to the temp directory by default — use `--save-manifest` to opt in (defaults to `<temp-dir>/manifest.json`, or pass a custom path)
