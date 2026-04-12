@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use clapfig::{Clapfig, ConfigAction, ConfigArgs, ConfigSubcommand, SearchPath};
+use serde::Serialize;
 use simple_gal::config::SiteConfig;
 use simple_gal::json_output::{
     self, BuildPayload, CacheStatsPayload, CheckPayload, ConfigOpPayload, Counts, ErrorEnvelope,
@@ -27,6 +28,9 @@ struct CacheArgs {
 enum OutputFormat {
     Text,
     Json,
+    /// Newline-delimited JSON: one JSON object per line. Progress events
+    /// stream as they happen; the final line is the result envelope.
+    Ndjson,
 }
 
 /// Arguments for the scan command.
@@ -247,12 +251,14 @@ fn find_config_error<'a>(
 ///   - text mode with a config parse failure: clapfig rich/plain
 ///   - text mode fallback: plain `Error:` + cause chain
 fn report_error(err: &(dyn std::error::Error + 'static), kind: ErrorKind, format: OutputFormat) {
-    if let OutputFormat::Json = format {
+    if matches!(format, OutputFormat::Json | OutputFormat::Ndjson) {
         let envelope = ErrorEnvelope::new(kind, err);
-        if let Err(ser_err) = json_output::emit_stderr(&envelope) {
-            // Serializing the envelope itself failed (extraordinarily
-            // unlikely given the shapes involved) — fall back to a plain
-            // line so the user at least sees *something*.
+        let emit = if matches!(format, OutputFormat::Ndjson) {
+            json_output::emit_stderr_compact(&envelope)
+        } else {
+            json_output::emit_stderr(&envelope)
+        };
+        if let Err(ser_err) = emit {
             eprintln!("Error: failed to render error envelope: {ser_err}");
         }
         return;
@@ -278,16 +284,27 @@ fn report_error(err: &(dyn std::error::Error + 'static), kind: ErrorKind, format
 }
 
 fn run(cli: &Cli, format: OutputFormat) -> Result<(), CliError> {
-    let json_mode = matches!(format, OutputFormat::Json);
+    let json_mode = matches!(format, OutputFormat::Json | OutputFormat::Ndjson);
+    let ndjson = matches!(format, OutputFormat::Ndjson);
     let quiet = cli.quiet;
 
     match &cli.command {
         Command::Scan(args) => run_scan(cli, args, format),
-        Command::Process(cache_args) => run_process(cli, cache_args, json_mode, quiet),
-        Command::Generate => run_generate(cli, json_mode, quiet),
-        Command::Build(cache_args) => run_build(cli, cache_args, json_mode, quiet),
-        Command::Check => run_check(cli, json_mode, quiet),
-        Command::Config(args) => run_config(cli, args, json_mode),
+        Command::Process(cache_args) => run_process(cli, cache_args, json_mode, ndjson, quiet),
+        Command::Generate => run_generate(cli, json_mode, ndjson, quiet),
+        Command::Build(cache_args) => run_build(cli, cache_args, json_mode, ndjson, quiet),
+        Command::Check => run_check(cli, json_mode, ndjson, quiet),
+        Command::Config(args) => run_config(cli, args, json_mode, ndjson),
+    }
+}
+
+/// Emit a JSON result envelope: pretty-printed for `--format json`,
+/// compact single-line for `--format ndjson`.
+fn emit_json_result<T: Serialize>(ndjson: bool, value: &T) -> Result<(), CliError> {
+    if ndjson {
+        json_output::emit_ndjson_result(value).tag(ErrorKind::Internal)
+    } else {
+        json_output::emit_stdout(value).tag(ErrorKind::Internal)
     }
 }
 
@@ -311,10 +328,12 @@ fn run_scan(cli: &Cli, args: &ScanArgs, format: OutputFormat) -> Result<(), CliE
     };
 
     match format {
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::Ndjson => {
             let payload = ScanPayload::new(&manifest, &cli.source, saved_path);
-            let envelope = OkEnvelope::new("scan", payload);
-            json_output::emit_stdout(&envelope).tag(ErrorKind::Internal)?;
+            emit_json_result(
+                matches!(format, OutputFormat::Ndjson),
+                &OkEnvelope::new("scan", payload),
+            )?;
         }
         OutputFormat::Text => {
             if !cli.quiet {
@@ -329,6 +348,7 @@ fn run_process(
     cli: &Cli,
     cache_args: &CacheArgs,
     json_mode: bool,
+    ndjson: bool,
     quiet: bool,
 ) -> Result<(), CliError> {
     let scan_manifest_path = cli.temp_dir.join("manifest.json");
@@ -341,14 +361,15 @@ fn run_process(
     init_thread_pool(&site_config.processing);
     let processed_dir = cli.temp_dir.join("processed");
     let (tx, rx) = std::sync::mpsc::channel();
-    let suppress = json_mode || quiet;
+    let suppress = (json_mode && !ndjson) || quiet;
     let printer = std::thread::spawn(move || {
         for event in rx {
-            if suppress {
-                continue;
-            }
-            for line in output::format_process_event(&event) {
-                println!("{}", line);
+            if ndjson {
+                json_output::emit_ndjson_progress(&event).ok();
+            } else if !suppress {
+                for line in output::format_process_event(&event) {
+                    println!("{}", line);
+                }
             }
         }
     });
@@ -371,14 +392,14 @@ fn run_process(
             manifest_path: output_manifest_path,
             cache: (&result.cache_stats).into(),
         };
-        json_output::emit_stdout(&OkEnvelope::new("process", payload)).tag(ErrorKind::Internal)?;
+        emit_json_result(ndjson, &OkEnvelope::new("process", payload))?;
     } else if !quiet {
         println!("Cache: {}", result.cache_stats);
     }
     Ok(())
 }
 
-fn run_generate(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
+fn run_generate(cli: &Cli, json_mode: bool, ndjson: bool, quiet: bool) -> Result<(), CliError> {
     let processed_dir = cli.temp_dir.join("processed");
     let processed_manifest_path = processed_dir.join("manifest.json");
     generate::generate(
@@ -394,7 +415,7 @@ fn run_generate(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError>
 
     if json_mode {
         let payload = GeneratePayload::new(&manifest, &cli.output);
-        json_output::emit_stdout(&OkEnvelope::new("generate", payload)).tag(ErrorKind::Internal)?;
+        emit_json_result(ndjson, &OkEnvelope::new("generate", payload))?;
     } else if !quiet {
         output::print_generate_output(&manifest);
     }
@@ -405,6 +426,7 @@ fn run_build(
     cli: &Cli,
     cache_args: &CacheArgs,
     json_mode: bool,
+    ndjson: bool,
     quiet: bool,
 ) -> Result<(), CliError> {
     let source = resolve_build_source(&cli.source);
@@ -427,14 +449,15 @@ fn run_build(
     init_thread_pool(&manifest.config.processing);
     let processed_dir = cli.temp_dir.join("processed");
     let (tx, rx) = std::sync::mpsc::channel();
-    let suppress = !stage_text;
+    let suppress = !stage_text && !ndjson;
     let printer = std::thread::spawn(move || {
         for event in rx {
-            if suppress {
-                continue;
-            }
-            for line in output::format_process_event(&event) {
-                println!("{}", line);
+            if ndjson {
+                json_output::emit_ndjson_progress(&event).ok();
+            } else if !suppress {
+                for line in output::format_process_event(&event) {
+                    println!("{}", line);
+                }
             }
         }
     });
@@ -485,12 +508,12 @@ fn run_build(
             },
             cache: CacheStatsPayload::from(&result.cache_stats),
         };
-        json_output::emit_stdout(&OkEnvelope::new("build", payload)).tag(ErrorKind::Internal)?;
+        emit_json_result(ndjson, &OkEnvelope::new("build", payload))?;
     }
     Ok(())
 }
 
-fn run_check(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
+fn run_check(cli: &Cli, json_mode: bool, ndjson: bool, quiet: bool) -> Result<(), CliError> {
     let source = resolve_build_source(&cli.source);
     if !json_mode && !quiet {
         println!("==> Checking {}", source.display());
@@ -511,7 +534,7 @@ fn run_check(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
                 pages: manifest.pages.len(),
             },
         };
-        json_output::emit_stdout(&OkEnvelope::new("check", payload)).tag(ErrorKind::Internal)?;
+        emit_json_result(ndjson, &OkEnvelope::new("check", payload))?;
     }
     Ok(())
 }
@@ -520,7 +543,7 @@ fn run_check(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
 /// clapfig. clapfig owns gen / schema / list / get / set / unset; we wrap
 /// the typed `ConfigResult` it returns in our JSON envelope when
 /// `--format json` is in effect, otherwise print it via `Display`.
-fn run_config(cli: &Cli, args: &ConfigArgs, json_mode: bool) -> Result<(), CliError> {
+fn run_config(cli: &Cli, args: &ConfigArgs, json_mode: bool, ndjson: bool) -> Result<(), CliError> {
     // ConfigArgs::into_action takes self, but we only have a &ConfigArgs
     // (we never own the Cli value). Mirror its dispatch by hand so we can
     // build a fresh ConfigAction without consuming the args.
@@ -537,7 +560,7 @@ fn run_config(cli: &Cli, args: &ConfigArgs, json_mode: bool) -> Result<(), CliEr
 
     if json_mode {
         let payload = ConfigOpPayload::from_result(&result);
-        json_output::emit_stdout(&OkEnvelope::new("config", payload)).tag(ErrorKind::Internal)?;
+        emit_json_result(ndjson, &OkEnvelope::new("config", payload))?;
     } else {
         println!("{result}");
     }

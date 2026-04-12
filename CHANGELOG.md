@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--format ndjson` output mode: newline-delimited JSON streaming. Each line is a self-contained JSON object with a `"type"` discriminator. During `process` and `build`, progress events (`album_started`, `image_processed`, `cache_pruned`) stream to stdout as they happen — one compact JSON line per event, tagged `"type": "progress"`. The final line is the result envelope tagged `"type": "result"`, identical in shape to `--format json`. Error envelopes on stderr are also compact single-line in NDJSON mode. Commands without streaming progress (`scan`, `check`, `generate`, `config`) emit a single `"type": "result"` line. This lets GUIs and scripts show incremental progress without waiting for the full pipeline to finish.
+
 ## [0.15.0] - 2026-04-12
 
 ### Added

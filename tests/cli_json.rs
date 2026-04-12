@@ -263,3 +263,166 @@ fn quiet_suppresses_scan_text_tree() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+// ============================================================================
+// --format ndjson
+// ============================================================================
+
+/// Parse NDJSON output: each line is a self-contained JSON object.
+fn parse_ndjson_lines(bytes: &[u8]) -> Vec<serde_json::Value> {
+    let s = String::from_utf8_lossy(bytes);
+    s.lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad JSON line: {e}\n---\n{l}")))
+        .collect()
+}
+
+#[test]
+fn ndjson_check_emits_single_result_line() {
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--format",
+            "ndjson",
+            "check",
+        ])
+        .output()
+        .expect("run simple-gal");
+    assert!(output.status.success());
+    let lines = parse_ndjson_lines(&output.stdout);
+    assert_eq!(lines.len(), 1, "check should emit exactly 1 line");
+    assert_eq!(lines[0]["type"], "result");
+    assert_eq!(lines[0]["ok"], true);
+    assert_eq!(lines[0]["command"], "check");
+}
+
+#[test]
+fn ndjson_scan_emits_single_result_line() {
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--format",
+            "ndjson",
+            "scan",
+        ])
+        .output()
+        .expect("run simple-gal");
+    assert!(output.status.success());
+    let lines = parse_ndjson_lines(&output.stdout);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["type"], "result");
+    assert_eq!(lines[0]["command"], "scan");
+    assert!(lines[0]["data"]["counts"]["albums"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn ndjson_build_streams_progress_then_result() {
+    let tmp = TempDir::new().unwrap();
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--output",
+            tmp.path().join("dist").to_str().unwrap(),
+            "--temp-dir",
+            tmp.path().join("temp").to_str().unwrap(),
+            "--format",
+            "ndjson",
+            "build",
+            "--no-cache",
+        ])
+        .output()
+        .expect("run simple-gal");
+    assert!(
+        output.status.success(),
+        "exit={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let lines = parse_ndjson_lines(&output.stdout);
+    assert!(
+        lines.len() >= 2,
+        "build should emit progress + result, got {} lines",
+        lines.len()
+    );
+
+    // All lines except the last must be progress events.
+    for line in &lines[..lines.len() - 1] {
+        assert_eq!(
+            line["type"], "progress",
+            "non-final line should be progress: {line}"
+        );
+        let event = line["event"].as_str().unwrap();
+        assert!(
+            event == "album_started" || event == "image_processed" || event == "cache_pruned",
+            "unexpected event type: {event}"
+        );
+    }
+
+    // Last line must be the result envelope.
+    let last = lines.last().unwrap();
+    assert_eq!(last["type"], "result");
+    assert_eq!(last["ok"], true);
+    assert_eq!(last["command"], "build");
+    assert!(last["data"]["counts"]["albums"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn ndjson_error_is_compact_single_line() {
+    let tmp = TempDir::new().unwrap();
+    let missing = missing_source(&tmp);
+    let output = simple_gal()
+        .args([
+            "--source",
+            missing.to_str().unwrap(),
+            "--format",
+            "ndjson",
+            "scan",
+        ])
+        .output()
+        .expect("run simple-gal");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+
+    // stderr should be exactly one line of compact JSON.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr_lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(
+        stderr_lines.len(),
+        1,
+        "ndjson error should be 1 line, got: {stderr}"
+    );
+    let v: serde_json::Value = serde_json::from_str(stderr_lines[0])
+        .unwrap_or_else(|e| panic!("bad JSON: {e}\n{}", stderr_lines[0]));
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["kind"], "scan");
+}
+
+#[test]
+fn ndjson_each_line_is_compact_no_pretty_print() {
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--format",
+            "ndjson",
+            "check",
+        ])
+        .output()
+        .expect("run simple-gal");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Compact JSON has no internal newlines — one JSON object = one line.
+    let non_empty: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(non_empty.len(), 1);
+    // No leading whitespace (pretty-print indentation).
+    assert!(
+        !non_empty[0].starts_with(' '),
+        "ndjson line should be compact: {}",
+        non_empty[0]
+    );
+}

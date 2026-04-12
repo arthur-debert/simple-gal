@@ -5,6 +5,11 @@
 //! define the on-the-wire shape of those documents and are the automation
 //! contract: GUIs and shell scripts parse them instead of scraping the
 //! human-readable text output.
+//!
+//! `--format ndjson` extends this with streaming: progress events are emitted
+//! as compact JSON lines (one per event, tagged `"type": "progress"`) as they
+//! happen, followed by a final `"type": "result"` line with the same envelope
+//! shape. Consumers read line-by-line and branch on the `type` field.
 
 use crate::cache::CacheStats;
 use crate::config::ConfigError;
@@ -432,6 +437,68 @@ pub fn emit_stdout<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
 pub fn emit_stderr<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
     let s = serde_json::to_string_pretty(value)?;
     eprintln!("{s}");
+    Ok(())
+}
+
+/// Serialize `value` to compact JSON on stderr, followed by a newline. Used
+/// for error envelopes in NDJSON mode.
+pub fn emit_stderr_compact<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
+    let s = serde_json::to_string(value)?;
+    eprintln!("{s}");
+    Ok(())
+}
+
+// ============================================================================
+// NDJSON (newline-delimited JSON) streaming helpers
+// ============================================================================
+//
+// In `--format ndjson` mode, each line on stdout is a self-contained JSON
+// object. Progress events stream as they happen (one per line), and the
+// final line is the result envelope. Every line carries a `"type"` field
+// so consumers can branch without parsing the full shape:
+//
+//   {"type":"progress","event":"album_started","title":"Landscapes","image_count":5}
+//   {"type":"progress","event":"image_processed","index":1, ...}
+//   {"type":"result","ok":true,"command":"build","data":{...}}
+
+/// Wrapper that tags a progress event with `"type": "progress"` for NDJSON.
+#[derive(Serialize)]
+struct NdjsonProgress<'a> {
+    r#type: &'static str,
+    #[serde(flatten)]
+    event: &'a crate::process::ProcessEvent,
+}
+
+/// Wrapper that tags a result envelope with `"type": "result"` for NDJSON.
+#[derive(Serialize)]
+struct NdjsonResult<'a, T: Serialize> {
+    r#type: &'static str,
+    #[serde(flatten)]
+    envelope: &'a T,
+}
+
+/// Emit a `ProcessEvent` as a single compact JSON line on stdout,
+/// tagged with `"type": "progress"`.
+pub fn emit_ndjson_progress(event: &crate::process::ProcessEvent) -> Result<(), serde_json::Error> {
+    let wrapped = NdjsonProgress {
+        r#type: "progress",
+        event,
+    };
+    let s = serde_json::to_string(&wrapped)?;
+    println!("{s}");
+    Ok(())
+}
+
+/// Emit a result envelope as a single compact JSON line on stdout,
+/// tagged with `"type": "result"`. This is always the last line in
+/// an NDJSON stream.
+pub fn emit_ndjson_result<T: Serialize>(envelope: &T) -> Result<(), serde_json::Error> {
+    let wrapped = NdjsonResult {
+        r#type: "result",
+        envelope,
+    };
+    let s = serde_json::to_string(&wrapped)?;
+    println!("{s}");
     Ok(())
 }
 
