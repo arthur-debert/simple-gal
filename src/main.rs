@@ -458,12 +458,16 @@ fn run_build(cli: &Cli, cache_args: &CacheArgs, format: OutputFormat) -> Result<
     // Compute progress totals from scan results (used by --format progress).
     // Sum per-album: each album may have different sizes/full_index config.
     let total_images: usize = manifest.albums.iter().map(|a| a.images.len()).sum();
-    let variants_total: usize = manifest.albums.iter().map(|a| {
-        let variants_per = a.config.images.sizes.len()
+    let variants_total: usize = manifest
+        .albums
+        .iter()
+        .map(|a| {
+            let variants_per = a.config.images.sizes.len()
             + 1 // thumbnail
             + usize::from(a.config.full_index.generates); // optional full-index thumbnail
-        a.images.len() * variants_per
-    }).sum();
+            a.images.len() * variants_per
+        })
+        .sum();
 
     // Emit scan-complete progress event.
     if progress_mode {
