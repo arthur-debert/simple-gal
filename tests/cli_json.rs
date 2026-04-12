@@ -48,16 +48,48 @@ fn check_json_envelope() {
 }
 
 #[test]
-fn gen_config_json_envelope() {
+fn config_gen_json_envelope() {
     let output = simple_gal()
-        .args(["--format", "json", "gen-config"])
+        .args(["--format", "json", "config", "gen"])
         .output()
         .expect("run simple-gal");
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "exit={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     let v = parse_json(&output.stdout);
-    assert_eq!(v["command"], "gen-config");
+    assert_eq!(v["command"], "config");
+    assert_eq!(v["data"]["action"], "gen");
     let toml = v["data"]["toml"].as_str().unwrap();
     assert!(toml.contains("site_title"));
+}
+
+#[test]
+fn config_schema_json_envelope() {
+    let output = simple_gal()
+        .args(["--format", "json", "config", "schema"])
+        .output()
+        .expect("run simple-gal");
+    assert!(
+        output.status.success(),
+        "exit={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let v = parse_json(&output.stdout);
+    assert_eq!(v["command"], "config");
+    assert_eq!(v["data"]["action"], "schema");
+    let schema = &v["data"]["schema"];
+    assert_eq!(
+        schema["$schema"], "https://json-schema.org/draft/2020-12/schema",
+        "schema should declare draft 2020-12 dialect"
+    );
+    assert_eq!(schema["type"], "object");
+    // The top-level SiteConfig must be present in the schema's properties.
+    assert!(schema["properties"]["site_title"].is_object());
+    assert!(schema["properties"]["colors"]["properties"]["light"].is_object());
 }
 
 #[test]

@@ -331,11 +331,86 @@ pub struct CheckPayload<'a> {
     pub counts: Counts,
 }
 
-// ----- gen-config -----
+// ----- config -----
 
+/// JSON envelope for any `simple-gal config <action>` invocation.
+///
+/// Mirrors clapfig's [`ConfigResult`][clapfig::ConfigResult] but flattens
+/// each variant into a tagged `action` so consumers can branch on a single
+/// field without parsing free-form text.
 #[derive(Debug, Serialize)]
-pub struct GenConfigPayload {
-    pub toml: String,
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ConfigOpPayload {
+    /// `config gen` (printed to stdout).
+    Gen { toml: String },
+    /// `config gen --output PATH` (written to a file).
+    GenWritten { path: PathBuf },
+    /// `config schema` (printed to stdout).
+    Schema { schema: serde_json::Value },
+    /// `config schema --output PATH` (written to a file).
+    SchemaWritten { path: PathBuf },
+    /// `config get KEY`.
+    Get {
+        key: String,
+        value: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        doc: Vec<String>,
+    },
+    /// `config set KEY VALUE`.
+    Set { key: String, value: String },
+    /// `config unset KEY`.
+    Unset { key: String },
+    /// `config` / `config list` — flat key/value listing.
+    List { entries: Vec<ConfigListEntry> },
+}
+
+/// One row of a `config list` listing.
+#[derive(Debug, Serialize)]
+pub struct ConfigListEntry {
+    pub key: String,
+    pub value: String,
+}
+
+impl ConfigOpPayload {
+    /// Convert clapfig's `ConfigResult` into the wire envelope.
+    ///
+    /// For `Schema`, the JSON string clapfig produced is re-parsed into a
+    /// `serde_json::Value` so the schema lands as structured JSON inside
+    /// the envelope (rather than as a string-of-JSON that consumers would
+    /// have to double-parse).
+    pub fn from_result(result: &clapfig::ConfigResult) -> Self {
+        use clapfig::ConfigResult as R;
+        match result {
+            R::Template(t) => ConfigOpPayload::Gen { toml: t.clone() },
+            R::TemplateWritten { path } => ConfigOpPayload::GenWritten { path: path.clone() },
+            R::Schema(s) => ConfigOpPayload::Schema {
+                // Schema strings are produced by serde_json::to_string_pretty
+                // upstream, so re-parsing is infallible in practice.
+                schema: serde_json::from_str(s)
+                    .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
+            },
+            R::SchemaWritten { path } => ConfigOpPayload::SchemaWritten { path: path.clone() },
+            R::KeyValue { key, value, doc } => ConfigOpPayload::Get {
+                key: key.clone(),
+                value: value.clone(),
+                doc: doc.clone(),
+            },
+            R::ValueSet { key, value } => ConfigOpPayload::Set {
+                key: key.clone(),
+                value: value.clone(),
+            },
+            R::ValueUnset { key } => ConfigOpPayload::Unset { key: key.clone() },
+            R::Listing { entries } => ConfigOpPayload::List {
+                entries: entries
+                    .iter()
+                    .map(|(k, v)| ConfigListEntry {
+                        key: k.clone(),
+                        value: v.clone(),
+                    })
+                    .collect(),
+            },
+        }
+    }
 }
 
 // ============================================================================

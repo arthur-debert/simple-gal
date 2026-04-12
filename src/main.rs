@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use clapfig::{Clapfig, ConfigAction, ConfigArgs, ConfigSubcommand, SearchPath};
+use simple_gal::config::SiteConfig;
 use simple_gal::json_output::{
-    self, BuildPayload, CacheStatsPayload, CheckPayload, Counts, ErrorEnvelope, ErrorKind,
-    GenConfigPayload, GeneratePayload, OkEnvelope, ProcessPayload, ScanPayload,
+    self, BuildPayload, CacheStatsPayload, CheckPayload, ConfigOpPayload, Counts, ErrorEnvelope,
+    ErrorKind, GeneratePayload, OkEnvelope, ProcessPayload, ScanPayload,
 };
 use simple_gal::{config, generate, output, process, scan};
 use std::io::IsTerminal;
@@ -86,15 +88,21 @@ Metadata resolution (first available wins):
   Description: sidecar .txt → IPTC caption
   Gallery:     directory name; description from description.md or .txt
 
-Run 'simple-gal gen-config' to generate a documented config.toml.")]
+Run 'simple-gal config gen' to generate a documented config.toml,
+or 'simple-gal config schema' to emit a JSON Schema for tooling.")]
 #[command(version = version_string())]
 struct Cli {
     /// Content directory
     #[arg(long, default_value = "content", global = true)]
     source: PathBuf,
 
-    /// Output directory
-    #[arg(long, default_value = "dist", global = true)]
+    /// Output directory.
+    ///
+    /// Not marked `global = true` because the `config gen` and `config
+    /// schema` subcommands have their own `--output` flag (the file to
+    /// write the template / schema to), and clap's global-flag inheritance
+    /// would otherwise collide the two.
+    #[arg(long, default_value = "dist")]
     output: PathBuf,
 
     /// Directory for intermediate files (manifest, processed images)
@@ -127,8 +135,8 @@ enum Command {
     Build(CacheArgs),
     /// Validate content directory without building
     Check,
-    /// Print a stock config.toml with all options documented
-    GenConfig,
+    /// Manage site configuration: gen, schema, list, get, set, unset
+    Config(ConfigArgs),
 }
 
 /// Wrapper around any command error tagged with an [`ErrorKind`] so the
@@ -279,7 +287,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<(), CliError> {
         Command::Generate => run_generate(cli, json_mode, quiet),
         Command::Build(cache_args) => run_build(cli, cache_args, json_mode, quiet),
         Command::Check => run_check(cli, json_mode, quiet),
-        Command::GenConfig => run_gen_config(json_mode),
+        Command::Config(args) => run_config(cli, args, json_mode),
     }
 }
 
@@ -508,18 +516,64 @@ fn run_check(cli: &Cli, json_mode: bool, quiet: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-fn run_gen_config(json_mode: bool) -> Result<(), CliError> {
-    let toml = config::stock_config_toml();
+/// Dispatch the `simple-gal config <action>` subcommand group through
+/// clapfig. clapfig owns gen / schema / list / get / set / unset; we wrap
+/// the typed `ConfigResult` it returns in our JSON envelope when
+/// `--format json` is in effect, otherwise print it via `Display`.
+fn run_config(cli: &Cli, args: &ConfigArgs, json_mode: bool) -> Result<(), CliError> {
+    // ConfigArgs::into_action takes self, but we only have a &ConfigArgs
+    // (we never own the Cli value). Mirror its dispatch by hand so we can
+    // build a fresh ConfigAction without consuming the args.
+    let action = config_action_from_args(args);
+
+    let builder = Clapfig::builder::<SiteConfig>()
+        .app_name("simple-gal")
+        .file_name("config.toml")
+        .search_paths(vec![SearchPath::Path(cli.source.clone())])
+        .no_env()
+        .post_validate(|c: &SiteConfig| c.validate().map_err(|e| e.to_string()));
+
+    let result = builder.handle(&action).tag(ErrorKind::Config)?;
+
     if json_mode {
-        let payload = GenConfigPayload {
-            toml: toml.to_string(),
-        };
-        json_output::emit_stdout(&OkEnvelope::new("gen-config", payload))
-            .tag(ErrorKind::Internal)?;
+        let payload = ConfigOpPayload::from_result(&result);
+        json_output::emit_stdout(&OkEnvelope::new("config", payload)).tag(ErrorKind::Internal)?;
     } else {
-        print!("{toml}");
+        println!("{result}");
     }
     Ok(())
+}
+
+/// Borrow-friendly mirror of [`ConfigArgs::into_action`].
+///
+/// `ConfigArgs` doesn't implement `Clone`, so we can't use the upstream
+/// helper from a `&ConfigArgs`. Re-implementing the match by hand is
+/// trivial and lets the rest of `run` keep its `&Cli` shape.
+fn config_action_from_args(args: &ConfigArgs) -> ConfigAction {
+    match args.action.as_ref() {
+        None | Some(ConfigSubcommand::List) => ConfigAction::List {
+            scope: args.scope.clone(),
+        },
+        Some(ConfigSubcommand::Gen { output }) => ConfigAction::Gen {
+            output: output.clone(),
+        },
+        Some(ConfigSubcommand::Schema { output }) => ConfigAction::Schema {
+            output: output.clone(),
+        },
+        Some(ConfigSubcommand::Get { key }) => ConfigAction::Get {
+            key: key.clone(),
+            scope: args.scope.clone(),
+        },
+        Some(ConfigSubcommand::Set { key, value }) => ConfigAction::Set {
+            key: key.clone(),
+            value: value.clone(),
+            scope: args.scope.clone(),
+        },
+        Some(ConfigSubcommand::Unset { key }) => ConfigAction::Unset {
+            key: key.clone(),
+            scope: args.scope.clone(),
+        },
+    }
 }
 
 /// Initialize the rayon thread pool based on processing config.
