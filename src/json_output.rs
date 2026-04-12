@@ -5,6 +5,11 @@
 //! define the on-the-wire shape of those documents and are the automation
 //! contract: GUIs and shell scripts parse them instead of scraping the
 //! human-readable text output.
+//!
+//! `--format ndjson` extends this with streaming: progress events are emitted
+//! as compact JSON lines (one per event, tagged `"type": "progress"`) as they
+//! happen, followed by a final `"type": "result"` line with the same envelope
+//! shape. Consumers read line-by-line and branch on the `type` field.
 
 use crate::cache::CacheStats;
 use crate::config::ConfigError;
@@ -435,6 +440,209 @@ pub fn emit_stderr<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
     Ok(())
 }
 
+/// Serialize `value` to compact JSON on stderr, followed by a newline. Used
+/// for error envelopes in NDJSON mode.
+pub fn emit_stderr_compact<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
+    let s = serde_json::to_string(value)?;
+    eprintln!("{s}");
+    Ok(())
+}
+
+// ============================================================================
+// NDJSON (newline-delimited JSON) streaming helpers
+// ============================================================================
+//
+// In `--format ndjson` mode, each line on stdout is a self-contained JSON
+// object. Progress events stream as they happen (one per line), and the
+// final line is the result envelope. Every line carries a `"type"` field
+// so consumers can branch without parsing the full shape:
+//
+//   {"type":"progress","event":"album_started","title":"Landscapes","image_count":5}
+//   {"type":"progress","event":"image_processed","index":1, ...}
+//   {"type":"result","ok":true,"command":"build","data":{...}}
+
+/// Wrapper that tags a progress event with `"type": "progress"` for NDJSON.
+#[derive(Serialize)]
+struct NdjsonProgress<'a> {
+    r#type: &'static str,
+    #[serde(flatten)]
+    event: &'a crate::process::ProcessEvent,
+}
+
+/// Wrapper that tags a result envelope with `"type": "result"` for NDJSON.
+#[derive(Serialize)]
+struct NdjsonResult<'a, T: Serialize> {
+    r#type: &'static str,
+    #[serde(flatten)]
+    envelope: &'a T,
+}
+
+/// Emit a `ProcessEvent` as a single compact JSON line on stdout,
+/// tagged with `"type": "progress"`.
+pub fn emit_ndjson_progress(event: &crate::process::ProcessEvent) -> Result<(), serde_json::Error> {
+    let wrapped = NdjsonProgress {
+        r#type: "progress",
+        event,
+    };
+    let s = serde_json::to_string(&wrapped)?;
+    println!("{s}");
+    Ok(())
+}
+
+/// Emit a result envelope as a single compact JSON line on stdout,
+/// tagged with `"type": "result"`. This is always the last line in
+/// an NDJSON stream.
+pub fn emit_ndjson_result<T: Serialize>(envelope: &T) -> Result<(), serde_json::Error> {
+    let wrapped = NdjsonResult {
+        r#type: "result",
+        envelope,
+    };
+    let s = serde_json::to_string(&wrapped)?;
+    println!("{s}");
+    Ok(())
+}
+
+// ============================================================================
+// Structured progress tracking (`--format progress`)
+// ============================================================================
+//
+// Pre-computes percent-complete, stage, and image/variant counters so GUI
+// consumers can drive a progress bar without interpreting raw events.
+//
+// Weight model (empirically measured):
+//   scan     =  2%  — filesystem walk, near-instant
+//   process  = 90%  — image encoding dominates wall time
+//   generate =  8%  — HTML templating + file writes
+//
+// Within process, the unit of progress is one image variant (a responsive
+// size or thumbnail). `ProgressTracker` estimates total variants from the
+// config upfront, then increments as `ImageProcessed` events arrive.
+
+const SCAN_WEIGHT: f64 = 2.0;
+const PROCESS_WEIGHT: f64 = 90.0;
+// generate weight is implicitly 100 - SCAN_WEIGHT - PROCESS_WEIGHT = 8.0
+
+/// Pipeline stage reported in progress events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    Scan,
+    Process,
+    Generate,
+}
+
+/// A single progress line emitted in `--format progress` mode.
+#[derive(Debug, Serialize)]
+pub struct ProgressEvent {
+    pub r#type: &'static str,
+    pub stage: Stage,
+    /// Overall percent complete, 0.0–100.0.
+    pub percent: f64,
+    pub images_done: usize,
+    pub images_total: usize,
+    pub variants_done: usize,
+    pub variants_total: usize,
+}
+
+/// Tracks build progress across the three pipeline stages.
+///
+/// Created after scan completes (when totals are known). Call
+/// [`on_image_processed`] for each `ProcessEvent::ImageProcessed` to
+/// advance the counters.
+pub struct ProgressTracker {
+    pub images_total: usize,
+    pub variants_total: usize,
+    images_done: usize,
+    variants_done: usize,
+}
+
+impl ProgressTracker {
+    /// Create a tracker from the scan results.
+    ///
+    /// `variants_per_image` is the config-based estimate:
+    /// `responsive_sizes.len() + 1 (thumbnail) + full_index_flag`.
+    pub fn new(images_total: usize, variants_per_image: usize) -> Self {
+        Self {
+            images_total,
+            variants_total: images_total * variants_per_image,
+            images_done: 0,
+            variants_done: 0,
+        }
+    }
+
+    /// Create a tracker with pre-computed totals (for per-album-config accuracy).
+    ///
+    /// Use this when albums have different configs so `variants_total` cannot
+    /// be derived from a single `variants_per_image` factor.
+    pub fn with_totals(images_total: usize, variants_total: usize) -> Self {
+        Self {
+            images_total,
+            variants_total,
+            images_done: 0,
+            variants_done: 0,
+        }
+    }
+
+    /// Build the scan-complete progress event (stage boundary).
+    pub fn scan_complete(&self) -> ProgressEvent {
+        ProgressEvent {
+            r#type: "progress",
+            stage: Stage::Scan,
+            percent: SCAN_WEIGHT,
+            images_done: 0,
+            images_total: self.images_total,
+            variants_done: 0,
+            variants_total: self.variants_total,
+        }
+    }
+
+    /// Record a completed image and return the updated progress event.
+    ///
+    /// `variant_count` is the actual number of variants this image produced
+    /// (taken from `ProcessEvent::ImageProcessed.variants.len()`).
+    pub fn on_image_processed(&mut self, variant_count: usize) -> ProgressEvent {
+        self.images_done += 1;
+        self.variants_done += variant_count;
+
+        let fraction = if self.variants_total > 0 {
+            (self.variants_done as f64 / self.variants_total as f64).min(1.0)
+        } else {
+            1.0
+        };
+        let percent = SCAN_WEIGHT + fraction * PROCESS_WEIGHT;
+
+        ProgressEvent {
+            r#type: "progress",
+            stage: Stage::Process,
+            percent,
+            images_done: self.images_done,
+            images_total: self.images_total,
+            variants_done: self.variants_done,
+            variants_total: self.variants_total,
+        }
+    }
+
+    /// Build the generate-started progress event (stage boundary).
+    pub fn generate_started(&self) -> ProgressEvent {
+        ProgressEvent {
+            r#type: "progress",
+            stage: Stage::Generate,
+            percent: SCAN_WEIGHT + PROCESS_WEIGHT,
+            images_done: self.images_done,
+            images_total: self.images_total,
+            variants_done: self.variants_done,
+            variants_total: self.variants_total,
+        }
+    }
+}
+
+/// Emit a progress event as a compact JSON line on stdout.
+pub fn emit_progress(event: &ProgressEvent) -> Result<(), serde_json::Error> {
+    let s = serde_json::to_string(event)?;
+    println!("{s}");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,5 +688,75 @@ mod tests {
         let (line, col) = offset_to_line_col("hello\nworld", 8);
         assert_eq!(line, Some(2));
         assert_eq!(col, Some(3));
+    }
+
+    // =========================================================================
+    // ProgressTracker tests
+    // =========================================================================
+
+    #[test]
+    fn progress_scan_complete_is_2_percent() {
+        let tracker = ProgressTracker::new(10, 4);
+        let ev = tracker.scan_complete();
+        assert_eq!(ev.stage, Stage::Scan);
+        assert!((ev.percent - 2.0).abs() < f64::EPSILON);
+        assert_eq!(ev.images_total, 10);
+        assert_eq!(ev.variants_total, 40);
+        assert_eq!(ev.images_done, 0);
+        assert_eq!(ev.variants_done, 0);
+    }
+
+    #[test]
+    fn progress_first_image_advances_correctly() {
+        let mut tracker = ProgressTracker::new(10, 4); // 40 variants
+        let ev = tracker.on_image_processed(4);
+        assert_eq!(ev.stage, Stage::Process);
+        assert_eq!(ev.images_done, 1);
+        assert_eq!(ev.variants_done, 4);
+        // 2 + (4/40)*90 = 2 + 9 = 11
+        assert!((ev.percent - 11.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn progress_all_images_reaches_92_percent() {
+        let mut tracker = ProgressTracker::new(3, 4); // 12 variants
+        tracker.on_image_processed(4);
+        tracker.on_image_processed(4);
+        let ev = tracker.on_image_processed(4);
+        assert_eq!(ev.images_done, 3);
+        assert_eq!(ev.variants_done, 12);
+        // 2 + (12/12)*90 = 92
+        assert!((ev.percent - 92.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn progress_generate_started_is_92_percent() {
+        let mut tracker = ProgressTracker::new(2, 3); // 6 variants
+        tracker.on_image_processed(3);
+        tracker.on_image_processed(3);
+        let ev = tracker.generate_started();
+        assert_eq!(ev.stage, Stage::Generate);
+        assert!((ev.percent - 92.0).abs() < f64::EPSILON);
+        assert_eq!(ev.images_done, 2);
+    }
+
+    #[test]
+    fn progress_fewer_variants_than_estimated_clamps() {
+        // Images produce fewer variants than the config estimate
+        let mut tracker = ProgressTracker::new(2, 4); // estimate: 8 variants
+        tracker.on_image_processed(2); // actual: 2
+        tracker.on_image_processed(2); // actual: 2, total: 4 out of 8
+        let ev = tracker.generate_started();
+        // variants_done=4 < variants_total=8, so process didn't fill 90%
+        // generate_started clamps to 92% regardless
+        assert!((ev.percent - 92.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn progress_zero_images() {
+        let tracker = ProgressTracker::new(0, 4);
+        assert_eq!(tracker.variants_total, 0);
+        let ev = tracker.scan_complete();
+        assert!((ev.percent - 2.0).abs() < f64::EPSILON);
     }
 }

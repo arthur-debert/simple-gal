@@ -190,7 +190,8 @@ pub struct ProcessResult {
 }
 
 /// Cache outcome for a single processed variant (for progress reporting).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum VariantStatus {
     /// Existing cached file was reused in place.
     Cached,
@@ -211,7 +212,7 @@ impl From<&CacheLookup> for VariantStatus {
 }
 
 /// Information about a single processed variant (for progress reporting).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VariantInfo {
     /// Display label (e.g., "800px", "thumbnail").
     pub label: String,
@@ -223,7 +224,8 @@ pub struct VariantInfo {
 ///
 /// Sent through an optional channel so callers can display progress
 /// as images complete, without the process module touching stdout.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
 pub enum ProcessEvent {
     /// An album is about to be processed.
     AlbumStarted { title: String, image_count: usize },
