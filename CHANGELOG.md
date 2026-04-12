@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-12
+
 ### Added
 - `--format ndjson` output mode: newline-delimited JSON streaming. Each line is a self-contained JSON object with a `"type"` discriminator. During `process` and `build`, progress events (`album_started`, `image_processed`, `cache_pruned`) stream to stdout as they happen — one compact JSON line per event, tagged `"type": "progress"`. The final line is the result envelope tagged `"type": "result"`, identical in shape to `--format json`. Error envelopes on stderr are also compact single-line in NDJSON mode. Commands without streaming progress (`scan`, `check`, `generate`, `config`) emit a single `"type": "result"` line. This lets GUIs and scripts show incremental progress without waiting for the full pipeline to finish.
 - `--format progress` output mode: structured progress stream for GUI progress bars. Emits NDJSON lines with pre-computed `percent` (0–100), `stage` (`scan`/`process`/`generate`), and `images_done`/`images_total`/`variants_done`/`variants_total` counters. Weight model: scan=2%, process=90%, generate=8%. Within process, each image variant (responsive size or thumbnail) is one unit of progress. The `build` command streams one progress line per completed image; other commands emit a single result line. Variant totals are estimated from the config (`images.sizes` count + thumbnail + optional full-index thumbnail).
