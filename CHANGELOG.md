@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-04-12
+
 ### Added
 - `simple-gal config` subcommand group, owned end-to-end by [`clapfig`](https://crates.io/crates/clapfig) 0.15: `config gen` (commented TOML template auto-derived from `SiteConfig` doc comments + `#[config(default = ...)]` annotations), `config schema` (JSON Schema, Draft 2020-12, intended for GUI form generators), `config list` (flat dotted-key view of the resolved config), `config get KEY` (single key + doc comment), and `config set KEY VALUE` / `config unset KEY` placeholders that error with a clear `NoPersistPath` until a persist scope is wired. All variants honor `--format json` via the new `ConfigOpPayload` envelope (`{ok, command: "config", data: {action, ...}}`), so automation can consume any of them without scraping text.
 - `--source content config schema -o site.schema.json` writes the JSON Schema to a file. The schema includes per-field `default`, `description` (from doc comments), `type`, and `additionalProperties: false` on every nested object.
