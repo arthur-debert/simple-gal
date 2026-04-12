@@ -171,6 +171,24 @@ jobs:
             gh release upload "$TAG" "${{ matrix.artifact }}.tar.gz" --clobber
           fi
 
+  # Smoke-test the GitHub Action against the just-released binary.
+  # Catches CLI changes that break the action's invocation pattern.
+  smoke-test-action:
+    needs: build-binaries
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with simple-gal-action
+        uses: arthur-debert/simple-gal-action@v1
+        with:
+          source: fixtures/content
+          version: ${{ github.ref_name }}
+
+      - name: Verify output
+        run: test -f dist/index.html
+
   publish-crates:
     needs: create-release
     # Run even if create-release was skipped (release already exists)
