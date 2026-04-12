@@ -53,10 +53,11 @@
 //! - No duplicate image numbers within an album
 //! - Every album must have at least one image
 
-use crate::config::{self, SiteConfig};
+use crate::config::{self, SiteConfig, SiteConfigLayer};
 use crate::metadata;
 use crate::naming::parse_entry_name;
 use crate::types::{NavItem, Page};
+use confique::Layer;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -134,20 +135,18 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     let mut albums = Vec::new();
     let mut nav_items = Vec::new();
 
-    // Build the config chain: stock defaults → root config.toml
-    let base = SiteConfig::default();
-    let root_partial = config::load_partial_config(root)?;
-    let root_config = match root_partial {
-        Some(partial) => base.merge(partial),
-        None => base,
-    };
+    // Resolve the root config (used for assets_dir, site_description_file,
+    // and the manifest output) and capture the root layer to seed the
+    // per-directory cascade.
+    let root_layer = config::load_layer(root)?.unwrap_or_else(SiteConfigLayer::empty);
+    let root_config = config::finalize_layer(root_layer.clone())?;
 
     scan_directory(
         root,
         root,
         &mut albums,
         &mut nav_items,
-        &root_config,
+        &root_layer,
         &root_config.assets_dir,
     )?;
 
@@ -273,7 +272,7 @@ fn scan_directory(
     root: &Path,
     albums: &mut Vec<Album>,
     nav_items: &mut Vec<NavItem>,
-    inherited_config: &SiteConfig,
+    inherited_layer: &SiteConfigLayer,
     assets_dir: &str,
 ) -> Result<(), ScanError> {
     let entries = collect_entries(path, if path == root { Some(assets_dir) } else { None })?;
@@ -287,19 +286,20 @@ fn scan_directory(
         return Err(ScanError::MixedContent(path.to_path_buf()));
     }
 
-    // Merge any local config.toml onto the inherited config (skip root — already handled)
-    let effective_config = if path != root {
-        match config::load_partial_config(path)? {
-            Some(partial) => inherited_config.clone().merge(partial),
-            None => inherited_config.clone(),
+    // Layer any local config.toml onto the inherited layer (skip root — its
+    // file was already folded into `inherited_layer` by `scan`).
+    let effective_layer = if path != root {
+        match config::load_layer(path)? {
+            Some(local) => local.with_fallback(inherited_layer.clone()),
+            None => inherited_layer.clone(),
         }
     } else {
-        inherited_config.clone()
+        inherited_layer.clone()
     };
 
     if !images.is_empty() {
-        // This is an album
-        effective_config.validate()?;
+        // This is an album — resolve and validate the cascade leaf.
+        let effective_config = config::finalize_layer(effective_layer)?;
         let album = build_album(path, root, &images, effective_config)?;
         let in_nav = album.in_nav;
         let title = album.title.clone();
@@ -335,7 +335,7 @@ fn scan_directory(
                 root,
                 albums,
                 &mut child_nav,
-                &effective_config,
+                &effective_layer,
                 assets_dir,
             )?;
         }

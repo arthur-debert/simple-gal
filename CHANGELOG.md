@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `simple-gal config` subcommand group, owned end-to-end by [`clapfig`](https://crates.io/crates/clapfig) 0.15: `config gen` (commented TOML template auto-derived from `SiteConfig` doc comments + `#[config(default = ...)]` annotations), `config schema` (JSON Schema, Draft 2020-12, intended for GUI form generators), `config list` (flat dotted-key view of the resolved config), `config get KEY` (single key + doc comment), and `config set KEY VALUE` / `config unset KEY` placeholders that error with a clear `NoPersistPath` until a persist scope is wired. All variants honor `--format json` via the new `ConfigOpPayload` envelope (`{ok, command: "config", data: {action, ...}}`), so automation can consume any of them without scraping text.
+- `--source content config schema -o site.schema.json` writes the JSON Schema to a file. The schema includes per-field `default`, `description` (from doc comments), `type`, and `additionalProperties: false` on every nested object.
+
+### Changed
+- **`SiteConfig` migrated to [`confique::Config`](https://crates.io/crates/confique).** Defaults now live as `#[config(default = ...)]` on the struct fields, sparse loading + deep merge are handled by confique's generated `Layer` type, and the per-directory cascade in `scan.rs` threads `SiteConfigLayer` instead of resolved `SiteConfig`s, folding layers via `Layer::with_fallback` and finalizing only at album leaves. Net delete: ~430 lines of `PartialSiteConfig`, hand-written `merge()` methods, and the hand-rolled `stock_config_toml()` template string.
+- A custom `Deserialize` impl on `SiteConfig` routes any direct deserialize (manifest reads in `process.rs`, JSON test fixtures, anything calling `serde_json::from_str::<SiteConfig>`) through the same layer + defaults pipeline, so a sparse `"config": {}` in a manifest still produces a fully-populated config.
+- `simple-gal gen-config` removed in favor of `simple-gal config gen`. The new template is auto-generated from confique struct metadata, so it can no longer drift from the code.
+- `--output` is no longer a global flag — only `build` and `generate` use it, and marking it global collided with clapfig's `config gen --output` / `config schema --output`. `--source` and `--temp-dir` are still global.
+- `ColorScheme` was split into distinct `LightColors` / `DarkColors` types, and `ClampSize` into `MatX` / `MatY`. confique nested defaults come from the inner type, so two instances of one type can't have different defaults; splitting is the only way to keep accurate per-side defaults visible in both the schema and the generated template.
+- Semantic validation (`quality ≤ 100`, non-zero aspect ratios, non-empty `images.sizes`) now runs through clapfig's `.post_validate()` hook on every `simple-gal config <action>` invocation. The standalone `SiteConfig::validate()` method stays for the per-directory cascade in `scan.rs`.
+- `clapfig` bumped from 0.13 → 0.15. Adds `confique = "0.4"` as a direct dependency (used for the `Config` derive macro and `Layer` trait).
+
 ## [0.14.0] - 2026-04-11
 
 ### Added
