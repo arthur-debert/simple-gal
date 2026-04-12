@@ -570,6 +570,19 @@ impl ProgressTracker {
         }
     }
 
+    /// Create a tracker with pre-computed totals (for per-album-config accuracy).
+    ///
+    /// Use this when albums have different configs so `variants_total` cannot
+    /// be derived from a single `variants_per_image` factor.
+    pub fn with_totals(images_total: usize, variants_total: usize) -> Self {
+        Self {
+            images_total,
+            variants_total,
+            images_done: 0,
+            variants_done: 0,
+        }
+    }
+
     /// Build the scan-complete progress event (stage boundary).
     pub fn scan_complete(&self) -> ProgressEvent {
         ProgressEvent {

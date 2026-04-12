@@ -308,9 +308,10 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<(), CliError> {
 }
 
 /// Emit a JSON result envelope: pretty-printed for `--format json`,
-/// compact single-line for `--format ndjson`.
-fn emit_json_result<T: Serialize>(ndjson: bool, value: &T) -> Result<(), CliError> {
-    if ndjson {
+/// compact single-line for `--format ndjson` and `--format progress`.
+/// The `compact` parameter is true for any NDJSON-like mode.
+fn emit_json_result<T: Serialize>(compact: bool, value: &T) -> Result<(), CliError> {
+    if compact {
         json_output::emit_ndjson_result(value).tag(ErrorKind::Internal)
     } else {
         json_output::emit_stdout(value).tag(ErrorKind::Internal)
@@ -455,14 +456,18 @@ fn run_build(cli: &Cli, cache_args: &CacheArgs, format: OutputFormat) -> Result<
     }
 
     // Compute progress totals from scan results (used by --format progress).
+    // Sum per-album: each album may have different sizes/full_index config.
     let total_images: usize = manifest.albums.iter().map(|a| a.images.len()).sum();
-    let variants_per_image = manifest.config.images.sizes.len()
-        + 1 // thumbnail
-        + usize::from(manifest.config.full_index.generates); // optional full-index thumbnail
+    let variants_total: usize = manifest.albums.iter().map(|a| {
+        let variants_per = a.config.images.sizes.len()
+            + 1 // thumbnail
+            + usize::from(a.config.full_index.generates); // optional full-index thumbnail
+        a.images.len() * variants_per
+    }).sum();
 
     // Emit scan-complete progress event.
     if progress_mode {
-        let tracker = json_output::ProgressTracker::new(total_images, variants_per_image);
+        let tracker = json_output::ProgressTracker::with_totals(total_images, variants_total);
         json_output::emit_progress(&tracker.scan_complete()).ok();
     }
 
@@ -473,9 +478,9 @@ fn run_build(cli: &Cli, cache_args: &CacheArgs, format: OutputFormat) -> Result<
     let suppress = !stage_text && !ndjson;
     let printer = std::thread::spawn(move || {
         let mut tracker = if progress_mode {
-            Some(json_output::ProgressTracker::new(
+            Some(json_output::ProgressTracker::with_totals(
                 total_images,
-                variants_per_image,
+                variants_total,
             ))
         } else {
             None
