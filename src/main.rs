@@ -373,15 +373,16 @@ fn run_process(
             }
         }
     });
-    let result = process::process(
+    let process_result = process::process(
         &scan_manifest_path,
         &cli.source,
         &processed_dir,
         !cache_args.no_cache,
         Some(tx),
     )
-    .tag(ErrorKind::Process)?;
+    .tag(ErrorKind::Process);
     join_printer(printer)?;
+    let result = process_result?;
     let output_manifest_path = processed_dir.join("manifest.json");
     let json = serde_json::to_string_pretty(&result.manifest).tag(ErrorKind::Internal)?;
     std::fs::write(&output_manifest_path, &json).tag(ErrorKind::Io)?;
@@ -461,15 +462,16 @@ fn run_build(
             }
         }
     });
-    let result = process::process(
+    let process_result = process::process(
         &scan_manifest_path,
         &source,
         &processed_dir,
         !cache_args.no_cache,
         Some(tx),
     )
-    .tag(ErrorKind::Process)?;
+    .tag(ErrorKind::Process);
     join_printer(printer)?;
+    let result = process_result?;
     let processed_manifest_path = processed_dir.join("manifest.json");
     let json = serde_json::to_string_pretty(&result.manifest).tag(ErrorKind::Internal)?;
     std::fs::write(&processed_manifest_path, &json).tag(ErrorKind::Io)?;

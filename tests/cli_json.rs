@@ -403,6 +403,77 @@ fn ndjson_error_is_compact_single_line() {
 }
 
 #[test]
+fn ndjson_process_streams_progress_then_result() {
+    let tmp = TempDir::new().unwrap();
+    let temp_dir = tmp.path().join("temp");
+
+    // Run scan first so that the manifest exists for the process stage.
+    let scan_output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--temp-dir",
+            temp_dir.to_str().unwrap(),
+            "scan",
+            "--save-manifest",
+        ])
+        .output()
+        .expect("run simple-gal scan");
+    assert!(
+        scan_output.status.success(),
+        "scan failed: {}",
+        String::from_utf8_lossy(&scan_output.stderr)
+    );
+
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--temp-dir",
+            temp_dir.to_str().unwrap(),
+            "--format",
+            "ndjson",
+            "process",
+            "--no-cache",
+        ])
+        .output()
+        .expect("run simple-gal process");
+    assert!(
+        output.status.success(),
+        "exit={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let lines = parse_ndjson_lines(&output.stdout);
+    assert!(
+        lines.len() >= 2,
+        "process should emit progress + result, got {} lines",
+        lines.len()
+    );
+
+    // All lines except the last must be progress events.
+    for line in &lines[..lines.len() - 1] {
+        assert_eq!(
+            line["type"], "progress",
+            "non-final line should be progress: {line}"
+        );
+        let event = line["event"].as_str().unwrap();
+        assert!(
+            event == "album_started" || event == "image_processed" || event == "cache_pruned",
+            "unexpected event type: {event}"
+        );
+    }
+
+    // Last line must be the result envelope.
+    let last = lines.last().unwrap();
+    assert_eq!(last["type"], "result");
+    assert_eq!(last["ok"], true);
+    assert_eq!(last["command"], "process");
+    assert!(last["data"]["cache"]["total"].as_u64().unwrap() > 0);
+}
+
+#[test]
 fn ndjson_each_line_is_compact_no_pretty_print() {
     let output = simple_gal()
         .args([
