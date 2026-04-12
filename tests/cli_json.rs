@@ -497,3 +497,132 @@ fn ndjson_each_line_is_compact_no_pretty_print() {
         non_empty[0]
     );
 }
+
+// ============================================================================
+// --format progress
+// ============================================================================
+
+#[test]
+fn progress_check_emits_single_result_line() {
+    // Non-build commands should fall back to ndjson-style single result.
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--format",
+            "progress",
+            "check",
+        ])
+        .output()
+        .expect("run simple-gal");
+    assert!(output.status.success());
+    let lines = parse_ndjson_lines(&output.stdout);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["type"], "result");
+    assert_eq!(lines[0]["command"], "check");
+}
+
+#[test]
+fn progress_build_streams_percent_and_counters() {
+    let tmp = TempDir::new().unwrap();
+    let output = simple_gal()
+        .args([
+            "--source",
+            fixtures_dir().to_str().unwrap(),
+            "--output",
+            tmp.path().join("dist").to_str().unwrap(),
+            "--temp-dir",
+            tmp.path().join("temp").to_str().unwrap(),
+            "--format",
+            "progress",
+            "build",
+            "--no-cache",
+        ])
+        .output()
+        .expect("run simple-gal");
+    assert!(
+        output.status.success(),
+        "exit={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let lines = parse_ndjson_lines(&output.stdout);
+    // At minimum: scan progress + N image progress + generate progress + result
+    assert!(
+        lines.len() >= 4,
+        "progress build should emit >=4 lines, got {}",
+        lines.len()
+    );
+
+    // First line: scan complete at 2%.
+    assert_eq!(lines[0]["type"], "progress");
+    assert_eq!(lines[0]["stage"], "scan");
+    assert_eq!(lines[0]["percent"], 2.0);
+    assert!(lines[0]["images_total"].as_u64().unwrap() > 0);
+    assert!(lines[0]["variants_total"].as_u64().unwrap() > 0);
+
+    // Middle lines: process stage with increasing images_done.
+    let process_lines: Vec<&serde_json::Value> =
+        lines.iter().filter(|l| l["stage"] == "process").collect();
+    assert!(!process_lines.is_empty(), "should have process events");
+
+    // images_done should increase monotonically.
+    let images_done: Vec<u64> = process_lines
+        .iter()
+        .map(|l| l["images_done"].as_u64().unwrap())
+        .collect();
+    for w in images_done.windows(2) {
+        assert!(
+            w[1] >= w[0],
+            "images_done should be monotonic: {:?}",
+            images_done
+        );
+    }
+
+    // Percent should be > 2 and < 100 for all process events.
+    for line in &process_lines {
+        let pct = line["percent"].as_f64().unwrap();
+        assert!(pct > 2.0, "process percent should be > 2: {pct}");
+        assert!(pct <= 92.0, "process percent should be <= 92: {pct}");
+    }
+
+    // Second-to-last progress line: generate stage.
+    let last_progress = lines
+        .iter()
+        .rev()
+        .find(|l| l["type"] == "progress")
+        .unwrap();
+    assert_eq!(last_progress["stage"], "generate");
+    assert_eq!(last_progress["percent"], 92.0);
+
+    // Last line: result.
+    let last = lines.last().unwrap();
+    assert_eq!(last["type"], "result");
+    assert_eq!(last["command"], "build");
+}
+
+#[test]
+fn progress_error_is_compact_single_line() {
+    let tmp = TempDir::new().unwrap();
+    let missing = missing_source(&tmp);
+    let output = simple_gal()
+        .args([
+            "--source",
+            missing.to_str().unwrap(),
+            "--format",
+            "progress",
+            "scan",
+        ])
+        .output()
+        .expect("run simple-gal");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr_lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(stderr_lines.len(), 1, "error should be 1 line: {stderr}");
+    let v: serde_json::Value = serde_json::from_str(stderr_lines[0]).unwrap();
+    assert_eq!(v["ok"], false);
+}

@@ -24,13 +24,16 @@ struct CacheArgs {
 /// envelope format documented in [`json_output`] and used by scripts and
 /// GUIs. In JSON mode every command emits exactly one JSON document — to
 /// stdout on success, to stderr on error — so callers can always `jq` it.
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum OutputFormat {
     Text,
     Json,
-    /// Newline-delimited JSON: one JSON object per line. Progress events
-    /// stream as they happen; the final line is the result envelope.
+    /// Newline-delimited JSON: one JSON object per line. Raw progress
+    /// events stream as they happen; the final line is the result envelope.
     Ndjson,
+    /// Structured progress stream: NDJSON lines with pre-computed percent,
+    /// stage, and image/variant counters. Designed for GUI progress bars.
+    Progress,
 }
 
 /// Arguments for the scan command.
@@ -251,9 +254,12 @@ fn find_config_error<'a>(
 ///   - text mode with a config parse failure: clapfig rich/plain
 ///   - text mode fallback: plain `Error:` + cause chain
 fn report_error(err: &(dyn std::error::Error + 'static), kind: ErrorKind, format: OutputFormat) {
-    if matches!(format, OutputFormat::Json | OutputFormat::Ndjson) {
+    if matches!(
+        format,
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Progress
+    ) {
         let envelope = ErrorEnvelope::new(kind, err);
-        let emit = if matches!(format, OutputFormat::Ndjson) {
+        let emit = if matches!(format, OutputFormat::Ndjson | OutputFormat::Progress) {
             json_output::emit_stderr_compact(&envelope)
         } else {
             json_output::emit_stderr(&envelope)
@@ -284,15 +290,18 @@ fn report_error(err: &(dyn std::error::Error + 'static), kind: ErrorKind, format
 }
 
 fn run(cli: &Cli, format: OutputFormat) -> Result<(), CliError> {
-    let json_mode = matches!(format, OutputFormat::Json | OutputFormat::Ndjson);
-    let ndjson = matches!(format, OutputFormat::Ndjson);
+    let json_mode = matches!(
+        format,
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Progress
+    );
+    let ndjson = matches!(format, OutputFormat::Ndjson | OutputFormat::Progress);
     let quiet = cli.quiet;
 
     match &cli.command {
         Command::Scan(args) => run_scan(cli, args, format),
         Command::Process(cache_args) => run_process(cli, cache_args, json_mode, ndjson, quiet),
         Command::Generate => run_generate(cli, json_mode, ndjson, quiet),
-        Command::Build(cache_args) => run_build(cli, cache_args, json_mode, ndjson, quiet),
+        Command::Build(cache_args) => run_build(cli, cache_args, format),
         Command::Check => run_check(cli, json_mode, ndjson, quiet),
         Command::Config(args) => run_config(cli, args, json_mode, ndjson),
     }
@@ -328,10 +337,10 @@ fn run_scan(cli: &Cli, args: &ScanArgs, format: OutputFormat) -> Result<(), CliE
     };
 
     match format {
-        OutputFormat::Json | OutputFormat::Ndjson => {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Progress => {
             let payload = ScanPayload::new(&manifest, &cli.source, saved_path);
             emit_json_result(
-                matches!(format, OutputFormat::Ndjson),
+                format != OutputFormat::Json,
                 &OkEnvelope::new("scan", payload),
             )?;
         }
@@ -423,18 +432,16 @@ fn run_generate(cli: &Cli, json_mode: bool, ndjson: bool, quiet: bool) -> Result
     Ok(())
 }
 
-fn run_build(
-    cli: &Cli,
-    cache_args: &CacheArgs,
-    json_mode: bool,
-    ndjson: bool,
-    quiet: bool,
-) -> Result<(), CliError> {
+fn run_build(cli: &Cli, cache_args: &CacheArgs, format: OutputFormat) -> Result<(), CliError> {
     let source = resolve_build_source(&cli.source);
-    let stage_text = !json_mode && !quiet;
+    let json_mode = format != OutputFormat::Text;
+    let ndjson = matches!(format, OutputFormat::Ndjson | OutputFormat::Progress);
+    let progress_mode = format == OutputFormat::Progress;
+    let stage_text = !json_mode && !cli.quiet;
 
     std::fs::create_dir_all(&cli.temp_dir).tag(ErrorKind::Io)?;
 
+    // === Stage 1: Scan ===
     if stage_text {
         println!("==> Stage 1: Scanning {}", source.display());
     }
@@ -447,13 +454,39 @@ fn run_build(
         println!("==> Stage 2: Processing images");
     }
 
+    // Compute progress totals from scan results (used by --format progress).
+    let total_images: usize = manifest.albums.iter().map(|a| a.images.len()).sum();
+    let variants_per_image = manifest.config.images.sizes.len()
+        + 1 // thumbnail
+        + usize::from(manifest.config.full_index.generates); // optional full-index thumbnail
+
+    // Emit scan-complete progress event.
+    if progress_mode {
+        let tracker = json_output::ProgressTracker::new(total_images, variants_per_image);
+        json_output::emit_progress(&tracker.scan_complete()).ok();
+    }
+
+    // === Stage 2: Process ===
     init_thread_pool(&manifest.config.processing);
     let processed_dir = cli.temp_dir.join("processed");
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress = !stage_text && !ndjson;
     let printer = std::thread::spawn(move || {
+        let mut tracker = if progress_mode {
+            Some(json_output::ProgressTracker::new(
+                total_images,
+                variants_per_image,
+            ))
+        } else {
+            None
+        };
         for event in rx {
-            if ndjson {
+            if let Some(ref mut t) = tracker {
+                if let process::ProcessEvent::ImageProcessed { ref variants, .. } = event {
+                    let ev = t.on_image_processed(variants.len());
+                    json_output::emit_progress(&ev).ok();
+                }
+            } else if ndjson {
                 json_output::emit_ndjson_progress(&event).ok();
             } else if !suppress {
                 for line in output::format_process_event(&event) {
@@ -461,6 +494,8 @@ fn run_build(
                 }
             }
         }
+        // Return the tracker so we can use it for the generate stage.
+        tracker
     });
     let process_result = process::process(
         &scan_manifest_path,
@@ -470,7 +505,12 @@ fn run_build(
         Some(tx),
     )
     .tag(ErrorKind::Process);
-    join_printer(printer)?;
+    // Always join the printer thread before propagating a process error,
+    // so output is flushed and the thread doesn't outlive the channel.
+    let tracker = printer.join().map_err(|_| {
+        let msg: Box<dyn std::error::Error + 'static> = "progress printer thread panicked".into();
+        CliError::new(ErrorKind::Internal, msg)
+    })?;
     let result = process_result?;
     let processed_manifest_path = processed_dir.join("manifest.json");
     let json = serde_json::to_string_pretty(&result.manifest).tag(ErrorKind::Internal)?;
@@ -480,6 +520,12 @@ fn run_build(
         println!("==> Stage 3: Generating HTML → {}", cli.output.display());
     }
 
+    // Emit generate-started progress event.
+    if let Some(ref t) = tracker {
+        json_output::emit_progress(&t.generate_started()).ok();
+    }
+
+    // === Stage 3: Generate ===
     generate::generate(
         &processed_manifest_path,
         &processed_dir,
