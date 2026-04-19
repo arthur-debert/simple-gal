@@ -1901,7 +1901,7 @@ mod tests {
     /// A nested album (e.g. `NY/Night`) shaped the way the process stage
     /// actually emits records: every image path is **full root-relative**
     /// (`NY/Night/001-city-800.avif`), matching what ends up in
-    /// `.tmp/processed/manifest.json` for real builds.
+    /// `{temp_dir}/processed/manifest.json` for real builds.
     fn create_nested_test_album() -> Album {
         Album {
             path: "NY/Night".to_string(),
