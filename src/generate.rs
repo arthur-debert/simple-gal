@@ -1061,16 +1061,13 @@ fn render_album_page(
         (album.title)
     };
 
-    // Strip album directory name prefix since album page is inside the album directory.
-    // Process-stage paths are relative to the parent dir (e.g. "Night/03-thumb.avif"
-    // for album "NY/Night"), so strip the last segment, not the full nested path.
-    let album_dir_name = album.path.rsplit('/').next().unwrap_or(&album.path);
-    let strip_prefix = |path: &str| -> String {
-        path.strip_prefix(album_dir_name)
-            .and_then(|p| p.strip_prefix('/'))
-            .unwrap_or(path)
-            .to_string()
-    };
+    // The album page is served from `/{album.path}/`, and process-stage image
+    // paths are full root-relative (e.g. "travel/japan/001-thumb.avif" for
+    // album "travel/japan"). Strip the full album path so URLs resolve
+    // against the current directory.
+    let album_prefix = format!("{}/", album.path);
+    let strip_prefix =
+        |path: &str| -> String { path.strip_prefix(&album_prefix).unwrap_or(path).to_string() };
 
     let has_desc = album.description.is_some();
     let content = html! {
@@ -1150,14 +1147,13 @@ fn render_image_page(
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages, show_all_photos);
 
-    // Strip album directory name and add ../ since image pages are in subdirectories.
-    // Process-stage paths are relative to the parent dir, so strip the last segment.
-    let album_dir_name = album.path.rsplit('/').next().unwrap_or(&album.path);
+    // Image pages live at `/{album.path}/{image_slug}/`, one level below the
+    // album directory. Process-stage image paths are full root-relative
+    // (e.g. "travel/japan/001-1400.avif" for album "travel/japan"), so strip
+    // the full album path and prepend `../` to go up to the album dir.
+    let album_prefix = format!("{}/", album.path);
     let strip_prefix = |path: &str| -> String {
-        let relative = path
-            .strip_prefix(album_dir_name)
-            .and_then(|p| p.strip_prefix('/'))
-            .unwrap_or(path);
+        let relative = path.strip_prefix(&album_prefix).unwrap_or(path);
         format!("../{}", relative)
     };
 
@@ -1902,17 +1898,16 @@ mod tests {
         }
     }
 
-    /// A nested album (e.g. NY/Night) with process-stage path conventions.
-    ///
-    /// The process stage outputs image paths relative to the album's parent
-    /// directory, NOT the full nested path. So for album "NY/Night", thumbnail
-    /// paths are "Night/..." not "NY/Night/...".
+    /// A nested album (e.g. `NY/Night`) shaped the way the process stage
+    /// actually emits records: every image path is **full root-relative**
+    /// (`NY/Night/001-city-800.avif`), matching what ends up in
+    /// `{temp_dir}/processed/manifest.json` for real builds.
     fn create_nested_test_album() -> Album {
         Album {
             path: "NY/Night".to_string(),
             title: "Night".to_string(),
             description: None,
-            thumbnail: "Night/001-image-thumb.avif".to_string(),
+            thumbnail: "NY/Night/001-city-thumb.avif".to_string(),
             images: vec![Image {
                 number: 1,
                 source_path: "NY/Night/001-city.jpg".to_string(),
@@ -1924,7 +1919,7 @@ mod tests {
                     map.insert(
                         "800".to_string(),
                         GeneratedVariant {
-                            avif: "Night/001-city-800.avif".to_string(),
+                            avif: "NY/Night/001-city-800.avif".to_string(),
                             width: 800,
                             height: 600,
                         },
@@ -1932,14 +1927,14 @@ mod tests {
                     map.insert(
                         "1400".to_string(),
                         GeneratedVariant {
-                            avif: "Night/001-city-1400.avif".to_string(),
+                            avif: "NY/Night/001-city-1400.avif".to_string(),
                             width: 1400,
                             height: 1050,
                         },
                     );
                     map
                 },
-                thumbnail: "Night/001-city-thumb.avif".to_string(),
+                thumbnail: "NY/Night/001-city-thumb.avif".to_string(),
                 full_index_thumbnail: None,
             }],
             in_nav: true,
@@ -1965,11 +1960,11 @@ mod tests {
         )
         .into_string();
 
-        // Thumbnail src must be relative to the album directory (no parent prefix).
-        // "001-city-thumb.avif" is correct; "Night/001-city-thumb.avif" would break
-        // because the page is already served from /NY/Night/.
+        // The album page is served from `/NY/Night/`, so `<img src>` must be
+        // a bare filename. Any `NY/` or `NY/Night/` prefix in `src=` would
+        // resolve to `/NY/Night/NY/...` — a broken path.
         assert!(html.contains(r#"src="001-city-thumb.avif""#));
-        assert!(!html.contains("Night/001-city-thumb.avif"));
+        assert!(!html.contains(r#"src="NY/"#));
     }
 
     #[test]
@@ -1993,11 +1988,13 @@ mod tests {
         )
         .into_string();
 
-        // Image page is at /NY/Night/1-City/, so srcset paths use ../ to reach
-        // the album directory. Must NOT contain the album dir name again.
+        // Image page is at `/NY/Night/1-city/`, so srcset paths use `../` to
+        // reach the album directory. Must be bare filenames after `../` — any
+        // `../NY/` or `../Night/` would resolve to a doubled album prefix.
         assert!(html.contains("../001-city-800.avif"));
         assert!(html.contains("../001-city-1400.avif"));
-        assert!(!html.contains("Night/001-city-800.avif"));
+        assert!(!html.contains("../NY/"));
+        assert!(!html.contains("../Night/"));
     }
 
     #[test]
@@ -3955,43 +3952,6 @@ mod tests {
         assert_eq!(out, "Gallery › NY › Night › City");
     }
 
-    /// Build a nested-album fixture with production-style root-relative avif
-    /// paths (e.g. `"NY/Night/001.avif"` for album `"NY/Night"`). The older
-    /// `create_nested_test_album` uses a parent-relative convention that does
-    /// not match what the process stage actually emits.
-    fn create_production_nested_album() -> Album {
-        Album {
-            path: "NY/Night".to_string(),
-            title: "Night".to_string(),
-            description: None,
-            thumbnail: "NY/Night/001-city-thumb.avif".to_string(),
-            images: vec![Image {
-                number: 1,
-                source_path: "NY/Night/001-city.jpg".to_string(),
-                title: Some("City".to_string()),
-                description: None,
-                dimensions: (1600, 1200),
-                generated: {
-                    let mut map = BTreeMap::new();
-                    map.insert(
-                        "1400".to_string(),
-                        GeneratedVariant {
-                            avif: "NY/Night/001-city-1400.avif".to_string(),
-                            width: 1400,
-                            height: 1050,
-                        },
-                    );
-                    map
-                },
-                thumbnail: "NY/Night/001-city-thumb.avif".to_string(),
-                full_index_thumbnail: None,
-            }],
-            in_nav: true,
-            config: SiteConfig::default(),
-            support_files: vec![],
-        }
-    }
-
     fn ny_navigation() -> Vec<NavItem> {
         vec![NavItem {
             title: "NY".to_string(),
@@ -4010,7 +3970,7 @@ mod tests {
 
     #[test]
     fn build_og_for_nested_album_yields_absolute_paths_and_breadcrumb() {
-        let album = create_production_nested_album();
+        let album = create_nested_test_album();
         let navigation = ny_navigation();
         let og = build_og_for_album("https://example.com", &album, &navigation, "Gallery").unwrap();
 
@@ -4026,7 +3986,7 @@ mod tests {
 
     #[test]
     fn build_og_for_image_includes_image_label_in_description() {
-        let album = create_production_nested_album();
+        let album = create_nested_test_album();
         let image = &album.images[0];
         let navigation = ny_navigation();
         let og = build_og_for_image(

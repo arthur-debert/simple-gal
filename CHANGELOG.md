@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New optional `base_url` field in `SiteConfig` (e.g. `base_url = "https://gallery.example.com"`). Required because `og:image` and `og:url` MUST be absolute URLs for scrapers like WhatsApp and iMessage to resolve them; there is no safe relative-URL fallback. When `base_url` is unset, **no** OG/Twitter meta tags are emitted — the site still builds and works, it just won't produce rich link previews. No other config or behavior changes when `base_url` is omitted, so this is a zero-cost opt-in.
 - OG image variant selection picks the smallest responsive variant ≥ 1200px wide (Facebook/Twitter's recommended 1.91:1 canvas width), falling back to the largest available variant when every generated size is smaller. 1200 also keeps the file comfortably under WhatsApp's ~300KB preview-image budget for AVIF encodes at normal quality.
 
+### Fixed
+- Broken `<img src>` and `<srcset>` URLs on nested album pages (paths containing a `/`, e.g. `travel/japan/`). `render_album_page` and `render_image_page` stripped only the last path segment from the stored root-relative image paths, so a page at `/travel/japan/` emitted `src="travel/japan/001-tokyo-thumb.avif"` which browsers resolved to `/travel/japan/travel/japan/001-tokyo-thumb.avif` — a 404. Both renderers now strip the full album path, so nested album pages render with bare filenames (`src="001-tokyo-thumb.avif"`) and nested image pages with single-hop relative paths (`srcset="../001-tokyo-800.avif 800w"`). Flat albums were never affected. (#56)
+- Test fixture `create_nested_test_album` stored image paths in a parent-relative shape (`"Night/..."`) that happened to match the buggy strip logic, so the regression above slipped through CI. Fixture now uses the full root-relative shape (`"NY/Night/..."`) the process stage actually emits, and the two nested-album assertions were tightened to fail loudly if a doubled album prefix ever shows up in rendered URLs again.
+
 ## [0.16.0] - 2026-04-12
 
 ### Added
