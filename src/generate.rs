@@ -406,6 +406,20 @@ fn og_description(site_title: &str, segments: &[(&str, &str)], trailing: &[&str]
     parts.join(OG_CRUMB_SEP)
 }
 
+/// Find the image that corresponds to an album's displayed cover thumbnail
+/// (set from `preview_image` in the process stage: may be the first image, a
+/// user-configured one, or a `NNN-thumb`-designated image). Matching by
+/// `thumbnail` path keeps the OG image in sync with the card thumbnail the
+/// user actually sees in the gallery grid; `.first()` is a defensive fallback
+/// in case the paths ever disagree.
+fn album_cover_image(album: &Album) -> Option<&Image> {
+    album
+        .images
+        .iter()
+        .find(|image| image.thumbnail == album.thumbnail)
+        .or_else(|| album.images.first())
+}
+
 /// Build OgMeta for an album page. Returns None when the album has no
 /// generated image variants (empty album) — without a cover image there's
 /// no meaningful preview to emit.
@@ -415,7 +429,7 @@ fn build_og_for_album(
     navigation: &[NavItem],
     site_title: &str,
 ) -> Option<OgMeta> {
-    let cover = album.images.first()?;
+    let cover = album_cover_image(album)?;
     let variant = pick_og_variant(cover)?;
     let segments = path_to_breadcrumb_segments(&album.path, navigation);
     Some(OgMeta {
@@ -474,7 +488,7 @@ fn build_og_for_gallery_list(
     site_title: &str,
 ) -> Option<OgMeta> {
     let cover_album = first_album_in_nav(nav_scope, albums)?;
-    let cover_image = cover_album.images.first()?;
+    let cover_image = album_cover_image(cover_album)?;
     let variant = pick_og_variant(cover_image)?;
     let page_url = if path.is_empty() {
         absolute_url(base_url, "")
@@ -3878,11 +3892,36 @@ mod tests {
     }
 
     #[test]
+    fn album_cover_image_matches_designated_thumbnail() {
+        // Simulate the v0.9 "thumb-designated" flow: album.thumbnail points
+        // at the second image's thumbnail, not the first. OG must pick the
+        // image whose thumbnail the gallery grid is actually showing.
+        let mut album = create_test_album();
+        album.thumbnail = album.images[1].thumbnail.clone();
+        let cover = album_cover_image(&album).expect("cover exists");
+        assert_eq!(cover.number, album.images[1].number);
+    }
+
+    #[test]
+    fn album_cover_image_falls_back_to_first_when_paths_disagree() {
+        // Defensive fallback: if album.thumbnail doesn't match any image's
+        // thumbnail (shouldn't happen in current pipeline but we don't want
+        // OG to silently become None), return the first image.
+        let mut album = create_test_album();
+        album.thumbnail = "unrelated/path.avif".to_string();
+        let cover = album_cover_image(&album).expect("cover exists");
+        assert_eq!(cover.number, album.images[0].number);
+    }
+
+    #[test]
     fn pick_og_variant_falls_back_to_largest_when_all_below_target() {
-        // image[1] only has 800-wide variant; fallback = max available = 800.
+        // image[1] has a single variant at target_size 800 but is portrait-
+        // oriented (1200x1600 source), so the variant's actual width is 600
+        // (scaled to fit the 800px long-edge target). Since that's below the
+        // 1200 target, fallback = largest available = width 600.
         let album = create_test_album();
         let picked = pick_og_variant(&album.images[1]).expect("variant exists");
-        assert_eq!(picked.width, 600); // image[1] is portrait so scaled width is 600
+        assert_eq!(picked.width, 600);
     }
 
     #[test]
