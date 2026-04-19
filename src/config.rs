@@ -149,6 +149,14 @@ pub struct SiteConfig {
     #[config(default = "Gallery")]
     pub site_title: String,
 
+    /// Public origin of the deployed site (e.g. `"https://gallery.example.com"`),
+    /// with no trailing slash. When set, the generator emits Open Graph meta
+    /// tags on gallery-list, album, and image pages so chat apps (WhatsApp,
+    /// iMessage, Slack, Discord) render link previews with an image, title,
+    /// and breadcrumb description. When unset, no OG tags are emitted — the
+    /// site still works, it just won't produce rich link previews.
+    pub base_url: Option<String>,
+
     /// Directory for static assets (favicon, fonts, etc.), relative to
     /// content root. Contents are copied verbatim to the output root during
     /// generation. If the directory doesn't exist, it is silently skipped.

@@ -312,6 +312,223 @@ fn is_short_caption(text: &str) -> bool {
     text.len() <= SHORT_CAPTION_MAX_LEN && !text.contains('\n')
 }
 
+// ============================================================================
+// Open Graph metadata
+// ============================================================================
+
+/// Target width for og:image (Facebook/Twitter recommend 1200px wide, 1.91:1).
+/// Chat-app scrapers (WhatsApp, iMessage, Slack) prefer images under ~300KB;
+/// a 1200-wide AVIF variant comfortably fits.
+const OG_IMAGE_TARGET_WIDTH: u32 = 1200;
+
+/// Breadcrumb separator used in og:description. Matches the on-page crumb
+/// (`site_header`) so the preview text echoes the site's visible hierarchy.
+const OG_CRUMB_SEP: &str = " › ";
+
+/// Open Graph / Twitter Card metadata for a single page.
+///
+/// Populated only when `site.base_url` is set in config — that's a hard
+/// requirement because og:image and og:url MUST be absolute URLs for
+/// scrapers like WhatsApp and iMessage to resolve them. When `base_url`
+/// is unset, pages render without any OG tags.
+struct OgMeta {
+    /// `og:title` — typically the page's short label (album title, image
+    /// label, or site title for the index).
+    title: String,
+    /// `og:description` — the breadcrumb chain (e.g. "Gallery › NY › Night")
+    /// so previews are meaningful even when the album/image has no prose
+    /// description, which is common for photography.
+    description: String,
+    /// `og:image` — absolute URL to a ~1200px-wide variant.
+    image_url: String,
+    /// `og:url` — absolute URL of this page (canonical).
+    page_url: String,
+    /// `og:site_name` — always the site title.
+    site_name: String,
+}
+
+/// Pick the best image variant for og:image: the smallest variant whose
+/// width is ≥ OG_IMAGE_TARGET_WIDTH, falling back to the largest available
+/// if every variant is smaller than the target.
+fn pick_og_variant(image: &Image) -> Option<&GeneratedVariant> {
+    let variants: Vec<&GeneratedVariant> = image.generated.values().collect();
+    variants
+        .iter()
+        .filter(|v| v.width >= OG_IMAGE_TARGET_WIDTH)
+        .min_by_key(|v| v.width)
+        .or_else(|| variants.iter().max_by_key(|v| v.width))
+        .copied()
+}
+
+/// Walk the navigation tree and return the first Album reachable from a
+/// nav item (recursing into containers). Used to find a cover image for
+/// gallery-list pages (index and container pages), which have no image
+/// of their own.
+fn first_album_in_nav<'a>(items: &[NavItem], albums: &'a [Album]) -> Option<&'a Album> {
+    for item in items {
+        if item.children.is_empty() {
+            if let Some(a) = albums.iter().find(|a| a.path == item.path) {
+                return Some(a);
+            }
+        } else if let Some(a) = first_album_in_nav(&item.children, albums) {
+            return Some(a);
+        }
+    }
+    None
+}
+
+/// Join a base URL and a root-relative path into an absolute URL, tolerating
+/// trailing slashes on the base and leading slashes on the path.
+fn absolute_url(base_url: &str, path: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let path = path.trim_start_matches('/');
+    if path.is_empty() {
+        format!("{}/", base)
+    } else {
+        format!("{}/{}", base, path)
+    }
+}
+
+/// Build an og:description by joining site title + breadcrumb segments + any
+/// trailing labels (album title, image label) with `OG_CRUMB_SEP`.
+///
+/// Photography sites often have untitled images or captionless albums, so a
+/// generic "Photo from the gallery" would be unhelpful. Echoing the crumb
+/// ("Gallery › NY › Night › 03. City") tells the reader exactly what they're
+/// about to open.
+fn og_description(site_title: &str, segments: &[(&str, &str)], trailing: &[&str]) -> String {
+    let mut parts: Vec<&str> = Vec::with_capacity(1 + segments.len() + trailing.len());
+    parts.push(site_title);
+    for (seg_title, _) in segments {
+        parts.push(seg_title);
+    }
+    parts.extend(trailing.iter().copied());
+    parts.join(OG_CRUMB_SEP)
+}
+
+/// Find the image that corresponds to an album's displayed cover thumbnail
+/// (set from `preview_image` in the process stage: may be the first image, a
+/// user-configured one, or a `NNN-thumb`-designated image). Matching by
+/// `thumbnail` path keeps the OG image in sync with the card thumbnail the
+/// user actually sees in the gallery grid; `.first()` is a defensive fallback
+/// in case the paths ever disagree.
+fn album_cover_image(album: &Album) -> Option<&Image> {
+    album
+        .images
+        .iter()
+        .find(|image| image.thumbnail == album.thumbnail)
+        .or_else(|| album.images.first())
+}
+
+/// Build OgMeta for an album page. Returns None when the album has no
+/// generated image variants (empty album) — without a cover image there's
+/// no meaningful preview to emit.
+fn build_og_for_album(
+    base_url: &str,
+    album: &Album,
+    navigation: &[NavItem],
+    site_title: &str,
+) -> Option<OgMeta> {
+    let cover = album_cover_image(album)?;
+    let variant = pick_og_variant(cover)?;
+    let segments = path_to_breadcrumb_segments(&album.path, navigation);
+    Some(OgMeta {
+        title: album.title.clone(),
+        description: og_description(site_title, &segments, &[&album.title]),
+        image_url: absolute_url(base_url, &variant.avif),
+        page_url: absolute_url(base_url, &format!("{}/", album.path)),
+        site_name: site_title.to_string(),
+    })
+}
+
+/// Build OgMeta for an image page. Returns None when the image has no
+/// generated variants (shouldn't happen in practice but guarded for safety).
+fn build_og_for_image(
+    base_url: &str,
+    album: &Album,
+    image: &Image,
+    image_idx: usize,
+    navigation: &[NavItem],
+    site_title: &str,
+) -> Option<OgMeta> {
+    let variant = pick_og_variant(image)?;
+    let total = album.images.len();
+    let image_label = format_image_label(image_idx + 1, total, image.title.as_deref());
+    let segments = path_to_breadcrumb_segments(&album.path, navigation);
+    let page_url_path = format!(
+        "{}/{}",
+        album.path,
+        image_page_url(image_idx + 1, total, image.title.as_deref())
+    );
+    Some(OgMeta {
+        title: image
+            .title
+            .clone()
+            .unwrap_or_else(|| format!("{} — {}", album.title, image_label)),
+        description: og_description(site_title, &segments, &[&album.title, &image_label]),
+        image_url: absolute_url(base_url, &variant.avif),
+        page_url: absolute_url(base_url, &page_url_path),
+        site_name: site_title.to_string(),
+    })
+}
+
+/// Build OgMeta for a gallery-list page (index root or a container like /NY/).
+///
+/// `path` is empty for the root index or e.g. `"NY"` for a container. `title`
+/// is the page's display title (site_title for root, container's title
+/// otherwise). Uses the first leaf album reachable from `nav_scope` as the
+/// cover image source. Returns None if no cover image is findable.
+fn build_og_for_gallery_list(
+    base_url: &str,
+    title: &str,
+    path: &str,
+    nav_scope: &[NavItem],
+    navigation: &[NavItem],
+    albums: &[Album],
+    site_title: &str,
+) -> Option<OgMeta> {
+    let cover_album = first_album_in_nav(nav_scope, albums)?;
+    let cover_image = album_cover_image(cover_album)?;
+    let variant = pick_og_variant(cover_image)?;
+    let page_url = if path.is_empty() {
+        absolute_url(base_url, "")
+    } else {
+        absolute_url(base_url, &format!("{}/", path))
+    };
+    let description = if path.is_empty() {
+        site_title.to_string()
+    } else {
+        let segments = path_to_breadcrumb_segments(path, navigation);
+        og_description(site_title, &segments, &[title])
+    };
+    Some(OgMeta {
+        title: title.to_string(),
+        description,
+        image_url: absolute_url(base_url, &variant.avif),
+        page_url,
+        site_name: site_title.to_string(),
+    })
+}
+
+/// Render the `<meta>` tags for an OgMeta into a Markup fragment to be
+/// inlined in `<head>`. Emits Open Graph + Twitter Card "summary_large_image"
+/// (WhatsApp/iMessage/Slack all read OG; Twitter/X needs the twitter:card hint
+/// to pick the big-image layout).
+fn render_og_tags(og: &OgMeta) -> Markup {
+    html! {
+        meta property="og:type" content="website";
+        meta property="og:site_name" content=(og.site_name);
+        meta property="og:title" content=(og.title);
+        meta property="og:description" content=(og.description);
+        meta property="og:url" content=(og.page_url);
+        meta property="og:image" content=(og.image_url);
+        meta name="twitter:card" content="summary_large_image";
+        meta name="twitter:title" content=(og.title);
+        meta name="twitter:description" content=(og.description);
+        meta name="twitter:image" content=(og.image_url);
+    }
+}
+
 pub fn generate(
     manifest_path: &Path,
     processed_dir: &Path,
@@ -421,12 +638,24 @@ pub fn generate(
     let snippets = detect_custom_snippets(output_dir);
 
     // Generate index page
+    let index_og = manifest.config.base_url.as_deref().and_then(|base| {
+        build_og_for_gallery_list(
+            base,
+            &manifest.config.site_title,
+            "",
+            &manifest.navigation,
+            &manifest.navigation,
+            &manifest.albums,
+            &manifest.config.site_title,
+        )
+    });
     let index_html = render_index(
         &manifest,
         &css,
         font_url.as_deref(),
         favicon_href.as_deref(),
         &snippets,
+        index_og.as_ref(),
     );
     fs::write(output_dir.join("index.html"), index_html.into_string())?;
 
@@ -461,6 +690,7 @@ pub fn generate(
         favicon_href.as_deref(),
         &snippets,
         show_all_photos,
+        manifest.config.base_url.as_deref(),
         output_dir,
     )?;
 
@@ -469,6 +699,14 @@ pub fn generate(
         let album_dir = output_dir.join(&album.path);
         fs::create_dir_all(&album_dir)?;
 
+        let album_og = manifest.config.base_url.as_deref().and_then(|base| {
+            build_og_for_album(
+                base,
+                album,
+                &manifest.navigation,
+                &manifest.config.site_title,
+            )
+        });
         let album_html = render_album_page(
             album,
             &manifest.navigation,
@@ -479,6 +717,7 @@ pub fn generate(
             favicon_href.as_deref(),
             &snippets,
             show_all_photos,
+            album_og.as_ref(),
         );
         fs::write(album_dir.join("index.html"), album_html.into_string())?;
 
@@ -491,6 +730,16 @@ pub fn generate(
             };
             let next = album.images.get(idx + 1);
 
+            let image_og = manifest.config.base_url.as_deref().and_then(|base| {
+                build_og_for_image(
+                    base,
+                    album,
+                    image,
+                    idx,
+                    &manifest.navigation,
+                    &manifest.config.site_title,
+                )
+            });
             let image_html = render_image_page(
                 album,
                 image,
@@ -504,6 +753,7 @@ pub fn generate(
                 favicon_href.as_deref(),
                 &snippets,
                 show_all_photos,
+                image_og.as_ref(),
             );
             let image_dir_name =
                 image_page_url(idx + 1, album.images.len(), image.title.as_deref());
@@ -594,6 +844,7 @@ fn base_document(
     head_extra: Option<Markup>,
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
+    og: Option<&OgMeta>,
     content: Markup,
 ) -> Markup {
     html! {
@@ -603,6 +854,9 @@ fn base_document(
                 meta charset="UTF-8";
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { (title) }
+                @if let Some(og) = og {
+                    (render_og_tags(og))
+                }
                 // PWA links — absolute paths, requires root deployment (see PWA comment in generate())
                 link rel="manifest" href="/site.webmanifest";
                 link rel="apple-touch-icon" href="/apple-touch-icon.png";
@@ -754,6 +1008,7 @@ fn render_index(
     font_url: Option<&str>,
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
+    og: Option<&OgMeta>,
 ) -> Markup {
     render_gallery_list_page(
         &manifest.config.site_title,
@@ -768,6 +1023,7 @@ fn render_index(
         favicon_href,
         snippets,
         show_all_photos_link(&manifest.config),
+        og,
     )
 }
 
@@ -790,6 +1046,7 @@ fn render_album_page(
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
     show_all_photos: bool,
+    og: Option<&OgMeta>,
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages, show_all_photos);
 
@@ -848,6 +1105,7 @@ fn render_album_page(
         None,
         favicon_href,
         snippets,
+        og,
         content,
     )
 }
@@ -888,6 +1146,7 @@ fn render_image_page(
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
     show_all_photos: bool,
+    og: Option<&OgMeta>,
 ) -> Markup {
     let nav = render_nav(navigation, &album.path, pages, show_all_photos);
 
@@ -1074,6 +1333,7 @@ fn render_image_page(
         Some(head_extra),
         favicon_href,
         snippets,
+        og,
         content,
     )
 }
@@ -1121,6 +1381,7 @@ fn render_page(
         None,
         favicon_href,
         snippets,
+        None,
         content,
     )
 }
@@ -1143,6 +1404,7 @@ fn render_gallery_list_page(
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
     show_all_photos: bool,
+    og: Option<&OgMeta>,
 ) -> Markup {
     let nav = render_nav(navigation, path, pages, show_all_photos);
 
@@ -1199,6 +1461,7 @@ fn render_gallery_list_page(
         None,
         favicon_href,
         snippets,
+        og,
         content,
     )
 }
@@ -1312,6 +1575,7 @@ fn render_full_index_page(
         None,
         favicon_href,
         snippets,
+        None,
         content,
     )
 }
@@ -1329,11 +1593,23 @@ fn generate_gallery_list_pages(
     favicon_href: Option<&str>,
     snippets: &CustomSnippets,
     show_all_photos: bool,
+    base_url: Option<&str>,
     output_dir: &Path,
 ) -> Result<(), GenerateError> {
     for item in items {
         if !item.children.is_empty() {
             let entries = collect_gallery_entries(&item.children, albums);
+            let og = base_url.and_then(|base| {
+                build_og_for_gallery_list(
+                    base,
+                    &item.title,
+                    &item.path,
+                    &item.children,
+                    navigation,
+                    albums,
+                    site_title,
+                )
+            });
             let page_html = render_gallery_list_page(
                 &item.title,
                 &item.path,
@@ -1347,6 +1623,7 @@ fn generate_gallery_list_pages(
                 favicon_href,
                 snippets,
                 show_all_photos,
+                og.as_ref(),
             );
             let dir = output_dir.join(&item.path);
             fs::create_dir_all(&dir)?;
@@ -1364,6 +1641,7 @@ fn generate_gallery_list_pages(
                 favicon_href,
                 snippets,
                 show_all_photos,
+                base_url,
                 output_dir,
             )?;
         }
@@ -1513,6 +1791,7 @@ mod tests {
             None,
             None,
             &no_snippets(),
+            None,
             content,
         )
         .into_string();
@@ -1530,6 +1809,7 @@ mod tests {
             None,
             None,
             &no_snippets(),
+            None,
             content,
         )
         .into_string();
@@ -1681,6 +1961,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1708,6 +1989,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1732,6 +2014,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1753,6 +2036,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1774,6 +2058,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1798,6 +2083,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1824,6 +2110,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1851,6 +2138,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1878,6 +2166,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -1906,6 +2195,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
         assert!(html1.contains(r#"class="nav-prev" href="../""#));
@@ -1925,6 +2215,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
         assert!(html2.contains(r#"class="nav-prev" href="../1-dawn/""#));
@@ -1949,6 +2240,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2062,6 +2354,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2088,6 +2381,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2115,6 +2409,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2139,6 +2434,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2194,6 +2490,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2221,6 +2518,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2250,6 +2548,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2278,6 +2577,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2304,6 +2604,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2406,6 +2707,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2429,6 +2731,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2454,6 +2757,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2480,6 +2784,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2509,6 +2814,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2544,6 +2850,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2574,6 +2881,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2604,6 +2912,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2654,7 +2963,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
 
         assert!(html.contains("Visible"));
         assert!(!html.contains("Hidden"));
@@ -2867,7 +3176,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
 
         assert!(html.contains("album-grid"));
         assert!(html.contains("Gallery"));
@@ -2883,7 +3192,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
 
         assert!(html.contains("has-description"));
         assert!(html.contains("index-header"));
@@ -2906,7 +3215,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
 
         assert!(!html.contains("has-description"));
         assert!(!html.contains("index-header"));
@@ -2964,6 +3273,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -2986,6 +3296,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -3010,6 +3321,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -3039,6 +3351,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -3066,7 +3379,7 @@ mod tests {
             config,
         };
 
-        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
 
         assert!(html.contains("My Portfolio"));
         assert!(!html.contains("Gallery"));
@@ -3086,6 +3399,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -3110,6 +3424,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -3155,7 +3470,7 @@ mod tests {
             config: SiteConfig::default(),
         };
 
-        let html = render_index(&manifest, "", None, None, &no_snippets()).into_string();
+        let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
 
         assert!(html.contains(r#"<link rel="manifest" href="/site.webmanifest">"#));
         assert!(html.contains(r#"<link rel="apple-touch-icon" href="/apple-touch-icon.png">"#));
@@ -3170,8 +3485,18 @@ mod tests {
     #[test]
     fn no_custom_css_link_by_default() {
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "", None, None, None, None, &no_snippets(), content)
-            .into_string();
+        let doc = base_document(
+            "Test",
+            "",
+            None,
+            None,
+            None,
+            None,
+            &no_snippets(),
+            None,
+            content,
+        )
+        .into_string();
         assert!(!doc.contains("custom.css"));
     }
 
@@ -3182,8 +3507,8 @@ mod tests {
             ..Default::default()
         };
         let content = html! { p { "test" } };
-        let doc =
-            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let doc = base_document("Test", "", None, None, None, None, &snippets, None, content)
+            .into_string();
         assert!(doc.contains(r#"<link rel="stylesheet" href="/custom.css">"#));
     }
 
@@ -3194,8 +3519,10 @@ mod tests {
             ..Default::default()
         };
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "body{}", None, None, None, None, &snippets, content)
-            .into_string();
+        let doc = base_document(
+            "Test", "body{}", None, None, None, None, &snippets, None, content,
+        )
+        .into_string();
         let style_pos = doc.find("</style>").unwrap();
         let link_pos = doc.find(r#"href="/custom.css""#).unwrap();
         assert!(
@@ -3211,8 +3538,8 @@ mod tests {
             ..Default::default()
         };
         let content = html! { p { "test" } };
-        let doc =
-            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let doc = base_document("Test", "", None, None, None, None, &snippets, None, content)
+            .into_string();
         assert!(doc.contains(r#"<script>console.log("analytics")</script>"#));
     }
 
@@ -3223,8 +3550,8 @@ mod tests {
             ..Default::default()
         };
         let content = html! { p { "test" } };
-        let doc =
-            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let doc = base_document("Test", "", None, None, None, None, &snippets, None, content)
+            .into_string();
         let head_end = doc.find("</head>").unwrap();
         let snippet_pos = doc.find("<!-- custom head -->").unwrap();
         assert!(
@@ -3236,8 +3563,18 @@ mod tests {
     #[test]
     fn no_head_html_by_default() {
         let content = html! { p { "test" } };
-        let doc = base_document("Test", "", None, None, None, None, &no_snippets(), content)
-            .into_string();
+        let doc = base_document(
+            "Test",
+            "",
+            None,
+            None,
+            None,
+            None,
+            &no_snippets(),
+            None,
+            content,
+        )
+        .into_string();
         // Only the standard head content should be present
         assert!(!doc.contains("<!-- custom"));
     }
@@ -3249,8 +3586,8 @@ mod tests {
             ..Default::default()
         };
         let content = html! { p { "test" } };
-        let doc =
-            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let doc = base_document("Test", "", None, None, None, None, &snippets, None, content)
+            .into_string();
         assert!(doc.contains(r#"<script src="/tracking.js"></script>"#));
     }
 
@@ -3261,8 +3598,8 @@ mod tests {
             ..Default::default()
         };
         let content = html! { p { "test" } };
-        let doc =
-            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let doc = base_document("Test", "", None, None, None, None, &snippets, None, content)
+            .into_string();
         let body_end = doc.find("</body>").unwrap();
         let snippet_pos = doc.find("<!-- body end -->").unwrap();
         assert!(
@@ -3278,8 +3615,8 @@ mod tests {
             ..Default::default()
         };
         let content = html! { p { "main content" } };
-        let doc =
-            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let doc = base_document("Test", "", None, None, None, None, &snippets, None, content)
+            .into_string();
         let content_pos = doc.find("main content").unwrap();
         let snippet_pos = doc.find("<!-- body end -->").unwrap();
         assert!(
@@ -3296,8 +3633,8 @@ mod tests {
             body_end_html: Some("<!-- body snippet -->".to_string()),
         };
         let content = html! { p { "test" } };
-        let doc =
-            base_document("Test", "", None, None, None, None, &snippets, content).into_string();
+        let doc = base_document("Test", "", None, None, None, None, &snippets, None, content)
+            .into_string();
         assert!(doc.contains(r#"href="/custom.css""#));
         assert!(doc.contains("<!-- head snippet -->"));
         assert!(doc.contains("<!-- body snippet -->"));
@@ -3319,7 +3656,7 @@ mod tests {
             description: None,
             config: SiteConfig::default(),
         };
-        let html = render_index(&manifest, "", None, None, &snippets).into_string();
+        let html = render_index(&manifest, "", None, None, &snippets, None).into_string();
         assert!(html.contains("custom.css"));
         assert!(html.contains("<!-- head -->"));
         assert!(html.contains("<!-- body -->"));
@@ -3336,6 +3673,7 @@ mod tests {
             None,
             &snippets,
             false,
+            None,
         )
         .into_string();
         assert!(html.contains("custom.css"));
@@ -3364,6 +3702,7 @@ mod tests {
             None,
             &snippets,
             false,
+            None,
         )
         .into_string();
         assert!(html.contains("custom.css"));
@@ -3499,6 +3838,7 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
@@ -3531,10 +3871,257 @@ mod tests {
             None,
             &no_snippets(),
             false,
+            None,
         )
         .into_string();
 
         assert!(html.contains("800w"));
         assert!(html.contains("1400w"));
+    }
+
+    // ========================================================================
+    // Open Graph metadata
+    // ========================================================================
+
+    #[test]
+    fn pick_og_variant_picks_smallest_above_target() {
+        let album = create_test_album();
+        // image[0] has variants 800 and 1400; target is 1200, so 1400 wins.
+        let picked = pick_og_variant(&album.images[0]).expect("variant exists");
+        assert_eq!(picked.width, 1400);
+    }
+
+    #[test]
+    fn album_cover_image_matches_designated_thumbnail() {
+        // Simulate the v0.9 "thumb-designated" flow: album.thumbnail points
+        // at the second image's thumbnail, not the first. OG must pick the
+        // image whose thumbnail the gallery grid is actually showing.
+        let mut album = create_test_album();
+        album.thumbnail = album.images[1].thumbnail.clone();
+        let cover = album_cover_image(&album).expect("cover exists");
+        assert_eq!(cover.number, album.images[1].number);
+    }
+
+    #[test]
+    fn album_cover_image_falls_back_to_first_when_paths_disagree() {
+        // Defensive fallback: if album.thumbnail doesn't match any image's
+        // thumbnail (shouldn't happen in current pipeline but we don't want
+        // OG to silently become None), return the first image.
+        let mut album = create_test_album();
+        album.thumbnail = "unrelated/path.avif".to_string();
+        let cover = album_cover_image(&album).expect("cover exists");
+        assert_eq!(cover.number, album.images[0].number);
+    }
+
+    #[test]
+    fn pick_og_variant_falls_back_to_largest_when_all_below_target() {
+        // image[1] has a single variant at target_size 800 but is portrait-
+        // oriented (1200x1600 source), so the variant's actual width is 600
+        // (scaled to fit the 800px long-edge target). Since that's below the
+        // 1200 target, fallback = largest available = width 600.
+        let album = create_test_album();
+        let picked = pick_og_variant(&album.images[1]).expect("variant exists");
+        assert_eq!(picked.width, 600);
+    }
+
+    #[test]
+    fn absolute_url_joins_base_and_path() {
+        assert_eq!(
+            absolute_url("https://example.com", "NY/Night/001.avif"),
+            "https://example.com/NY/Night/001.avif"
+        );
+    }
+
+    #[test]
+    fn absolute_url_tolerates_trailing_and_leading_slashes() {
+        assert_eq!(
+            absolute_url("https://example.com/", "/NY/001.avif"),
+            "https://example.com/NY/001.avif"
+        );
+    }
+
+    #[test]
+    fn absolute_url_empty_path_is_site_root() {
+        assert_eq!(
+            absolute_url("https://example.com", ""),
+            "https://example.com/"
+        );
+    }
+
+    #[test]
+    fn og_description_joins_site_title_segments_and_trailing() {
+        let segments = vec![("NY", "NY"), ("Night", "NY/Night")];
+        let out = og_description("Gallery", &segments, &["City"]);
+        assert_eq!(out, "Gallery › NY › Night › City");
+    }
+
+    /// Build a nested-album fixture with production-style root-relative avif
+    /// paths (e.g. `"NY/Night/001.avif"` for album `"NY/Night"`). The older
+    /// `create_nested_test_album` uses a parent-relative convention that does
+    /// not match what the process stage actually emits.
+    fn create_production_nested_album() -> Album {
+        Album {
+            path: "NY/Night".to_string(),
+            title: "Night".to_string(),
+            description: None,
+            thumbnail: "NY/Night/001-city-thumb.avif".to_string(),
+            images: vec![Image {
+                number: 1,
+                source_path: "NY/Night/001-city.jpg".to_string(),
+                title: Some("City".to_string()),
+                description: None,
+                dimensions: (1600, 1200),
+                generated: {
+                    let mut map = BTreeMap::new();
+                    map.insert(
+                        "1400".to_string(),
+                        GeneratedVariant {
+                            avif: "NY/Night/001-city-1400.avif".to_string(),
+                            width: 1400,
+                            height: 1050,
+                        },
+                    );
+                    map
+                },
+                thumbnail: "NY/Night/001-city-thumb.avif".to_string(),
+                full_index_thumbnail: None,
+            }],
+            in_nav: true,
+            config: SiteConfig::default(),
+            support_files: vec![],
+        }
+    }
+
+    fn ny_navigation() -> Vec<NavItem> {
+        vec![NavItem {
+            title: "NY".to_string(),
+            path: "NY".to_string(),
+            source_dir: String::new(),
+            description: None,
+            children: vec![NavItem {
+                title: "Night".to_string(),
+                path: "NY/Night".to_string(),
+                source_dir: String::new(),
+                description: None,
+                children: vec![],
+            }],
+        }]
+    }
+
+    #[test]
+    fn build_og_for_nested_album_yields_absolute_paths_and_breadcrumb() {
+        let album = create_production_nested_album();
+        let navigation = ny_navigation();
+        let og = build_og_for_album("https://example.com", &album, &navigation, "Gallery").unwrap();
+
+        assert_eq!(og.title, "Night");
+        assert_eq!(og.page_url, "https://example.com/NY/Night/");
+        assert_eq!(
+            og.image_url,
+            "https://example.com/NY/Night/001-city-1400.avif"
+        );
+        assert_eq!(og.description, "Gallery › NY › Night");
+        assert_eq!(og.site_name, "Gallery");
+    }
+
+    #[test]
+    fn build_og_for_image_includes_image_label_in_description() {
+        let album = create_production_nested_album();
+        let image = &album.images[0];
+        let navigation = ny_navigation();
+        let og = build_og_for_image(
+            "https://example.com",
+            &album,
+            image,
+            0,
+            &navigation,
+            "Gallery",
+        )
+        .unwrap();
+        // Single-image album → 1-wide index, so label is "1. City".
+        assert_eq!(og.description, "Gallery › NY › Night › 1. City");
+        assert!(og.page_url.starts_with("https://example.com/NY/Night/"));
+        assert!(og.page_url.ends_with("-city/"));
+        assert_eq!(
+            og.image_url,
+            "https://example.com/NY/Night/001-city-1400.avif"
+        );
+    }
+
+    #[test]
+    fn render_album_page_emits_og_tags_when_og_is_some() {
+        let album = create_test_album();
+        let og = build_og_for_album("https://example.com", &album, &[], "Gallery")
+            .expect("album has images");
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+            Some(&og),
+        )
+        .into_string();
+
+        assert!(html.contains(r#"<meta property="og:title" content="Test Album">"#));
+        assert!(html.contains(r#"<meta property="og:type" content="website">"#));
+        assert!(html.contains(r#"<meta property="og:site_name" content="Gallery">"#));
+        assert!(html.contains(r#"content="https://example.com/test/""#));
+        assert!(html.contains(r#"content="https://example.com/test/001-dawn-1400.avif""#));
+        assert!(html.contains(r#"<meta name="twitter:card" content="summary_large_image">"#));
+    }
+
+    #[test]
+    fn render_album_page_emits_no_og_tags_when_og_is_none() {
+        let album = create_test_album();
+        let html = render_album_page(
+            &album,
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+            None,
+        )
+        .into_string();
+
+        assert!(!html.contains("og:title"));
+        assert!(!html.contains("og:image"));
+        assert!(!html.contains("twitter:card"));
+    }
+
+    #[test]
+    fn render_image_page_og_description_is_full_breadcrumb() {
+        let album = create_test_album();
+        let image = &album.images[0];
+        let og = build_og_for_image("https://example.com", &album, image, 0, &[], "Gallery")
+            .expect("image has variants");
+        let html = render_image_page(
+            &album,
+            image,
+            None,
+            Some(&album.images[1]),
+            &[],
+            &[],
+            "",
+            None,
+            "Gallery",
+            None,
+            &no_snippets(),
+            false,
+            Some(&og),
+        )
+        .into_string();
+
+        // Breadcrumb description echoes site_title › album_title › image_label
+        // (no nav segments because the test album has no navigation tree).
+        assert!(html.contains(r#"content="Gallery › Test Album › 1. Dawn""#));
     }
 }
