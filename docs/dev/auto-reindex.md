@@ -1,8 +1,10 @@
 # Auto Index Reindexing — Feature Spec
 
-> **Status:** design / pre-implementation. This is a sensitive feature because it
-> renames files in the user's content tree. Nothing here is implemented yet.
-> Open questions are called out inline; answer them before writing code.
+> **Status:** partially implemented. This is a sensitive feature because it
+> renames files in the user's content tree. The `[auto_indexing]` config
+> section and the core library logic (`plan_reindex`, `apply_plan`) are
+> landed; the recursive walker, CLI command, and build-pipeline auto-hook
+> described below are still pending and tracked in §8.
 
 ## 1. Motivation
 
@@ -192,13 +194,16 @@ without special handling.
 
 Following the project's "pure logic first, CLI on top" principle:
 
-- **`src/reindex.rs`** (new) — pure logic module.
+- **`src/reindex.rs`** — pure logic module.
   - `plan_reindex(entries: &[Entry], spacing: u32, padding: u32) -> Vec<Rename>`
     — takes a list of parsed entries + params, returns the rename plan. No I/O.
-  - `apply_plan(plan: &[Rename], root: &Path) -> Result<ApplyReport>` — executes
-    the two-phase rename on disk. Isolated so the plan can be unit-tested
-    without touching the filesystem.
-  - Walks recursively or flat depending on caller.
+  - `apply_plan(dir: &Path, plan: &[Rename]) -> Result<ApplyReport, ApplyError>`
+    — executes the two-phase rename on disk inside `dir`. Isolated so the
+    plan can be unit-tested without touching the filesystem. Validates that
+    every `from` / `to` is a single-component basename, rejects plans that
+    use the reserved `.reindex-tmp-*` prefix, and treats a failed `read_dir`
+    as a hard error rather than silently skipping the dirty-temp check.
+  - Walker (recursive vs flat) is a follow-up task.
 - **`src/config.rs`** — add `AutoIndexingConfig` struct with confique defaults.
 - **`src/main.rs`** — add `Command::Reindex(ReindexArgs)` + `run_reindex()`,
   mirroring the shape of existing commands (format handling, quiet, json

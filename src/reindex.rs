@@ -67,10 +67,14 @@ pub struct Rename {
 /// The caller is responsible for sorting `entries` before calling — this
 /// function trusts the input order.
 pub fn plan_reindex(entries: &[Entry], spacing: u32, padding: u32) -> Vec<Rename> {
-    let step = 10u32.pow(spacing);
+    // Do the step arithmetic in u64 so large directories at spacing=9 (step
+    // = 10^9) don't overflow. `Entry::number` stays u32 because that's what
+    // the filename parser produces; only the computed new index needs the
+    // wider type.
+    let step = 10u64.pow(spacing);
     let pad = padding as usize;
     let mut plan = Vec::new();
-    let mut next: u32 = 1;
+    let mut next: u64 = 1;
     for entry in entries {
         if entry.number.is_none() {
             continue;
@@ -100,6 +104,20 @@ pub fn plan_reindex(entries: &[Entry], spacing: u32, padding: u32) -> Vec<Rename
 /// directory left over by a prior failed run.
 const TEMP_PREFIX: &str = ".reindex-tmp-";
 
+/// Reject any `name` that isn't a simple single-component basename. Used by
+/// [`apply_plan`] to keep `dir.join(name)` strictly inside `dir`.
+fn validate_basename(name: &str, side: &'static str) -> Result<(), ApplyError> {
+    let invalid =
+        name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\');
+    if invalid {
+        return Err(ApplyError::InvalidName {
+            name: name.to_string(),
+            side,
+        });
+    }
+    Ok(())
+}
+
 /// Result of a successful [`apply_plan`] call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApplyReport {
@@ -116,11 +134,31 @@ pub enum ApplyError {
     DuplicateTo(String),
     #[error("target `{target}` already exists and is not being renamed by this plan")]
     TargetExists { target: String },
+    /// Rename entry's `from` or `to` is not a single-component basename.
+    /// Rejecting these up front prevents a caller from tricking `apply_plan`
+    /// into renaming across directory boundaries via `..` or path separators.
+    #[error(
+        "plan {side} `{name}` is not a valid basename (empty, contains a path separator, or is `.`/`..`)"
+    )]
+    InvalidName { name: String, side: &'static str },
+    /// Rename entry's `from` or `to` starts with [`TEMP_PREFIX`]. Reserved
+    /// because letting a user name collide with the sentinel would make the
+    /// directory look permanently "dirty" to future runs.
+    #[error("plan {side} `{name}` uses the reserved `{TEMP_PREFIX}*` prefix")]
+    ReservedName { name: String, side: &'static str },
     #[error(
         "directory contains leftover `{TEMP_PREFIX}*` files from a prior failed run — \
         inspect and remove them before retrying"
     )]
     DirtyTemps,
+    /// Could not read `dir` to check for stale temps. Treated as a hard
+    /// failure rather than letting the dirty-temp check silently pass.
+    #[error("failed to read directory `{dir}` to check for leftover temps: {source}")]
+    ReadDir {
+        dir: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("phase 1 (stage to temp) failed on source `{source}`: {cause}")]
     Phase1 {
         source: String,
@@ -171,6 +209,31 @@ pub fn apply_plan(dir: &Path, plan: &[Rename]) -> Result<ApplyReport, ApplyError
 
     // ----- validation -----
 
+    // Every `from` / `to` must be a plain, single-component basename.
+    // Rejecting path separators and traversal markers up front keeps
+    // `dir.join(name)` strictly inside `dir`.
+    for r in plan {
+        validate_basename(&r.from, "source")?;
+        validate_basename(&r.to, "target")?;
+    }
+    // TEMP_PREFIX is reserved for our own bookkeeping — a user-level rename
+    // that lands on `.reindex-tmp-*` would make the directory look
+    // permanently dirty to future runs.
+    for r in plan {
+        if r.from.starts_with(TEMP_PREFIX) {
+            return Err(ApplyError::ReservedName {
+                name: r.from.clone(),
+                side: "source",
+            });
+        }
+        if r.to.starts_with(TEMP_PREFIX) {
+            return Err(ApplyError::ReservedName {
+                name: r.to.clone(),
+                side: "target",
+            });
+        }
+    }
+
     let mut seen_from: HashSet<&str> = HashSet::with_capacity(plan.len());
     for r in plan {
         if !seen_from.insert(r.from.as_str()) {
@@ -195,14 +258,18 @@ pub fn apply_plan(dir: &Path, plan: &[Rename]) -> Result<ApplyReport, ApplyError
             });
         }
     }
-    // Refuse to proceed if a prior run left stale temps behind.
-    if let Ok(iter) = fs::read_dir(dir) {
-        for entry in iter.flatten() {
-            if let Some(name) = entry.file_name().to_str()
-                && name.starts_with(TEMP_PREFIX)
-            {
-                return Err(ApplyError::DirtyTemps);
-            }
+    // Refuse to proceed if a prior run left stale temps behind. Failing to
+    // read the directory is a hard error — silently skipping this check
+    // would defeat the whole safety guarantee.
+    let iter = fs::read_dir(dir).map_err(|source| ApplyError::ReadDir {
+        dir: dir.to_path_buf(),
+        source,
+    })?;
+    for entry in iter.flatten() {
+        if let Some(name) = entry.file_name().to_str()
+            && name.starts_with(TEMP_PREFIX)
+        {
+            return Err(ApplyError::DirtyTemps);
         }
     }
 
@@ -217,10 +284,14 @@ pub fn apply_plan(dir: &Path, plan: &[Rename]) -> Result<ApplyReport, ApplyError
             .unwrap_or(0)
     );
 
-    // (original_from, temp_name, target_to)
+    // (original_from, temp_name, target_to).
+    // Temp names are `{TEMP_PREFIX}{run_id}-{i}` with no original-name
+    // suffix — keeping them short avoids NAME_MAX failures for files
+    // already close to the 255-byte limit. The staged map below carries
+    // the original name for rollback / error reporting.
     let mut staged: Vec<(String, String, String)> = Vec::with_capacity(plan.len());
     for (i, r) in plan.iter().enumerate() {
-        let temp_name = format!("{TEMP_PREFIX}{run_id}-{i}-{}", r.from);
+        let temp_name = format!("{TEMP_PREFIX}{run_id}-{i}");
         let src = dir.join(&r.from);
         let tmp = dir.join(&temp_name);
         if let Err(cause) = fs::rename(&src, &tmp) {
@@ -800,5 +871,104 @@ mod tests {
         let err = apply_plan(tmp.path(), &plan).unwrap_err();
         assert!(matches!(err, ApplyError::Phase1 { .. }));
         assert!(list(tmp.path()).is_empty());
+    }
+
+    // ----- basename / reserved-name validation -----
+
+    #[test]
+    fn apply_rejects_source_with_path_separator() {
+        let tmp = TempDir::new().unwrap();
+        let plan = vec![r("sub/file", "010-file")];
+        let err = apply_plan(tmp.path(), &plan).unwrap_err();
+        assert!(matches!(
+            err,
+            ApplyError::InvalidName { side: "source", .. }
+        ));
+    }
+
+    #[test]
+    fn apply_rejects_target_with_path_separator() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "A");
+        let plan = vec![r("A", "sub/B")];
+        let err = apply_plan(tmp.path(), &plan).unwrap_err();
+        assert!(matches!(
+            err,
+            ApplyError::InvalidName { side: "target", .. }
+        ));
+        // Filesystem untouched.
+        assert_eq!(
+            list(tmp.path()),
+            ["A"].iter().map(|s| s.to_string()).collect::<BTreeSet<_>>()
+        );
+    }
+
+    #[test]
+    fn apply_rejects_parent_traversal() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "A");
+        let plan = vec![r("A", "..")];
+        let err = apply_plan(tmp.path(), &plan).unwrap_err();
+        assert!(matches!(err, ApplyError::InvalidName { .. }));
+    }
+
+    #[test]
+    fn apply_rejects_empty_name() {
+        let tmp = TempDir::new().unwrap();
+        let plan = vec![r("", "X")];
+        let err = apply_plan(tmp.path(), &plan).unwrap_err();
+        assert!(matches!(err, ApplyError::InvalidName { .. }));
+    }
+
+    #[test]
+    fn apply_rejects_reserved_source_prefix() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), ".reindex-tmp-looks-like-a-temp");
+        let plan = vec![r(".reindex-tmp-looks-like-a-temp", "X")];
+        let err = apply_plan(tmp.path(), &plan).unwrap_err();
+        assert!(matches!(
+            err,
+            ApplyError::ReservedName { side: "source", .. }
+        ));
+    }
+
+    #[test]
+    fn apply_rejects_reserved_target_prefix() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "A");
+        let plan = vec![r("A", ".reindex-tmp-sneaky")];
+        let err = apply_plan(tmp.path(), &plan).unwrap_err();
+        assert!(matches!(
+            err,
+            ApplyError::ReservedName { side: "target", .. }
+        ));
+    }
+
+    // ----- read_dir failure is hard -----
+
+    #[test]
+    fn apply_surfaces_read_dir_failure() {
+        // Pass a path that doesn't exist — read_dir fails with ENOENT and
+        // apply_plan should surface it as ApplyError::ReadDir rather than
+        // silently proceeding and defeating the dirty-temp check.
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let plan = vec![r("A", "B")];
+        let err = apply_plan(&missing, &plan).unwrap_err();
+        assert!(matches!(err, ApplyError::ReadDir { .. }));
+    }
+
+    // ----- overflow safety (plan_reindex) -----
+
+    #[test]
+    fn plan_reindex_no_overflow_at_max_spacing() {
+        // With u32 arithmetic, spacing=9 would overflow at the 5th entry
+        // (5 * 10^9 > u32::MAX). u64 internals handle this cleanly.
+        let entries: Vec<Entry> = (1..=10).map(|n| dir(n, "E")).collect();
+        let plan = plan_reindex(&entries, 9, 0);
+        // 10 entries, all renamed (1-E .. 10-E) → (1000000000-E ..
+        // 10000000000-E). Sanity-check the first and last.
+        assert_eq!(plan[0].to, "1000000000-E");
+        assert_eq!(plan[plan.len() - 1].to, "10000000000-E");
     }
 }
