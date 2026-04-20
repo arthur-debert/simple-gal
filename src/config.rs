@@ -195,6 +195,10 @@ pub struct SiteConfig {
     /// Parallel processing settings.
     #[config(nested)]
     pub processing: ProcessingConfig,
+
+    /// Auto file-name index reindexing settings.
+    #[config(nested)]
+    pub auto_indexing: AutoIndexingConfig,
 }
 
 impl Default for SiteConfig {
@@ -257,6 +261,20 @@ impl SiteConfig {
         if self.images.sizes.is_empty() {
             return Err(ConfigError::Validation(
                 "images.sizes must not be empty".into(),
+            ));
+        }
+        // Bound spacing/padding so the reindex step (10^spacing) and the
+        // format-width allocation (padding chars) stay in sane ranges.
+        // 10^9 is the largest step that fits in u32; padding beyond 12 is
+        // already absurd and would just waste bytes.
+        if self.auto_indexing.spacing > 9 {
+            return Err(ConfigError::Validation(
+                "auto_indexing.spacing must be 0-9 (step = 10^spacing)".into(),
+            ));
+        }
+        if self.auto_indexing.padding > 12 {
+            return Err(ConfigError::Validation(
+                "auto_indexing.padding must be 0-12".into(),
             ));
         }
         Ok(())
@@ -603,6 +621,57 @@ pub struct ProcessingConfig {
     /// When absent, defaults to the number of CPU cores.
     /// Values larger than the core count are clamped down.
     pub max_processes: Option<usize>,
+}
+
+// =============================================================================
+// Auto-indexing
+// =============================================================================
+
+/// When the auto-reindex hook fires during build.
+///
+/// See `docs/dev/auto-reindex.md` for the full feature spec. The hook is
+/// off by default — users opt in per-site (or per-album, since the parent
+/// `[auto_indexing]` section cascades like the rest of `SiteConfig`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoIndexingMode {
+    /// Never auto-run; only the explicit `reindex` command runs.
+    #[default]
+    Off,
+    /// Reindex source files in place during scan, before process.
+    SourceOnly,
+    /// Source untouched; manifest prefixes are rewritten in-memory so output
+    /// URLs and copied filenames use the normalized numbering.
+    ExportOnly,
+    /// Reindex source files in place; output regenerates from new source
+    /// naturally. Equivalent on disk to `SourceOnly` but states user intent.
+    Both,
+}
+
+/// Auto file-name index reindexing settings.
+///
+/// `auto` controls whether (and where) the build pipeline runs reindex
+/// automatically. `spacing` and `padding` are the defaults used both by the
+/// auto hook and by the `reindex` CLI command when the user doesn't supply
+/// explicit `--spacing` / `--padding` flags.
+///
+/// Output prefix = `format!("{:0pad$}", n * 10^spacing)`:
+/// - `spacing=0, padding=0` → `1, 2, 3, …`
+/// - `spacing=1, padding=3` → `010, 020, 030, …` (the default)
+/// - `spacing=2, padding=4` → `0100, 0200, 0300, …`
+#[derive(Config, Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[config(layer_attr(derive(Clone)))]
+#[config(layer_attr(serde(deny_unknown_fields)))]
+pub struct AutoIndexingConfig {
+    /// When the auto-reindex hook fires during build.
+    #[config(default = "off")]
+    pub auto: AutoIndexingMode,
+    /// Step exponent: numbers are spaced by `10^spacing`.
+    #[config(default = 1)]
+    pub spacing: u32,
+    /// Zero-pad numeric prefix to this width. `0` means no padding.
+    #[config(default = 3)]
+    pub padding: u32,
 }
 
 /// Resolve the effective thread count from config.
@@ -1418,5 +1487,138 @@ qualty = 90
         );
         let result = load_config(tmp.path());
         assert!(result.is_err());
+    }
+
+    // ----- auto-indexing -----
+
+    #[test]
+    fn default_auto_indexing_is_off() {
+        let config = SiteConfig::default();
+        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::Off);
+        assert_eq!(config.auto_indexing.spacing, 1);
+        assert_eq!(config.auto_indexing.padding, 3);
+    }
+
+    #[test]
+    fn parse_auto_indexing_full() {
+        let tmp = TempDir::new().unwrap();
+        write_config(
+            tmp.path(),
+            r#"
+[auto_indexing]
+auto = "source_only"
+spacing = 2
+padding = 4
+"#,
+        );
+        let config = load_config(tmp.path()).unwrap();
+        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::SourceOnly);
+        assert_eq!(config.auto_indexing.spacing, 2);
+        assert_eq!(config.auto_indexing.padding, 4);
+    }
+
+    #[test]
+    fn parse_auto_indexing_partial_preserves_defaults() {
+        let tmp = TempDir::new().unwrap();
+        write_config(
+            tmp.path(),
+            r#"
+[auto_indexing]
+auto = "both"
+"#,
+        );
+        let config = load_config(tmp.path()).unwrap();
+        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::Both);
+        assert_eq!(config.auto_indexing.spacing, 1);
+        assert_eq!(config.auto_indexing.padding, 3);
+    }
+
+    #[test]
+    fn auto_indexing_each_mode_parses() {
+        for (raw, expected) in [
+            ("off", AutoIndexingMode::Off),
+            ("source_only", AutoIndexingMode::SourceOnly),
+            ("export_only", AutoIndexingMode::ExportOnly),
+            ("both", AutoIndexingMode::Both),
+        ] {
+            let tmp = TempDir::new().unwrap();
+            write_config(tmp.path(), &format!("[auto_indexing]\nauto = \"{raw}\"\n"));
+            let config = load_config(tmp.path()).unwrap();
+            assert_eq!(config.auto_indexing.auto, expected, "mode {raw}");
+        }
+    }
+
+    #[test]
+    fn auto_indexing_unknown_mode_rejected() {
+        let tmp = TempDir::new().unwrap();
+        write_config(
+            tmp.path(),
+            r#"
+[auto_indexing]
+auto = "always"
+"#,
+        );
+        assert!(load_config(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn auto_indexing_unknown_key_rejected() {
+        let tmp = TempDir::new().unwrap();
+        write_config(
+            tmp.path(),
+            r#"
+[auto_indexing]
+spaceing = 2
+"#,
+        );
+        assert!(load_config(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn auto_indexing_partial_preserves_other_sections() {
+        let tmp = TempDir::new().unwrap();
+        write_config(
+            tmp.path(),
+            r#"
+[auto_indexing]
+spacing = 0
+"#,
+        );
+        let config = load_config(tmp.path()).unwrap();
+        assert_eq!(config.auto_indexing.spacing, 0);
+        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::Off);
+        assert_eq!(config.auto_indexing.padding, 3);
+        assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
+        assert_eq!(config.colors.light.background, "#ffffff");
+    }
+
+    #[test]
+    fn auto_indexing_spacing_upper_bound_accepted() {
+        let mut config = SiteConfig::default();
+        config.auto_indexing.spacing = 9;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn auto_indexing_spacing_out_of_range_rejected() {
+        let mut config = SiteConfig::default();
+        config.auto_indexing.spacing = 10;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("spacing"));
+    }
+
+    #[test]
+    fn auto_indexing_padding_upper_bound_accepted() {
+        let mut config = SiteConfig::default();
+        config.auto_indexing.padding = 12;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn auto_indexing_padding_out_of_range_rejected() {
+        let mut config = SiteConfig::default();
+        config.auto_indexing.padding = 13;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("padding"));
     }
 }
