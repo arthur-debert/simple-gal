@@ -37,6 +37,7 @@
 //! | [`metadata`] | Image metadata resolution: IPTC tags, sidecar files, filename fallback |
 //! | [`imaging`] | Pure-Rust image operations: resize, thumbnail, IPTC parsing |
 //! | [`output`] | CLI output formatting — tree-based display of pipeline results |
+//! | [`reindex`] | Normalizes `NNN-` prefixes: pure `plan_reindex` + two-phase `apply_plan` |
 //!
 //! # Design Decisions
 //!
@@ -112,6 +113,7 @@ pub mod metadata;
 pub mod naming;
 pub mod output;
 pub mod process;
+pub mod reindex;
 pub mod scan;
 pub mod types;
 
