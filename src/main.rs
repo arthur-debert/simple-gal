@@ -4,10 +4,10 @@ use serde::Serialize;
 use simple_gal::config::SiteConfig;
 use simple_gal::json_output::{
     self, BuildPayload, CacheStatsPayload, CheckPayload, ConfigOpPayload, Counts, ErrorEnvelope,
-    ErrorKind, GeneratePayload, OkEnvelope, ProcessPayload, ScanPayload,
+    ErrorKind, GeneratePayload, OkEnvelope, ProcessPayload, ReindexPayload, ScanPayload,
 };
-use simple_gal::{config, generate, output, process, scan};
-use std::io::IsTerminal;
+use simple_gal::{config, generate, output, process, reindex, scan};
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 /// Shared flags for commands that process images.
@@ -43,6 +43,34 @@ struct ScanArgs {
     /// When passed without a value, uses <temp-dir>/manifest.json.
     #[arg(long, num_args = 0..=1, default_missing_value = "__default__")]
     save_manifest: Option<PathBuf>,
+}
+
+/// Arguments for the `reindex` command.
+///
+/// `spacing` and `padding` default to the `[auto_indexing]` values in the
+/// loaded config (default step-of-10, 3-wide). Unset flags fall through
+/// cleanly — explicit flags always win.
+#[derive(clap::Args, Clone)]
+struct ReindexArgs {
+    /// Directory to reindex. Defaults to the content source (`--source`).
+    path: Option<PathBuf>,
+    /// Step exponent: numbers are spaced by 10^spacing (0 → 1,2,3; 1 → 10,20,30).
+    #[arg(long)]
+    spacing: Option<u32>,
+    /// Zero-pad numeric prefix to this width. 0 = no padding.
+    #[arg(long)]
+    padding: Option<u32>,
+    /// Only reindex the target directory. Without this flag the walker
+    /// descends into numbered subdirectories.
+    #[arg(long)]
+    flat: bool,
+    /// Print the rename plan without touching the filesystem.
+    #[arg(long)]
+    dry_run: bool,
+    /// Skip the TTY confirmation prompt. Required on non-interactive
+    /// stdin when the run is not `--dry-run`.
+    #[arg(long, short = 'y')]
+    yes: bool,
 }
 
 fn version_string() -> &'static str {
@@ -144,6 +172,8 @@ enum Command {
     Check,
     /// Manage site configuration: gen, schema, list, get, set, unset
     Config(ConfigArgs),
+    /// Normalize `NNN-` prefixes on albums, groups, pages, and images
+    Reindex(ReindexArgs),
 }
 
 /// Wrapper around any command error tagged with an [`ErrorKind`] so the
@@ -304,6 +334,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<(), CliError> {
         Command::Build(cache_args) => run_build(cli, cache_args, format),
         Command::Check => run_check(cli, json_mode, ndjson, quiet),
         Command::Config(args) => run_config(cli, args, json_mode, ndjson),
+        Command::Reindex(args) => run_reindex(cli, args, json_mode, ndjson, quiet),
     }
 }
 
@@ -670,4 +701,144 @@ fn init_thread_pool(processing: &config::ProcessingConfig) {
 /// Resolve the content source directory for the build command.
 fn resolve_build_source(cli_source: &Path) -> PathBuf {
     cli_source.to_path_buf()
+}
+
+/// Run `simple-gal reindex`.
+///
+/// Flag → config → compiled-default precedence for `spacing`/`padding` so
+/// users can set defaults in `config.toml` and override them ad-hoc on the
+/// command line. A TTY + non-`--dry-run` + non-`--yes` run pauses for
+/// confirmation; piped stdin without `--yes` is rejected to avoid silent
+/// renames when a script forgets the flag.
+fn run_reindex(
+    cli: &Cli,
+    args: &ReindexArgs,
+    json_mode: bool,
+    ndjson: bool,
+    quiet: bool,
+) -> Result<(), CliError> {
+    // Target: positional PATH wins over --source; default to --source.
+    let target = args.path.clone().unwrap_or_else(|| cli.source.clone());
+
+    // Load the config cascade at the content root so defaults and
+    // assets_dir / site_description_file are honored.
+    let site_config = config::load_config(&cli.source).tag(ErrorKind::Config)?;
+
+    // CLI flags override config values which override compiled defaults.
+    let spacing = args.spacing.unwrap_or(site_config.auto_indexing.spacing);
+    let padding = args.padding.unwrap_or(site_config.auto_indexing.padding);
+
+    let opts = reindex::WalkOptions {
+        is_root: target == cli.source,
+        assets_dir: Some(site_config.assets_dir.as_str()),
+        site_description_file: site_config.site_description_file.as_str(),
+    };
+
+    // Plan first (dry pass) so we can show the user what's about to happen.
+    let planned = reindex::reindex_tree(&target, spacing, padding, args.flat, true, &opts)
+        .tag(ErrorKind::Reindex)?;
+    let total_renames: usize = planned.iter().map(|r| r.plan.len()).sum();
+
+    // Text-mode preview & confirmation.
+    if !json_mode && !quiet {
+        print_reindex_plan(&target, &planned);
+    }
+
+    // Nothing to do.
+    if total_renames == 0 {
+        if json_mode {
+            let payload = ReindexPayload::from_reports(&planned, args.dry_run, spacing, padding);
+            emit_json_result(ndjson, &OkEnvelope::new("reindex", payload))?;
+        } else if !quiet {
+            println!("==> Nothing to reindex.");
+        }
+        return Ok(());
+    }
+
+    // Dry-run stops here: we've already printed / emitted the plan.
+    if args.dry_run {
+        if json_mode {
+            let payload = ReindexPayload::from_reports(&planned, true, spacing, padding);
+            emit_json_result(ndjson, &OkEnvelope::new("reindex", payload))?;
+        } else if !quiet {
+            println!("==> Dry run — {total_renames} rename(s) planned, none applied.");
+        }
+        return Ok(());
+    }
+
+    // Confirmation gate. JSON mode skips the prompt (automation) and
+    // assumes the flag is opt-in at the CLI level. Text mode prompts on
+    // TTY; non-TTY without --yes is rejected.
+    if !json_mode && !args.yes && !confirm_reindex(total_renames)? {
+        println!("Aborted.");
+        return Ok(());
+    }
+    if json_mode && !args.yes {
+        // For JSON callers: require --yes explicitly so a misconfigured
+        // script doesn't rewrite the user's content tree silently.
+        let msg: Box<dyn std::error::Error + 'static> =
+            "reindex in JSON mode requires --yes to confirm a destructive run".into();
+        return Err(CliError::new(ErrorKind::Usage, msg));
+    }
+
+    // Apply the plan for real.
+    let applied = reindex::reindex_tree(&target, spacing, padding, args.flat, false, &opts)
+        .tag(ErrorKind::Reindex)?;
+
+    if json_mode {
+        let payload = ReindexPayload::from_reports(&applied, false, spacing, padding);
+        emit_json_result(ndjson, &OkEnvelope::new("reindex", payload))?;
+    } else if !quiet {
+        let applied_count: usize = applied.iter().map(|r| r.plan.len()).sum();
+        println!("==> Reindex complete — {applied_count} rename(s) applied.");
+    }
+    Ok(())
+}
+
+/// Human-readable dump of what reindex is about to do. Printed before the
+/// confirmation prompt in text mode.
+fn print_reindex_plan(target: &Path, reports: &[reindex::DirReport]) {
+    println!("==> Reindex plan ({})", target.display());
+    let mut total = 0usize;
+    for r in reports {
+        if r.plan.is_empty() {
+            continue;
+        }
+        println!("  {}/", r.dir.display());
+        for rn in &r.plan {
+            println!("    {}  →  {}", rn.from, rn.to);
+            total += 1;
+        }
+    }
+    if total == 0 {
+        println!("  (nothing to do)");
+    } else {
+        println!(
+            "  {total} rename(s) across {} director{}.",
+            reports.iter().filter(|r| !r.plan.is_empty()).count(),
+            if reports.iter().filter(|r| !r.plan.is_empty()).count() == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        );
+    }
+}
+
+/// Interactive confirmation. Returns `Ok(true)` on 'y', `Ok(false)` on
+/// anything else. Non-TTY stdin without `--yes` is rejected rather than
+/// silently proceeding.
+fn confirm_reindex(total_renames: usize) -> Result<bool, CliError> {
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        let msg: Box<dyn std::error::Error + 'static> =
+            "reindex without --yes on non-interactive stdin refused to proceed".into();
+        return Err(CliError::new(ErrorKind::Usage, msg));
+    }
+    print!("Apply {total_renames} rename(s)? [y/N] ");
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line).tag(ErrorKind::Io)?;
+    Ok(matches!(line.trim(), "y" | "Y" | "yes" | "YES"))
 }

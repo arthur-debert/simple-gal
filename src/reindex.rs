@@ -1,19 +1,25 @@
-//! Auto file-name index reindexing — pure planning + on-disk rename.
+//! Auto file-name index reindexing — planning, on-disk rename, walker.
 //!
-//! Two entry points:
+//! Three entry points:
 //!
 //! - [`plan_reindex`] — pure function. Takes a list of numbered entries and
 //!   the spacing/padding parameters, returns the rename plan. No I/O.
 //! - [`apply_plan`] — executes the rename plan via a two-phase rename
 //!   (source → temp, then temp → target) so the plan is collision-safe.
+//! - [`read_entries`] / [`reindex_tree`] — walks one directory (or a whole
+//!   tree) to build the `Vec<Entry>` that drives `plan_reindex`, grouping
+//!   image-with-sidecar bundles and skipping support files (`config.toml`,
+//!   `description.*`, hidden files, and at root the site-description file
+//!   + assets dir).
 //!
-//! Directory discovery and entry construction live in the walker (TODO, task
-//! #4). See `docs/dev/auto-reindex.md` for the full feature spec.
+//! See `docs/dev/auto-reindex.md` for the full feature spec.
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+use crate::imaging;
 
 /// One on-disk artifact belonging to an [`Entry`].
 ///
@@ -329,6 +335,403 @@ pub fn apply_plan(dir: &Path, plan: &[Rename]) -> Result<ApplyReport, ApplyError
     }
 
     Ok(ApplyReport { executed })
+}
+
+// ==========================================================================
+// Walker — read a directory into a Vec<Entry>
+// ==========================================================================
+
+/// Context for filtering a directory's entries.
+///
+/// These knobs are config-driven but only take effect at the content root:
+/// inside an album or group, `assets_dir` and the site-description file have
+/// no meaning, so we just don't skip them there.
+#[derive(Debug, Clone, Copy)]
+pub struct WalkOptions<'a> {
+    /// `true` if `dir` is the content root. When `true`, the walker also
+    /// skips `assets_dir` and the site-description file. When `false`,
+    /// those names are treated as ordinary entries (and in practice never
+    /// appear in albums anyway).
+    pub is_root: bool,
+    /// Content root's assets-dir name (from `SiteConfig::assets_dir`). Only
+    /// consulted when `is_root`.
+    pub assets_dir: Option<&'a str>,
+    /// Stem of the site-description file (from `SiteConfig::site_description_file`,
+    /// default `"site"`). Only consulted when `is_root`; when set, the walker
+    /// skips `{stem}.md` and `{stem}.txt`.
+    pub site_description_file: &'a str,
+}
+
+impl Default for WalkOptions<'_> {
+    fn default() -> Self {
+        WalkOptions {
+            is_root: false,
+            assets_dir: None,
+            site_description_file: "site",
+        }
+    }
+}
+
+/// Extensions that are treated as image-sidecar companions when they share
+/// an image's numeric stem. `.txt` matches what scan uses today; `.md` is
+/// broader (scan ignores `.md` sidecars) but bundling it here keeps a
+/// user-added companion markdown file from being orphaned by a rename.
+const SIDECAR_EXTS: &[&str] = &["txt", "md"];
+
+/// Returns `true` for names the walker should ignore entirely.
+///
+/// Shared rules (every directory):
+/// - Hidden files (leading `.`), which also covers stale `.reindex-tmp-*`.
+/// - `config.toml`, `description.txt`, `description.md`.
+/// - Build artifacts: `processed`, `dist`, `manifest.json`.
+///
+/// Root-only rules (`opts.is_root`):
+/// - `{assets_dir}` (if configured).
+/// - `{site_description_file}.md` and `{site_description_file}.txt`.
+fn is_skipped(name: &str, opts: &WalkOptions<'_>) -> bool {
+    if name.starts_with('.') {
+        return true;
+    }
+    matches!(
+        name,
+        "config.toml"
+            | "description.txt"
+            | "description.md"
+            | "processed"
+            | "dist"
+            | "manifest.json"
+    ) || (opts.is_root
+        && (opts.assets_dir == Some(name)
+            || name == format!("{}.md", opts.site_description_file).as_str()
+            || name == format!("{}.txt", opts.site_description_file).as_str()))
+}
+
+/// Parsed shape of a file/dir basename.
+struct DiskName {
+    /// Numeric prefix parsed from the basename (`None` if there isn't one).
+    number: Option<u32>,
+    /// The non-numeric portion between the number and the extension,
+    /// preserving original case. Empty for inputs like `"001"` or
+    /// `"001-"`.
+    stem: String,
+    /// Extension including the leading dot (`".jpg"`, `".md"`), or `""`
+    /// for directories and extension-less files.
+    suffix: String,
+}
+
+/// Parse a directory entry's basename into `(number, stem, suffix)`.
+///
+/// Handles:
+/// - `"010-Dawn.jpg"` → `number=10, stem="Dawn", suffix=".jpg"`
+/// - `"020-Travel"`   → `number=20, stem="Travel", suffix=""`
+/// - `"040-about.md"` → `number=40, stem="about", suffix=".md"`
+/// - `"001"` / `"001-"` → `number=1, stem="", suffix=""`
+/// - `"site.md"`      → `number=None, stem="site", suffix=".md"`
+fn parse_disk_name(name: &str, is_dir: bool) -> DiskName {
+    // Split the extension off files; directories keep their whole name.
+    let (base, suffix) = if is_dir {
+        (name, String::new())
+    } else {
+        // `rfind('.')` — we only treat it as an extension if the dot is not
+        // at position 0 (hidden files were already filtered upstream, but
+        // be defensive) and something follows it.
+        match name.rfind('.') {
+            Some(i) if i > 0 && i + 1 < name.len() => (&name[..i], name[i..].to_string()),
+            _ => (name, String::new()),
+        }
+    };
+    // Parse `base` for `NNN-stem` or pure `NNN`.
+    if let Some(dash) = base.find('-') {
+        let prefix = &base[..dash];
+        if let Ok(num) = prefix.parse::<u32>() {
+            return DiskName {
+                number: Some(num),
+                stem: base[dash + 1..].to_string(),
+                suffix,
+            };
+        }
+    }
+    if let Ok(num) = base.parse::<u32>() {
+        return DiskName {
+            number: Some(num),
+            stem: String::new(),
+            suffix,
+        };
+    }
+    DiskName {
+        number: None,
+        stem: base.to_string(),
+        suffix,
+    }
+}
+
+/// Is this extension one the processing stage treats as an image source?
+fn is_image_ext(ext_with_dot: &str) -> bool {
+    let stripped = ext_with_dot.strip_prefix('.').unwrap_or(ext_with_dot);
+    imaging::supported_input_extensions()
+        .iter()
+        .any(|e| e.eq_ignore_ascii_case(stripped))
+}
+
+/// Is this a sidecar extension (`.txt` / `.md`) that should bundle with a
+/// matching image in the same directory?
+fn is_sidecar_ext(ext_with_dot: &str) -> bool {
+    let stripped = ext_with_dot.strip_prefix('.').unwrap_or(ext_with_dot);
+    SIDECAR_EXTS
+        .iter()
+        .any(|e| e.eq_ignore_ascii_case(stripped))
+}
+
+/// One raw candidate from `readdir` — not yet grouped into an [`Entry`].
+struct RawCandidate {
+    name: String,
+    is_dir: bool,
+    parsed: DiskName,
+}
+
+/// Read `dir`, group images with their sidecars, and return a deterministic
+/// [`Entry`] list suitable for feeding [`plan_reindex`].
+///
+/// Sort order: numbered entries first (by `number`, then by `stem`),
+/// unnumbered entries last (by `stem`). Unnumbered entries are included in
+/// the output so callers can report them as "skipped" in dry-run output;
+/// `plan_reindex` will emit no renames for them.
+pub fn read_entries(dir: &Path, opts: &WalkOptions<'_>) -> std::io::Result<Vec<Entry>> {
+    let mut candidates: Vec<RawCandidate> = Vec::new();
+    for dirent in fs::read_dir(dir)? {
+        let dirent = dirent?;
+        let name = match dirent.file_name().to_str() {
+            Some(s) => s.to_string(),
+            // Skip names that aren't valid UTF-8 — reindex doesn't try to
+            // be clever about them.
+            None => continue,
+        };
+        if is_skipped(&name, opts) {
+            continue;
+        }
+        let file_type = dirent.file_type()?;
+        let is_dir = file_type.is_dir();
+        let parsed = parse_disk_name(&name, is_dir);
+        candidates.push(RawCandidate {
+            name,
+            is_dir,
+            parsed,
+        });
+    }
+
+    // Split into image candidates and everything else. Images anchor
+    // bundles; `.txt`/`.md` that match an image's (number, stem) attach to
+    // it. Any sidecar without a matching image becomes its own entry —
+    // probably a `.md` page at the content root.
+    let mut image_indices: Vec<usize> = Vec::new();
+    let mut other_indices: Vec<usize> = Vec::new();
+    for (i, c) in candidates.iter().enumerate() {
+        if !c.is_dir && is_image_ext(&c.parsed.suffix) {
+            image_indices.push(i);
+        } else {
+            other_indices.push(i);
+        }
+    }
+
+    // Track which non-image candidates were claimed as sidecars.
+    let mut claimed: Vec<bool> = vec![false; candidates.len()];
+    let mut entries: Vec<Entry> = Vec::new();
+
+    for img_i in &image_indices {
+        let img = &candidates[*img_i];
+        let mut members = vec![EntryMember {
+            original_name: img.name.clone(),
+            suffix: img.parsed.suffix.clone(),
+        }];
+        for other_i in &other_indices {
+            if claimed[*other_i] {
+                continue;
+            }
+            let other = &candidates[*other_i];
+            if other.is_dir || !is_sidecar_ext(&other.parsed.suffix) {
+                continue;
+            }
+            if other.parsed.number == img.parsed.number && other.parsed.stem == img.parsed.stem {
+                members.push(EntryMember {
+                    original_name: other.name.clone(),
+                    suffix: other.parsed.suffix.clone(),
+                });
+                claimed[*other_i] = true;
+            }
+        }
+        entries.push(Entry {
+            number: img.parsed.number,
+            stem: img.parsed.stem.clone(),
+            members,
+        });
+    }
+
+    for other_i in other_indices {
+        if claimed[other_i] {
+            continue;
+        }
+        let c = &candidates[other_i];
+        entries.push(Entry {
+            number: c.parsed.number,
+            stem: c.parsed.stem.clone(),
+            members: vec![EntryMember {
+                original_name: c.name.clone(),
+                suffix: c.parsed.suffix.clone(),
+            }],
+        });
+    }
+
+    // Deterministic order: numbered entries first, by (number, stem);
+    // unnumbered last, by stem.
+    entries.sort_by(|a, b| match (a.number, b.number) {
+        (Some(na), Some(nb)) => na.cmp(&nb).then_with(|| a.stem.cmp(&b.stem)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.stem.cmp(&b.stem),
+    });
+
+    Ok(entries)
+}
+
+// ==========================================================================
+// Tree driver — walk a target tree, plan + apply per directory
+// ==========================================================================
+
+/// One directory's contribution to a [`reindex_tree`] run.
+#[derive(Debug, Clone)]
+pub struct DirReport {
+    /// Directory that was planned.
+    pub dir: PathBuf,
+    /// Renames computed for that directory. Empty when nothing needs to
+    /// change (already normalized, or no numbered entries).
+    pub plan: Vec<Rename>,
+    /// `true` if the plan was applied to disk; `false` when `dry_run` was
+    /// set or the plan was empty.
+    pub applied: bool,
+}
+
+/// Failures from a [`reindex_tree`] run. Wraps walker IO and the planner /
+/// applier errors so callers can match them without juggling three types.
+#[derive(Debug, Error)]
+pub enum ReindexError {
+    #[error("failed to read directory `{dir}`: {source}")]
+    Io {
+        dir: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("apply failed in `{dir}`: {source}")]
+    Apply {
+        dir: PathBuf,
+        #[source]
+        source: ApplyError,
+    },
+}
+
+/// Walk `root`, plan the renames at each directory, and apply them unless
+/// `dry_run` is set.
+///
+/// With `flat = true` only `root` itself is processed. Otherwise the walker
+/// descends into numbered subdirectories (unnumbered dirs are hidden-by-
+/// convention and deliberately left alone).
+///
+/// The walker reads each directory *after* any parent-directory rename has
+/// been applied, so recursion always sees current on-disk names. This is
+/// intentional: it means the rename plan at the parent level is visible in
+/// children's paths but doesn't require any bookkeeping here.
+///
+/// `opts` controls root-only skipping (`assets_dir`, site-description file).
+/// For descended directories the walker passes a child `WalkOptions` with
+/// `is_root: false`.
+pub fn reindex_tree(
+    root: &Path,
+    spacing: u32,
+    padding: u32,
+    flat: bool,
+    dry_run: bool,
+    opts: &WalkOptions<'_>,
+) -> Result<Vec<DirReport>, ReindexError> {
+    let mut reports = Vec::new();
+    process_dir(root, spacing, padding, flat, dry_run, opts, &mut reports)?;
+    Ok(reports)
+}
+
+fn process_dir(
+    dir: &Path,
+    spacing: u32,
+    padding: u32,
+    flat: bool,
+    dry_run: bool,
+    opts: &WalkOptions<'_>,
+    reports: &mut Vec<DirReport>,
+) -> Result<(), ReindexError> {
+    let entries = read_entries(dir, opts).map_err(|source| ReindexError::Io {
+        dir: dir.to_path_buf(),
+        source,
+    })?;
+    let plan = plan_reindex(&entries, spacing, padding);
+    let applied = if !dry_run && !plan.is_empty() {
+        apply_plan(dir, &plan).map_err(|source| ReindexError::Apply {
+            dir: dir.to_path_buf(),
+            source,
+        })?;
+        true
+    } else {
+        false
+    };
+    reports.push(DirReport {
+        dir: dir.to_path_buf(),
+        plan: plan.clone(),
+        applied,
+    });
+    if flat {
+        return Ok(());
+    }
+    // Descend into numbered subdirectories. We re-read the directory so we
+    // see post-rename names; anything numbered is an album or group that
+    // reindex should also normalize.
+    let child_opts = WalkOptions {
+        is_root: false,
+        assets_dir: None,
+        site_description_file: opts.site_description_file,
+    };
+    let iter = fs::read_dir(dir).map_err(|source| ReindexError::Io {
+        dir: dir.to_path_buf(),
+        source,
+    })?;
+    let mut subdirs: Vec<PathBuf> = Vec::new();
+    for dirent in iter {
+        let dirent = dirent.map_err(|source| ReindexError::Io {
+            dir: dir.to_path_buf(),
+            source,
+        })?;
+        let name = match dirent.file_name().to_str() {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        if is_skipped(&name, opts) {
+            continue;
+        }
+        let file_type = dirent.file_type().map_err(|source| ReindexError::Io {
+            dir: dir.to_path_buf(),
+            source,
+        })?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let parsed = parse_disk_name(&name, true);
+        if parsed.number.is_none() {
+            // Unnumbered subdir = hidden from nav by convention; leave it alone.
+            continue;
+        }
+        subdirs.push(dir.join(&name));
+    }
+    // Deterministic recursion order.
+    subdirs.sort();
+    for sub in subdirs {
+        process_dir(&sub, spacing, padding, flat, dry_run, &child_opts, reports)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -970,5 +1373,267 @@ mod tests {
         // 10000000000-E). Sanity-check the first and last.
         assert_eq!(plan[0].to, "1000000000-E");
         assert_eq!(plan[plan.len() - 1].to, "10000000000-E");
+    }
+
+    // ==========================================================================
+    // Walker
+    // ==========================================================================
+
+    fn mkdir(root: &Path, name: &str) {
+        std::fs::create_dir(root.join(name)).unwrap();
+    }
+
+    /// Convenience for building a WalkOptions with `is_root: true`.
+    fn root_opts() -> WalkOptions<'static> {
+        WalkOptions {
+            is_root: true,
+            assets_dir: Some("assets"),
+            site_description_file: "site",
+        }
+    }
+
+    /// Read entries, collect their on-disk names (across all members) for
+    /// assertion in a deterministic shape.
+    fn entry_names(entries: &[Entry]) -> Vec<Vec<String>> {
+        entries
+            .iter()
+            .map(|e| e.members.iter().map(|m| m.original_name.clone()).collect())
+            .collect()
+    }
+
+    // ----- classification -----
+
+    #[test]
+    fn walker_skips_metadata_and_hidden() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "config.toml");
+        touch(tmp.path(), "description.txt");
+        touch(tmp.path(), "description.md");
+        touch(tmp.path(), ".DS_Store");
+        touch(tmp.path(), ".reindex-tmp-leftover");
+        touch(tmp.path(), "010-Dawn.jpg");
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        assert_eq!(
+            entry_names(&entries),
+            vec![vec!["010-Dawn.jpg".to_string()]]
+        );
+    }
+
+    #[test]
+    fn walker_skips_assets_and_site_only_at_root() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "site.md");
+        mkdir(tmp.path(), "assets");
+        touch(tmp.path(), "010-Landscapes.jpg");
+        let entries = read_entries(tmp.path(), &root_opts()).unwrap();
+        assert_eq!(
+            entry_names(&entries),
+            vec![vec!["010-Landscapes.jpg".to_string()]]
+        );
+    }
+
+    #[test]
+    fn walker_keeps_assets_in_non_root_dir() {
+        // Inside an album, a subdirectory literally named "assets" is just
+        // another subdir — we don't skip it.
+        let tmp = TempDir::new().unwrap();
+        mkdir(tmp.path(), "assets");
+        touch(tmp.path(), "010-Dawn.jpg");
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn walker_honors_custom_site_description_file_stem() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "intro.md");
+        touch(tmp.path(), "site.md");
+        touch(tmp.path(), "010-Landscapes.jpg");
+        let opts = WalkOptions {
+            is_root: true,
+            assets_dir: Some("assets"),
+            site_description_file: "intro",
+        };
+        let entries = read_entries(tmp.path(), &opts).unwrap();
+        // "intro.md" is the site description → skipped.
+        // "site.md" is NOT the configured stem → kept.
+        let names: Vec<_> = entries
+            .iter()
+            .flat_map(|e| &e.members)
+            .map(|m| m.original_name.as_str())
+            .collect();
+        assert!(names.contains(&"site.md"));
+        assert!(!names.contains(&"intro.md"));
+    }
+
+    // ----- sidecar bundling -----
+
+    #[test]
+    fn walker_bundles_txt_sidecar_with_image() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "010-Dawn.jpg");
+        touch(tmp.path(), "010-Dawn.txt");
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].number, Some(10));
+        assert_eq!(entries[0].stem, "Dawn");
+        assert_eq!(entries[0].members.len(), 2);
+    }
+
+    #[test]
+    fn walker_bundles_md_sidecar_with_image() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "010-Dawn.jpg");
+        touch(tmp.path(), "010-Dawn.md");
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].members.len(), 2);
+    }
+
+    #[test]
+    fn walker_orphan_md_stays_as_its_own_entry() {
+        // A `.md` whose stem doesn't match any image is a standalone page
+        // (at root) or a loose file (in an album). Either way it gets its
+        // own Entry, not attached to some other image.
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "010-Dawn.jpg");
+        touch(tmp.path(), "040-about.md");
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn walker_sidecar_with_different_number_is_not_attached() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "010-Dawn.jpg");
+        touch(tmp.path(), "020-Dawn.txt"); // same stem, different number
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    // ----- sorting & ordering -----
+
+    #[test]
+    fn walker_sorts_numbered_first_then_unnumbered() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "020-Later.jpg");
+        touch(tmp.path(), "010-Earlier.jpg");
+        mkdir(tmp.path(), "wip");
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        let names: Vec<_> = entries
+            .iter()
+            .map(|e| e.members[0].original_name.clone())
+            .collect();
+        assert_eq!(names, vec!["010-Earlier.jpg", "020-Later.jpg", "wip"]);
+    }
+
+    #[test]
+    fn walker_sorts_duplicate_numbers_by_stem() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "010-Zebra.jpg");
+        touch(tmp.path(), "010-Alpha.jpg");
+        let entries = read_entries(tmp.path(), &WalkOptions::default()).unwrap();
+        let stems: Vec<_> = entries.iter().map(|e| e.stem.clone()).collect();
+        assert_eq!(stems, vec!["Alpha", "Zebra"]);
+    }
+
+    // ----- tree driver -----
+
+    #[test]
+    fn tree_flat_only_touches_root() {
+        // Root has one album at position 1 → renamed 5-Album → 010-Album.
+        // With --flat, the album's contents are deliberately left alone.
+        let tmp = TempDir::new().unwrap();
+        mkdir(tmp.path(), "5-Album");
+        touch(&tmp.path().join("5-Album"), "1-inner.jpg");
+        touch(&tmp.path().join("5-Album"), "2-inner.jpg");
+        let reports = reindex_tree(tmp.path(), 1, 3, true, false, &root_opts()).unwrap();
+        assert_eq!(reports.len(), 1);
+        assert!(tmp.path().join("010-Album").exists());
+        assert!(!tmp.path().join("5-Album").exists());
+        // Contents of album: untouched (flat mode skipped recursion).
+        assert!(tmp.path().join("010-Album/1-inner.jpg").exists());
+        assert!(tmp.path().join("010-Album/2-inner.jpg").exists());
+    }
+
+    #[test]
+    fn tree_recursive_descends_into_numbered_subdirs() {
+        // Root: `1-A.jpg` + `10-Album` → positions 1, 2 → `010-A.jpg`, `020-Album`.
+        // Then recursion into the (now-renamed) album renumbers its images.
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "1-A.jpg");
+        mkdir(tmp.path(), "10-Album");
+        touch(&tmp.path().join("10-Album"), "1-inner.jpg");
+        touch(&tmp.path().join("10-Album"), "5-other.jpg");
+        let reports = reindex_tree(tmp.path(), 1, 3, false, false, &root_opts()).unwrap();
+        assert_eq!(reports.len(), 2);
+        assert!(tmp.path().join("010-A.jpg").exists());
+        assert!(tmp.path().join("020-Album/010-inner.jpg").exists());
+        assert!(tmp.path().join("020-Album/020-other.jpg").exists());
+    }
+
+    #[test]
+    fn tree_skips_unnumbered_subdirs() {
+        // `wip/` is unnumbered → hidden-by-convention → reindex leaves its
+        // contents alone even in recursive mode.
+        let tmp = TempDir::new().unwrap();
+        mkdir(tmp.path(), "wip");
+        touch(&tmp.path().join("wip"), "1-Draft.jpg");
+        let reports =
+            reindex_tree(tmp.path(), 1, 3, false, false, &WalkOptions::default()).unwrap();
+        // Root has one entry (wip), unnumbered, skipped → no renames there.
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].plan.is_empty());
+        // wip/1-Draft.jpg untouched.
+        assert!(tmp.path().join("wip/1-Draft.jpg").exists());
+    }
+
+    #[test]
+    fn tree_dry_run_leaves_filesystem_untouched() {
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "1-A.jpg");
+        touch(tmp.path(), "2-B.jpg");
+        let reports = reindex_tree(tmp.path(), 1, 3, false, true, &root_opts()).unwrap();
+        // Plan was computed, but not applied.
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].plan.len(), 2);
+        assert!(!reports[0].applied);
+        // Originals intact.
+        assert!(tmp.path().join("1-A.jpg").exists());
+        assert!(tmp.path().join("2-B.jpg").exists());
+    }
+
+    #[test]
+    fn tree_empty_plan_reports_not_applied() {
+        // Already normalized → empty plan → `applied` stays false.
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "010-A.jpg");
+        touch(tmp.path(), "020-B.jpg");
+        let reports = reindex_tree(tmp.path(), 1, 3, false, false, &root_opts()).unwrap();
+        assert!(reports[0].plan.is_empty());
+        assert!(!reports[0].applied);
+    }
+
+    #[test]
+    fn tree_surfaces_read_dir_error() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let err = reindex_tree(&missing, 1, 3, false, false, &root_opts()).unwrap_err();
+        assert!(matches!(err, ReindexError::Io { .. }));
+    }
+
+    #[test]
+    fn tree_preserves_sidecars_across_rename() {
+        // The bundle support lives in the walker + plan_reindex pairing;
+        // this is the end-to-end confirmation that a sidecar follows its
+        // image through an actual reindex_tree run.
+        let tmp = TempDir::new().unwrap();
+        touch(tmp.path(), "5-Dawn.jpg");
+        touch(tmp.path(), "5-Dawn.txt");
+        reindex_tree(tmp.path(), 1, 3, false, false, &root_opts()).unwrap();
+        assert!(tmp.path().join("010-Dawn.jpg").exists());
+        assert!(tmp.path().join("010-Dawn.txt").exists());
+        assert!(!tmp.path().join("5-Dawn.jpg").exists());
+        assert!(!tmp.path().join("5-Dawn.txt").exists());
     }
 }
