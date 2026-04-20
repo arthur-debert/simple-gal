@@ -23,6 +23,7 @@ Thumbs.db
 .envrc
 .direnv/
 local
+.claude/
 
 # Specs test artifacts
 specs/**/*.ast.*
