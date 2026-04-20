@@ -34,6 +34,7 @@ pub enum ErrorKind {
     Process,
     Generate,
     Validation,
+    Reindex,
     Usage,
     Internal,
 }
@@ -51,6 +52,7 @@ impl ErrorKind {
             ErrorKind::Process => 6,
             ErrorKind::Generate => 7,
             ErrorKind::Validation => 8,
+            ErrorKind::Reindex => 9,
         }
     }
 }
@@ -334,6 +336,81 @@ pub struct CheckPayload<'a> {
     pub valid: bool,
     pub source: &'a Path,
     pub counts: Counts,
+}
+
+// ----- reindex -----
+
+/// JSON envelope for a `simple-gal reindex` run.
+///
+/// `dry_run` surfaces the flag so automation doesn't have to track it
+/// separately. `per_directory` lists every directory that was planned,
+/// including directories whose plan was empty (handy for "reindex walked
+/// here and found nothing to do").
+#[derive(Debug, Serialize)]
+pub struct ReindexPayload<'a> {
+    pub dry_run: bool,
+    pub spacing: u32,
+    pub padding: u32,
+    pub per_directory: Vec<ReindexDirPayload<'a>>,
+    pub totals: ReindexTotals,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReindexDirPayload<'a> {
+    pub dir: &'a Path,
+    pub applied: bool,
+    pub renames: Vec<RenamePayload<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenamePayload<'a> {
+    pub from: &'a str,
+    pub to: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReindexTotals {
+    pub directories_scanned: usize,
+    pub directories_with_changes: usize,
+    pub total_renames: usize,
+}
+
+impl<'a> ReindexPayload<'a> {
+    pub fn from_reports(
+        reports: &'a [crate::reindex::DirReport],
+        dry_run: bool,
+        spacing: u32,
+        padding: u32,
+    ) -> Self {
+        let per_directory: Vec<ReindexDirPayload<'a>> = reports
+            .iter()
+            .map(|r| ReindexDirPayload {
+                dir: r.dir.as_path(),
+                applied: r.applied,
+                renames: r
+                    .plan
+                    .iter()
+                    .map(|rn| RenamePayload {
+                        from: rn.from.as_str(),
+                        to: rn.to.as_str(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let directories_with_changes = reports.iter().filter(|r| !r.plan.is_empty()).count();
+        let total_renames = reports.iter().map(|r| r.plan.len()).sum();
+        ReindexPayload {
+            dry_run,
+            spacing,
+            padding,
+            per_directory,
+            totals: ReindexTotals {
+                directories_scanned: reports.len(),
+                directories_with_changes,
+                total_renames,
+            },
+        }
+    }
 }
 
 // ----- config -----
@@ -658,6 +735,7 @@ mod tests {
             ErrorKind::Process,
             ErrorKind::Generate,
             ErrorKind::Validation,
+            ErrorKind::Reindex,
         ];
         let codes: Vec<i32> = kinds.iter().map(|k| k.exit_code()).collect();
         let mut sorted = codes.clone();

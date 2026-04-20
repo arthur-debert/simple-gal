@@ -68,6 +68,22 @@ Configuration cascades: stock defaults → root config → group config → albu
 
 Read more: [Configuration](https://simple-gal.magik.works/configuration/overview.html) · [Image Quality](https://simple-gal.magik.works/images/quality.html) · [Responsive Sizes](https://simple-gal.magik.works/images/responsive-sizes.html) · [Thumbnails](https://simple-gal.magik.works/images/thumbnails.html) · [Processing Cache](https://simple-gal.magik.works/images/caching.html)
 
+### Reindexing
+
+Numbering albums and images by hand works fine — and gapping indices (10, 20, 30) leaves room to slot in a new entry with a single rename. When the gaps drift or a manual edit leaves things uneven, `simple-gal reindex` normalizes everything in place while preserving order:
+
+```bash
+simple-gal reindex                         # defaults: step of 10, zero-padded to 3 digits
+simple-gal reindex --spacing 2 --padding 4 # gap of 100, 4-wide padding
+simple-gal reindex --flat                  # only the target directory (no recursion)
+simple-gal reindex --dry-run               # print the plan, touch nothing
+simple-gal reindex --format json --yes     # machine-readable envelope for automation
+```
+
+Images and their `.txt` / `.md` sidecars renumber together, unnumbered entries (and directories) are left alone, and the rename uses a two-phase `.reindex-tmp-*` protocol so a renumbered set can cleanly overlap existing names. Interactive runs show the plan and prompt before touching anything; `--yes` skips the prompt.
+
+Defaults for `spacing` and `padding` live in `[auto_indexing]` — see the [config reference](https://simple-gal.magik.works/configuration/overview.html).
+
 ### Customization
 
 Colors, fonts, and theme spacing are set via `config.toml` and exposed as CSS custom properties. For deeper changes, drop files into `assets/`:
