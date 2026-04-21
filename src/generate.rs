@@ -99,9 +99,10 @@ pub struct Manifest {
 /// content-derived metadata (IPTC title/description, raw dimensions)
 /// read once per unique byte content during the process stage. The
 /// full-index renderer walks album images and uses `Image::canonical_id`
-/// to dedupe; title/description/dimensions rendering uses the per-ref
-/// values primarily, with the canonical fields available as a fallback
-/// (see `resolve_canonical`).
+/// to dedupe; title/description/dimensions rendering currently uses
+/// the per-ref image values rather than a canonical fallback in this
+/// module. The canonical fields here are forwarded for external
+/// tooling and future renderers.
 #[derive(Debug, Deserialize)]
 pub struct CanonicalImage {
     pub id: String,
