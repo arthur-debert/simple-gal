@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-04-21
+
 ### Added
 - Open Graph + Twitter Card link previews on the home page, container/gallery-list pages, album pages, and image pages. When a link is pasted into WhatsApp, iMessage, Slack, Discord, Facebook, or X, the preview shows the gallery's cover image, the page title, and a breadcrumb description (e.g. `Gallery › Travel › Japan › 1. tokyo`). Breadcrumb descriptions matter for photography sites where individual photos often have no title or caption — a generic "Photo from the gallery" would be uninformative, but the crumb tells the reader exactly where in the gallery they're about to land.
 - New optional `base_url` field in `SiteConfig` (e.g. `base_url = "https://gallery.example.com"`). Required because `og:image` and `og:url` MUST be absolute URLs for scrapers like WhatsApp and iMessage to resolve them; there is no safe relative-URL fallback. When `base_url` is unset, **no** OG/Twitter meta tags are emitted — the site still builds and works, it just won't produce rich link previews. No other config or behavior changes when `base_url` is omitted, so this is a zero-cost opt-in.
