@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Data-model refactor Phase 1: scan now emits a flat `Manifest.canonical_images` list of unique source images keyed by SHA-256 content hash, and every per-album `Image` carries a `canonical_id` pointing at its entry. Byte-identical images in two albums collapse to one canonical entry with both paths captured (first occurrence wins `source_path`; others land in `aliases`). No consumer behavior changes yet — process and generate still walk `Album.images` and ignore the flat view. This lands the new shape alongside the nested one so later phases can migrate consumers one by one. See `docs/dev/data-model-refactor.md` for the full plan.
+
 ## [0.19.0] - 2026-04-21
 
 ### Added
