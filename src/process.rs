@@ -60,6 +60,14 @@ pub enum ProcessError {
     Imaging(#[from] BackendError),
     #[error("Source image not found: {0}")]
     SourceNotFound(PathBuf),
+    /// The on-disk cache manifest's `schema_version` doesn't match the
+    /// one this binary was built with. Phase 4a of the data-model
+    /// refactor made this loud rather than silent — see §5.2 of the
+    /// refactor plan. Callers should tell the user to remove the
+    /// processed directory (or pass `--auto-reset-cache` to have the
+    /// CLI do it).
+    #[error(transparent)]
+    CacheSchemaMismatch(#[from] cache::CacheLoadError),
 }
 
 /// Configuration for image processing
@@ -340,8 +348,12 @@ pub fn process_with_backend(
 
     std::fs::create_dir_all(output_dir)?;
 
+    // Strict load: a schema-version mismatch surfaces as `ProcessError::CacheSchemaMismatch`
+    // so the CLI can tell the user to wipe the processed dir (or pass
+    // --auto-reset-cache). Other load errors (missing file → empty; IO /
+    // corruption → error) behave as documented on `CacheLoadError`.
     let cache = Mutex::new(if use_cache {
-        CacheManifest::load(output_dir)
+        CacheManifest::load_strict(output_dir)?
     } else {
         CacheManifest::empty()
     });

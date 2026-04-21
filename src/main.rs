@@ -16,6 +16,12 @@ struct CacheArgs {
     /// Disable the processing cache — force re-encoding of all images
     #[arg(long)]
     no_cache: bool,
+    /// Wipe `<temp-dir>/processed/` before loading the cache, if its
+    /// schema version doesn't match this binary. Matches the nuke-on-
+    /// mismatch policy in `docs/dev/data-model-refactor.md` §5.2.
+    /// Without this flag, a version mismatch aborts with a clear error.
+    #[arg(long)]
+    auto_reset_cache: bool,
 }
 
 /// Output format for all commands.
@@ -401,6 +407,11 @@ fn run_process(
             .tag(ErrorKind::Config)?;
     init_thread_pool(&site_config.processing);
     let processed_dir = cli.temp_dir.join("processed");
+    maybe_reset_cache(
+        &processed_dir,
+        cache_args.auto_reset_cache,
+        !json_mode && !quiet,
+    )?;
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress = (json_mode && !ndjson) || quiet;
     let printer = std::thread::spawn(move || {
@@ -512,6 +523,7 @@ fn run_build(cli: &Cli, cache_args: &CacheArgs, format: OutputFormat) -> Result<
     // === Stage 2: Process ===
     init_thread_pool(&manifest.config.processing);
     let processed_dir = cli.temp_dir.join("processed");
+    maybe_reset_cache(&processed_dir, cache_args.auto_reset_cache, stage_text)?;
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress = !stage_text && !ndjson;
     let printer = std::thread::spawn(move || {
@@ -704,6 +716,36 @@ fn init_thread_pool(processing: &config::ProcessingConfig) {
 /// Resolve the content source directory for the build command.
 fn resolve_build_source(cli_source: &Path) -> PathBuf {
     cli_source.to_path_buf()
+}
+
+/// Honor `--auto-reset-cache`: when set, check the cache's schema
+/// version and wipe `processed_dir` if it doesn't match the binary's
+/// expected version. Without the flag, leave the directory alone —
+/// the strict load inside `process::process` will surface the
+/// mismatch as a loud error with instructions.
+///
+/// See `docs/dev/data-model-refactor.md` §5.2.
+fn maybe_reset_cache(
+    processed_dir: &Path,
+    auto_reset: bool,
+    text_mode: bool,
+) -> Result<(), CliError> {
+    if !auto_reset || !processed_dir.exists() {
+        return Ok(());
+    }
+    match simple_gal::cache::CacheManifest::load_strict(processed_dir) {
+        Ok(_) => Ok(()), // schema matches or no cache yet; nothing to do
+        Err(err) => {
+            if text_mode {
+                println!(
+                    "==> --auto-reset-cache: wiping {} ({err})",
+                    processed_dir.display()
+                );
+            }
+            std::fs::remove_dir_all(processed_dir).tag(ErrorKind::Io)?;
+            Ok(())
+        }
+    }
 }
 
 /// Pre-scan hook: consult `[auto_indexing].auto` and reindex the source
