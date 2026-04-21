@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `[auto_indexing].auto` now does something: `build` consults it and runs the reindex walker over the source tree before scan when it is set to `source_only` or `both`. After any on-disk rename, the processing cache at `<temp-dir>/processed/` is wiped so the process stage rebuilds from scratch — a deliberately coarse invalidation for the first cut; per-file content-addressed reuse across renames is a later optimization. `off` stays the default and leaves the source untouched. `export_only` (source-untouched manifest rewrite) still errors with a clear "not yet supported" message; it lands in a follow-up.
+
 ## [0.18.0] - 2026-04-21
 
 ### Added
