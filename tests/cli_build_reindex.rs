@@ -161,8 +161,12 @@ auto = "source_only"
     );
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(
-        stderr.contains("auto") || stderr.contains("unknown"),
-        "expected stderr to flag the unknown `auto` field, got: {stderr}"
+        stderr.contains("unknown field") && stderr.contains("`auto`"),
+        "expected stderr to flag the unknown `auto` field specifically, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("sync_source_files"),
+        "expected stderr to point users at the new `sync_source_files` field, got: {stderr}"
     );
     // Source untouched because config load fails before the hook runs.
     assert!(source.join("5-Album/1-first.jpg").exists());

@@ -1542,7 +1542,9 @@ sync_source_files = true
         // Phase 5 migration: the old enum-based `auto` field is gone;
         // confique's deny_unknown_fields rejects configs still using it
         // so users get a loud error pointing at `sync_source_files`
-        // rather than silent no-ops.
+        // rather than silent no-ops. We assert on the specific error
+        // shape so a general "config broken" change couldn't accidentally
+        // let this regress.
         let tmp = TempDir::new().unwrap();
         write_config(
             tmp.path(),
@@ -1551,7 +1553,15 @@ sync_source_files = true
 auto = "source_only"
 "#,
         );
-        assert!(load_config(tmp.path()).is_err());
+        let err_text = load_config(tmp.path()).unwrap_err().to_string();
+        assert!(
+            err_text.contains("unknown field") && err_text.contains("`auto`"),
+            "expected unknown-field error naming `auto`, got: {err_text}"
+        );
+        assert!(
+            err_text.contains("sync_source_files"),
+            "error should point users at the new field `sync_source_files`, got: {err_text}"
+        );
     }
 
     #[test]
