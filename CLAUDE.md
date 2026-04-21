@@ -6,6 +6,8 @@ A minimal static site generator for fine art photography portfolios.
 
 Three-stage pipeline: **scan** (filesystem → manifest) → **process** (responsive images + thumbnails) → **generate** (HTML site with inline CSS).
 
+When `[auto_indexing].auto` is set to `source_only` or `both` in the config, an optional **stage 0** runs `reindex` over the source tree before scan, normalizing `NNN-` prefixes (and wiping the processing cache if anything moved). `off` (default) skips the hook entirely.
+
 ```bash
 cargo run -- build --source content --output dist
 ```
