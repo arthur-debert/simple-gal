@@ -180,52 +180,78 @@ cut once.
 Each phase is its own PR, each lands with a green suite, each is
 reviewable standalone. Targets `main`.
 
-### Phase 1 — Introduce the types, scan produces both shapes
+### Phase 1 — Introduce canonical image IDs, scan links both views *(landed)*
 
-- Add `ImageId`, flat `Manifest.images: Vec<Image>`, `ImageRef`
-  alongside the existing `Album.images: Vec<Image>`.
-- Scan populates both: nested vec (old) AND flat vec + refs (new).
-- No consumer changes yet. All existing tests still pass.
-- Unit tests: scan produces consistent views between the two shapes;
-  byte-identical images in two albums collapse to one `Image` in the
-  flat vec, two `ImageRef` in the albums.
-- Estimated: ~400-600 LOC, 2-3 days.
+- Add `ImageId`, `CanonicalImage { id, source_path, aliases }`,
+  `Manifest.canonical_images: Vec<CanonicalImage>`, and
+  `Image.canonical_id: Option<ImageId>` while keeping the existing
+  `Album.images: Vec<Image>` shape exactly as it was. No type renames
+  at this layer — consumer code still reads `album.images` and doesn't
+  see the new fields yet.
+- Scan populates both views in one pass: albums still contain their
+  per-album `Image` records, and a post-scan `build_canonical_index`
+  hashes each source file (SHA-256, reusing `cache::hash_file` so the
+  manifest and cache share the same digest format), dedupes by
+  `ImageId`, and stamps every ref's `canonical_id`.
+- No behavior change. All existing tests still pass.
+- Unit tests: byte-identical images in two albums collapse to one
+  canonical entry with both paths captured (first scan occurrence
+  wins `source_path`; others land in `aliases`); byte-different
+  images with the same filename get separate IDs; `aliases` stays
+  empty for singletons; every `Image.canonical_id` points at a real
+  canonical entry.
+- Landed: ~600 LOC, including the plan doc.
 
-### Phase 2 — Migrate process to the new shape
+### Phase 2 — Migrate process to consume canonical images
 
-- Process stage iterates `(ImageRef, album.resolved_config)` tuples.
-  For each ref it computes the params hash from the album's resolved
-  config and consults the cache; cache hits skip re-encoding, misses
-  encode once and insert. **One encode per unique
-  `(content_hash, params_hash)` across the whole site** — two albums
-  with the same config on a shared image = one encode; two albums
-  with different configs = two encodes. This is already the cache's
-  existing contract (`cache.rs:137`).
-- Output path construction walks refs per album for the per-album-copy
-  layout. Each ref's `variants` is populated with the produced paths.
+- Process stage iterates `(album, &album.images[i], album.resolved_config)`
+  tuples, resolving each image's `canonical_id` into
+  `manifest.canonical_images` for shared content lookup. It computes
+  the params hash from the album's resolved config and consults the
+  cache; cache hits skip re-encoding, misses encode once and insert.
+  **One encode per unique `(content_hash, params_hash)` across the
+  whole site** — two albums with the same config on a shared image =
+  one encode; two albums with different configs = two encodes. This
+  is already the cache's existing contract (`cache.rs:137`).
+- Output path construction still walks `album.images` for the
+  per-album-copy layout. Each album image's produced variant paths
+  get attached to the ref (new `variants` field added in this phase).
 - Cache unchanged (already content-addressed + params-aware).
-- Tests: reuse fixture + add (a) same bytes, same config, two albums →
-  one encode, two output copies; (b) same bytes, different
+- Tests: reuse fixture + add (a) same bytes, same config, two albums
+  → one encode, two output copies; (b) same bytes, different
   `[thumbnails].aspect_ratio` per album → two encodes, correct
   per-album outputs.
 - Estimated: ~300-500 LOC.
 
-### Phase 3 — Migrate generate to the new shape
+### Phase 3 — Migrate generate to read canonical + refs
 
-- Generate walks `album.images` (now `Vec<ImageRef>`), resolves
-  titles/descriptions per-ref → per-image fallback.
-- Full-index page iterates `manifest.images` directly — natural dedup.
-- Templates and URL construction: no URL changes (already ordinal-
-  based per album).
+- Generate walks `album.images` as today, but for each image resolves
+  title and description with precedence: ref-level (filename title,
+  sidecar description) → canonical-level (IPTC, once populated on
+  `CanonicalImage`) → none.
+- Full-index page iterates `manifest.canonical_images` directly and
+  renders one entry per unique content — natural dedup — linking into
+  every album that references it. Existing template keeps working;
+  the iteration source changes.
+- URL construction: no changes (URLs are already ordinal-based per
+  album).
 - Tests: existing renderer tests should mostly pass with minor
-  updates; add a two-album-same-image test that confirms one entry in
-  `/all-photos/`.
+  updates; add a two-album-same-image test that confirms one entry
+  in `/all-photos/`.
 - Estimated: ~400-700 LOC.
 
-### Phase 4 — Drop the old nested shape + bump schema_version
+### Phase 4 — Promote canonical_images to authoritative + schema_version bump
 
-- Remove `Album.images: Vec<Image>` field.
-- Add `schema_version: 2` to the manifest root.
+- Move IPTC title/description, raw dimensions, and any other
+  content-derived metadata onto `CanonicalImage` (populated by process
+  when it first decodes the image).
+- Simplify `Image` to the per-album reference shape: filename title,
+  sidecar description, position, variants, `canonical_id`. This is
+  the point at which we can rename `Image` → `ImageRef` and
+  `CanonicalImage` → `Image` if we want the final naming; or keep
+  the current names for stability.
+- Bump the manifest's `schema_version` to `2`. Coordinate the bump
+  with `arthur-debert/simple-gal-action` per §5.1.
 - Update every remaining test that hand-constructs manifests.
 - CHANGELOG + README updates.
 - Estimated: ~200-400 LOC, mostly test migration.
