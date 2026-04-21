@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Data-model refactor Phase 1: scan now emits a flat `Manifest.canonical_images` list of unique source images keyed by SHA-256 content hash, and every per-album `Image` carries a `canonical_id` pointing at its entry. Byte-identical images in two albums collapse to one canonical entry with both paths captured (first occurrence wins `source_path`; others land in `aliases`). No consumer behavior changes yet — process and generate still walk `Album.images` and ignore the flat view. This lands the new shape alongside the nested one so later phases can migrate consumers one by one. See `docs/dev/data-model-refactor.md` for the full plan.
+- Data-model refactor Phase 2: process stage is now canonical-aware. It reads `Manifest.canonical_images` + `Image.canonical_id` and keeps an in-memory source-hash memo keyed by canonical id (falling back to `source_path` for legacy manifests). When two albums reference the same byte-identical source, the SHA-256 hash is computed exactly once — the second ref reuses it — cutting redundant disk reads on sites that reuse images across galleries. The processing cache is unchanged; encode work was already deduplicated by content hash, this closes the last remaining per-path redundancy upstream of it. A new `source_hash_stats: SourceHashStats { unique, reused }` field on `ProcessResult` reports the dedup counts so automation can observe the effect. Process output manifest shape is unchanged.
 
 ## [0.19.0] - 2026-04-21
 

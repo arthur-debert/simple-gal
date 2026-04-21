@@ -100,6 +100,13 @@ pub struct InputManifest {
     #[serde(default)]
     pub description: Option<String>,
     pub config: SiteConfig,
+    /// Flat canonical view of images keyed by content hash (Phase 1 of
+    /// the data-model refactor). Each entry here is a unique byte
+    /// stream; [`InputImage::canonical_id`] points into this list. Old
+    /// manifests without the field deserialize with an empty list —
+    /// the per-album path-based flow still works.
+    #[serde(default)]
+    pub canonical_images: Vec<InputCanonicalImage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +133,21 @@ pub struct InputImage {
     pub title: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Pointer into [`InputManifest::canonical_images`]. Populated by
+    /// scan for manifests produced in v0.19.x or later; absent on
+    /// older ones (back-compat path falls through to the ref's own
+    /// `source_path`).
+    #[serde(default)]
+    pub canonical_id: Option<String>,
+}
+
+/// Mirror of `scan::CanonicalImage`, serialized through the manifest.
+#[derive(Debug, Deserialize)]
+pub struct InputCanonicalImage {
+    pub id: String,
+    pub source_path: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 /// Output manifest (after processing)
@@ -187,6 +209,24 @@ pub struct GeneratedVariant {
 pub struct ProcessResult {
     pub manifest: OutputManifest,
     pub cache_stats: CacheStats,
+    /// Source-hash dedup stats from the canonical-image lookup (Phase 2
+    /// of the data-model refactor). `unique` counts distinct source
+    /// byte streams that required a fresh `hash_file` read; `reused`
+    /// counts how many times a subsequent `InputImage` reused a
+    /// previously-computed hash — one reuse per extra album that
+    /// references the same canonical content.
+    pub source_hash_stats: SourceHashStats,
+}
+
+/// Counts of source-hash dedup across a processing run.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SourceHashStats {
+    /// Distinct source files that were hashed (one per canonical image
+    /// actually touched, or per ref with no canonical_id).
+    pub unique: u32,
+    /// Times a previously-computed hash was reused — i.e. how many
+    /// redundant reads the new canonical view avoided.
+    pub reused: u32,
 }
 
 /// Cache outcome for a single processed variant (for progress reporting).
@@ -285,6 +325,33 @@ pub fn process_with_backend(
     });
     let stats = Mutex::new(CacheStats::default());
 
+    // Canonical-view lookup: map `ImageId` → `InputCanonicalImage` for
+    // O(1) resolution from per-album refs. Empty on legacy manifests
+    // (pre-Phase-1 scans) — the fallback path keys the hash memo on
+    // `InputImage.source_path` instead.
+    let canonical_by_id: std::collections::HashMap<&str, &InputCanonicalImage> = input
+        .canonical_images
+        .iter()
+        .map(|c| (c.id.as_str(), c))
+        .collect();
+
+    // Source-hash memo. Keys are either `canonical_id` (preferred) or
+    // the per-ref `source_path` (fallback for legacy manifests and for
+    // refs whose `canonical_id` doesn't resolve in `canonical_by_id`).
+    // Two refs to the same canonical content hit the memo and skip the
+    // second `hash_file` call entirely, avoiding the redundant disk
+    // read the Phase 1 CHANGELOG flagged as the current-model cost.
+    //
+    // Each entry is a per-key `Arc<Mutex<Option<String>>>` so concurrent
+    // rayon workers on the same key serialize on that inner mutex
+    // (one worker computes, others wait and read the cached value).
+    // The outer mutex only guards the map itself — brief.
+    type HashCell = std::sync::Arc<Mutex<Option<String>>>;
+    let source_hash_memo: Mutex<std::collections::HashMap<String, HashCell>> =
+        Mutex::new(std::collections::HashMap::new());
+    let source_hash_unique = std::sync::atomic::AtomicU32::new(0);
+    let source_hash_reused = std::sync::atomic::AtomicU32::new(0);
+
     let mut output_albums = Vec::new();
 
     for album in &input.albums {
@@ -360,8 +427,49 @@ pub fn process_with_backend(
                     .to_str()
                     .unwrap();
 
-                // Compute source hash once, shared across all variants
-                let source_hash = cache::hash_file(&source_path)?;
+                // Compute source hash once per canonical content across the
+                // whole site. The memo key is `canonical_id` when the scan
+                // stage stamped one AND that id actually resolves in
+                // `canonical_by_id` — otherwise we fall back to the ref's
+                // own `source_path`. Guarding on resolution prevents a
+                // manifest where `canonical_id` was set without a matching
+                // entry (inconsistent input) from causing two genuinely
+                // distinct images to share a hash.
+                let canonical = image
+                    .canonical_id
+                    .as_deref()
+                    .and_then(|id| canonical_by_id.get(id).map(|c| (id, *c)));
+                let (memo_key, hash_input_path) = match canonical {
+                    Some((id, c)) => (id.to_string(), source_root.join(&c.source_path)),
+                    None => (image.source_path.clone(), source_path.clone()),
+                };
+                // Per-key cell: first worker locks it, hashes, stores; later
+                // workers block on the same cell and just read the stored
+                // hash. Workers on different keys run in parallel (each has
+                // its own cell). The stats counter is now race-free because
+                // only one thread ever reaches the miss branch per key.
+                let cell: HashCell = {
+                    let mut memo = source_hash_memo.lock().unwrap();
+                    memo.entry(memo_key)
+                        .or_insert_with(|| std::sync::Arc::new(Mutex::new(None)))
+                        .clone()
+                };
+                let source_hash = {
+                    use std::sync::atomic::Ordering;
+                    let mut slot = cell.lock().unwrap();
+                    match slot.clone() {
+                        Some(h) => {
+                            source_hash_reused.fetch_add(1, Ordering::Relaxed);
+                            h
+                        }
+                        None => {
+                            let h = cache::hash_file(&hash_input_path)?;
+                            *slot = Some(h.clone());
+                            source_hash_unique.fetch_add(1, Ordering::Relaxed);
+                            h
+                        }
+                    }
+                };
                 let ctx = CacheContext {
                     source_hash: &source_hash,
                     cache: &cache,
@@ -548,6 +656,12 @@ pub fn process_with_backend(
         tx.send(ProcessEvent::CachePruned { removed: pruned }).ok();
     }
 
+    use std::sync::atomic::Ordering;
+    let source_hash_stats = SourceHashStats {
+        unique: source_hash_unique.load(Ordering::Relaxed),
+        reused: source_hash_reused.load(Ordering::Relaxed),
+    };
+
     Ok(ProcessResult {
         manifest: OutputManifest {
             navigation: input.navigation,
@@ -557,6 +671,7 @@ pub fn process_with_backend(
             config: input.config,
         },
         cache_stats: final_stats,
+        source_hash_stats,
     })
 }
 
@@ -1496,5 +1611,299 @@ mod tests {
                 .entries
                 .contains_key("renamed-album/001-test-thumb.avif")
         );
+    }
+
+    // =========================================================================
+    // Phase 2: canonical-image hash memoization
+    // =========================================================================
+
+    /// Build a manifest with two albums that each reference the same
+    /// canonical image, plus the canonical_images array. Used to verify
+    /// the per-canonical-content hash memo fires correctly.
+    fn create_shared_canonical_manifest(tmp: &Path) -> PathBuf {
+        let manifest = r##"{
+            "navigation": [],
+            "albums": [
+                {
+                    "path": "album-a",
+                    "title": "Album A",
+                    "description": null,
+                    "preview_image": "album-a/001-shared.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-a/001-shared.jpg",
+                        "filename": "001-shared.jpg",
+                        "canonical_id": "sha256-aaa"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                },
+                {
+                    "path": "album-b",
+                    "title": "Album B",
+                    "description": null,
+                    "preview_image": "album-b/001-shared.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-b/001-shared.jpg",
+                        "filename": "001-shared.jpg",
+                        "canonical_id": "sha256-aaa"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                }
+            ],
+            "config": {},
+            "canonical_images": [
+                {
+                    "id": "sha256-aaa",
+                    "source_path": "album-a/001-shared.jpg",
+                    "aliases": ["album-b/001-shared.jpg"]
+                }
+            ]
+        }"##;
+        let manifest_path = tmp.join("manifest.json");
+        fs::write(&manifest_path, manifest).unwrap();
+        manifest_path
+    }
+
+    #[test]
+    fn shared_canonical_image_hashed_exactly_once() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        // Same bytes at two paths — scan would collapse these into one
+        // canonical entry. Write the bytes twice to match what a real
+        // scan would see on disk.
+        create_dummy_source(&source_dir.join("album-a/001-shared.jpg"));
+        create_dummy_source(&source_dir.join("album-b/001-shared.jpg"));
+
+        let manifest_path = create_shared_canonical_manifest(tmp.path());
+        // One dimension per image processed (two refs → two identify calls).
+        let backend = MockBackend::with_dimensions(vec![
+            Dimensions {
+                width: 400,
+                height: 300,
+            },
+            Dimensions {
+                width: 400,
+                height: 300,
+            },
+        ]);
+
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        // Two refs, one canonical id → exactly one unique hash, one reuse.
+        assert_eq!(
+            result.source_hash_stats.unique, 1,
+            "expected one hash_file call for the shared canonical image"
+        );
+        assert_eq!(
+            result.source_hash_stats.reused, 1,
+            "expected the second album's ref to reuse the memoized hash"
+        );
+        // Both albums still got processed.
+        assert_eq!(result.manifest.albums.len(), 2);
+        assert_eq!(result.manifest.albums[0].images.len(), 1);
+        assert_eq!(result.manifest.albums[1].images.len(), 1);
+    }
+
+    #[test]
+    fn legacy_manifest_without_canonical_fields_falls_back_to_path_key() {
+        // Manifest has no canonical_id / canonical_images — simulates a
+        // pre-Phase-1 scan. Hash memo should still dedupe by source_path
+        // when two refs happen to have the same path (edge case) or
+        // otherwise hash per-ref as before.
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        create_dummy_source(&source_dir.join("test-album/001-test.jpg"));
+
+        let manifest_path = create_test_manifest(tmp.path());
+        let backend = MockBackend::with_dimensions(vec![Dimensions {
+            width: 400,
+            height: 300,
+        }]);
+
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        // One ref, no canonical_id, fallback keys on source_path → one unique, zero reused.
+        assert_eq!(result.source_hash_stats.unique, 1);
+        assert_eq!(result.source_hash_stats.reused, 0);
+    }
+
+    #[test]
+    fn different_canonical_ids_do_not_dedupe() {
+        // Two refs with different canonical_ids (the scanner saw distinct
+        // byte content) must hash twice — no false dedup even if paths
+        // look similar.
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        create_dummy_source(&source_dir.join("album-a/001-x.jpg"));
+        create_dummy_source(&source_dir.join("album-b/001-x.jpg"));
+
+        let manifest = r##"{
+            "navigation": [],
+            "albums": [
+                {
+                    "path": "album-a",
+                    "title": "Album A",
+                    "description": null,
+                    "preview_image": "album-a/001-x.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-a/001-x.jpg",
+                        "filename": "001-x.jpg",
+                        "canonical_id": "sha256-aaa"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                },
+                {
+                    "path": "album-b",
+                    "title": "Album B",
+                    "description": null,
+                    "preview_image": "album-b/001-x.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-b/001-x.jpg",
+                        "filename": "001-x.jpg",
+                        "canonical_id": "sha256-bbb"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                }
+            ],
+            "config": {},
+            "canonical_images": [
+                {"id": "sha256-aaa", "source_path": "album-a/001-x.jpg"},
+                {"id": "sha256-bbb", "source_path": "album-b/001-x.jpg"}
+            ]
+        }"##;
+        let manifest_path = tmp.path().join("manifest.json");
+        fs::write(&manifest_path, manifest).unwrap();
+        let backend = MockBackend::with_dimensions(vec![
+            Dimensions {
+                width: 400,
+                height: 300,
+            },
+            Dimensions {
+                width: 400,
+                height: 300,
+            },
+        ]);
+
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.source_hash_stats.unique, 2);
+        assert_eq!(result.source_hash_stats.reused, 0);
+    }
+
+    #[test]
+    fn unresolved_canonical_id_falls_back_to_source_path_key() {
+        // Defensive test: a manifest where `canonical_id` is set but the
+        // id isn't present in `canonical_images` (inconsistent input).
+        // Without the resolution guard, two genuinely distinct images
+        // sharing a bad id would collide on memo_key and the second ref
+        // would get the first ref's hash. With the guard, we fall back
+        // to each ref's own `source_path` key so they hash independently
+        // and get their correct, distinct hashes.
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        fs::create_dir_all(source_dir.join("album-a")).unwrap();
+        fs::create_dir_all(source_dir.join("album-b")).unwrap();
+        // Different bytes — correct behavior requires two hash calls
+        // producing two distinct hashes.
+        fs::write(source_dir.join("album-a/001-x.jpg"), b"alpha").unwrap();
+        fs::write(source_dir.join("album-b/001-x.jpg"), b"beta").unwrap();
+
+        let manifest = r##"{
+            "navigation": [],
+            "albums": [
+                {
+                    "path": "album-a",
+                    "title": "Album A",
+                    "description": null,
+                    "preview_image": "album-a/001-x.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-a/001-x.jpg",
+                        "filename": "001-x.jpg",
+                        "canonical_id": "sha256-ghost"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                },
+                {
+                    "path": "album-b",
+                    "title": "Album B",
+                    "description": null,
+                    "preview_image": "album-b/001-x.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-b/001-x.jpg",
+                        "filename": "001-x.jpg",
+                        "canonical_id": "sha256-ghost"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                }
+            ],
+            "config": {},
+            "canonical_images": []
+        }"##;
+        let manifest_path = tmp.path().join("manifest.json");
+        fs::write(&manifest_path, manifest).unwrap();
+        let backend = MockBackend::with_dimensions(vec![
+            Dimensions {
+                width: 400,
+                height: 300,
+            },
+            Dimensions {
+                width: 400,
+                height: 300,
+            },
+        ]);
+
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        // Both refs hashed independently via source_path fallback despite
+        // the shared (unresolved) canonical_id — no false dedup.
+        assert_eq!(result.source_hash_stats.unique, 2);
+        assert_eq!(result.source_hash_stats.reused, 0);
     }
 }
