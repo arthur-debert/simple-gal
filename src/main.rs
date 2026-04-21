@@ -718,11 +718,16 @@ fn resolve_build_source(cli_source: &Path) -> PathBuf {
     cli_source.to_path_buf()
 }
 
-/// Honor `--auto-reset-cache`: when set, check the cache's schema
-/// version and wipe `processed_dir` if it doesn't match the binary's
-/// expected version. Without the flag, leave the directory alone —
-/// the strict load inside `process::process` will surface the
-/// mismatch as a loud error with instructions.
+/// Honor `--auto-reset-cache`: when set and the cache manifest's
+/// `version` field doesn't match this binary's expected version, wipe
+/// `processed_dir` so the next load finds a clean slate.
+///
+/// Deliberately narrow: **only** a `VersionMismatch` triggers the
+/// wipe. `Io` and `Corrupt` errors bubble up so users see the real
+/// underlying failure — destructive auto-recovery on a transient IO
+/// error or corrupted file would hide the actual problem. Without
+/// `--auto-reset-cache`, the strict load inside `process::process`
+/// surfaces the mismatch as a loud error with instructions.
 ///
 /// See `docs/dev/data-model-refactor.md` §5.2.
 fn maybe_reset_cache(
@@ -735,15 +740,23 @@ fn maybe_reset_cache(
     }
     match simple_gal::cache::CacheManifest::load_strict(processed_dir) {
         Ok(_) => Ok(()), // schema matches or no cache yet; nothing to do
-        Err(err) => {
+        Err(simple_gal::cache::CacheLoadError::VersionMismatch {
+            found, expected, ..
+        }) => {
             if text_mode {
                 println!(
-                    "==> --auto-reset-cache: wiping {} ({err})",
+                    "==> --auto-reset-cache: wiping {} (cache version {found}, expected {expected})",
                     processed_dir.display()
                 );
             }
             std::fs::remove_dir_all(processed_dir).tag(ErrorKind::Io)?;
             Ok(())
+        }
+        Err(err) => {
+            // Io / Corrupt aren't version mismatches — let the user see
+            // the real failure instead of silently wiping over it.
+            let boxed: Box<dyn std::error::Error + 'static> = Box::new(err);
+            Err(CliError::new(ErrorKind::Io, boxed))
         }
     }
 }

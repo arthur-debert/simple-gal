@@ -60,14 +60,17 @@ pub enum ProcessError {
     Imaging(#[from] BackendError),
     #[error("Source image not found: {0}")]
     SourceNotFound(PathBuf),
-    /// The on-disk cache manifest's `schema_version` doesn't match the
-    /// one this binary was built with. Phase 4a of the data-model
-    /// refactor made this loud rather than silent — see §5.2 of the
-    /// refactor plan. Callers should tell the user to remove the
-    /// processed directory (or pass `--auto-reset-cache` to have the
-    /// CLI do it).
+    /// Loading the on-disk cache manifest failed. This covers the full
+    /// [`cache::CacheLoadError`] range — IO error, corrupt JSON, or a
+    /// `version`-field mismatch between the persisted manifest and this
+    /// binary's expected version. Phase 4a of the data-model refactor
+    /// made these surface loudly rather than silently drop the cache
+    /// (see §5.2 of the refactor plan). For the specific
+    /// version-mismatch case, `--auto-reset-cache` on the CLI wipes
+    /// the processed directory; other failures abort and expose the
+    /// underlying problem.
     #[error(transparent)]
-    CacheSchemaMismatch(#[from] cache::CacheLoadError),
+    CacheLoad(#[from] cache::CacheLoadError),
 }
 
 /// Configuration for image processing
