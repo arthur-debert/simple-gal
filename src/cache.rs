@@ -223,10 +223,25 @@ fn build_content_index(entries: &HashMap<String, CacheEntry>) -> HashMap<String,
 }
 
 /// SHA-256 hash of a file's contents, returned as a hex string.
+///
+/// Streams the file through the hasher via a buffered reader so large
+/// images don't force the whole byte range into memory. Matters for the
+/// scan stage (which hashes every image to build the canonical index)
+/// and for the cache's lookup path (one hash per candidate file).
 pub fn hash_file(path: &Path) -> io::Result<String> {
-    let bytes = std::fs::read(path)?;
-    let digest = Sha256::digest(&bytes);
-    Ok(format!("{:x}", digest))
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// SHA-256 hash of encoding parameters for a responsive variant.

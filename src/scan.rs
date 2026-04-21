@@ -58,7 +58,7 @@ use crate::metadata;
 use crate::naming::parse_entry_name;
 use crate::types::{NavItem, Page};
 use confique::Layer;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -88,6 +88,44 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub config: SiteConfig,
+    /// First-class image entities keyed by content hash. Every [`Image`]
+    /// below carries a `canonical_id` pointing into this list, and two
+    /// byte-identical images at different paths collapse to one entry
+    /// here with both paths captured in [`CanonicalImage::aliases`].
+    ///
+    /// This is the flat view introduced by Phase 1 of the data-model
+    /// refactor (see `docs/dev/data-model-refactor.md`). It runs
+    /// alongside the nested `Album.images: Vec<Image>` shape during the
+    /// transition; later phases migrate consumers onto the flat view
+    /// and drop the nested one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub canonical_images: Vec<CanonicalImage>,
+}
+
+/// Stable, content-addressed identity for an image.
+///
+/// The inner string is the hex-encoded SHA-256 of the source file
+/// bytes — matches the format used by [`crate::cache::hash_file`] so
+/// the cache and the manifest can share lookups.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ImageId(pub String);
+
+/// First-class image entity: one record per unique source content.
+///
+/// Fields here are strictly content-derived (identity + filesystem
+/// paths where the bytes appear). Album-specific data — caption
+/// overrides, sort position, per-album processed variants — lives on
+/// the per-album [`Image`] struct, which cascaded config determines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalImage {
+    pub id: ImageId,
+    /// Canonical path used for IO (first occurrence in scan order).
+    pub source_path: String,
+    /// Every other source filesystem path where this content appears.
+    /// Empty when the image is only referenced from one location.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 /// Album with its images and resolved configuration.
@@ -129,6 +167,12 @@ pub struct Image {
     /// Image description from sidecar `.txt` file (e.g., `001-photo.txt` for `001-photo.jpg`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Pointer into [`Manifest::canonical_images`] — shared across every
+    /// album that references the same byte-identical source. Populated
+    /// by the dedup pass at the end of [`scan`]; absent only on manifests
+    /// produced before Phase 1 of the data-model refactor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_id: Option<ImageId>,
 }
 
 pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
@@ -163,13 +207,71 @@ pub fn scan(root: &Path) -> Result<Manifest, ScanError> {
     // Root-level resolved config for CSS generation
     let config = root_config;
 
+    // Build the flat canonical view: hash each image's bytes, dedupe by
+    // content hash, stamp every `Image.canonical_id` with a pointer into
+    // the new `canonical_images` list. See `docs/dev/data-model-refactor.md`
+    // for the rationale. This runs after all albums have been collected so
+    // one pass covers the whole site.
+    let canonical_images = build_canonical_index(root, &mut albums)?;
+
     Ok(Manifest {
         navigation: nav_items,
         albums,
         pages,
         description,
         config,
+        canonical_images,
     })
+}
+
+/// Hash every image across every album and build the flat canonical
+/// index. Mutates `albums` to stamp each [`Image`] with its
+/// [`ImageId`]. See [`Manifest::canonical_images`] for the larger
+/// picture.
+fn build_canonical_index(
+    root: &Path,
+    albums: &mut [Album],
+) -> Result<Vec<CanonicalImage>, ScanError> {
+    use std::collections::HashMap;
+
+    let mut canonical: Vec<CanonicalImage> = Vec::new();
+    // Maps `ImageId` → index into `canonical` so we can push aliases
+    // cheaply without re-scanning the vector.
+    let mut by_id: HashMap<ImageId, usize> = HashMap::new();
+
+    for album in albums.iter_mut() {
+        for image in album.images.iter_mut() {
+            // `Image.source_path` is always stored relative to `root`
+            // (see `scan_directory`), so prepend `root` for the read.
+            let abs_path = root.join(&image.source_path);
+            let hex = crate::cache::hash_file(&abs_path)?;
+            let id = ImageId(hex);
+
+            match by_id.get(&id) {
+                Some(&idx) => {
+                    // Already seen these bytes — record this path as an
+                    // alias unless it matches the canonical one (which
+                    // it won't, since we only recurse into this branch
+                    // on duplicate hashes from distinct scan entries).
+                    if canonical[idx].source_path != image.source_path {
+                        canonical[idx].aliases.push(image.source_path.clone());
+                    }
+                }
+                None => {
+                    let idx = canonical.len();
+                    canonical.push(CanonicalImage {
+                        id: id.clone(),
+                        source_path: image.source_path.clone(),
+                        aliases: Vec::new(),
+                    });
+                    by_id.insert(id.clone(), idx);
+                }
+            }
+            image.canonical_id = Some(id);
+        }
+    }
+
+    Ok(canonical)
 }
 
 /// Convert a relative path to a slug path by stripping number prefixes from each component.
@@ -578,6 +680,9 @@ fn build_album(
                 slug,
                 title,
                 description,
+                // Populated in `build_canonical_index` after scan collects
+                // every image across every album.
+                canonical_id: None,
             }
         })
         .collect();
@@ -1651,5 +1756,169 @@ mod tests {
         let manifest = scan(tmp.path()).unwrap();
         // No thumb, no image #1 → falls back to first by sort order (005)
         assert!(manifest.albums[0].preview_image.contains("005-first"));
+    }
+
+    // =========================================================================
+    // Phase 1 of the data-model refactor: canonical_images flat view.
+    // See docs/dev/data-model-refactor.md.
+    //
+    // These tests build their own byte-distinct TempDir instead of using the
+    // shared `fixtures/content/` — the fixture JPEGs are placeholder bytes
+    // that all hash to the same value, which hides the dedup semantics
+    // we're trying to exercise.
+    // =========================================================================
+
+    /// Build a minimal site with two albums whose images have exact
+    /// byte contents we dictate. `layout` is `[(album_dir, image_name,
+    /// bytes), ...]`. Scan doesn't decode; it only hashes, so synthetic
+    /// bytes are fine for exercising canonical-ID logic.
+    fn setup_synthetic(layout: &[(&str, &str, &[u8])]) -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        for (album, name, bytes) in layout {
+            let album_dir = tmp.path().join(album);
+            fs::create_dir_all(&album_dir).unwrap();
+            fs::write(album_dir.join(name), bytes).unwrap();
+        }
+        tmp
+    }
+
+    fn find_ref_by_path<'a>(m: &'a Manifest, suffix: &str) -> &'a Image {
+        m.albums
+            .iter()
+            .flat_map(|a| &a.images)
+            .find(|i| i.source_path.ends_with(suffix))
+            .unwrap_or_else(|| panic!("no image ref ending in {suffix}"))
+    }
+
+    #[test]
+    fn canonical_images_populated_for_every_image_ref() {
+        let tmp = setup_synthetic(&[
+            ("010-Alpha", "001-a.jpg", b"bytes-alpha"),
+            ("010-Alpha", "002-b.jpg", b"bytes-beta"),
+            ("020-Beta", "001-c.jpg", b"bytes-gamma"),
+        ]);
+        let manifest = scan(tmp.path()).unwrap();
+        for album in &manifest.albums {
+            for image in &album.images {
+                let id = image
+                    .canonical_id
+                    .as_ref()
+                    .expect("scan must stamp canonical_id on every image");
+                assert!(
+                    manifest.canonical_images.iter().any(|c| &c.id == id),
+                    "image {:?} points at unknown canonical id {:?}",
+                    image.source_path,
+                    id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_images_deduplicates_identical_bytes_in_two_albums() {
+        // Same bytes in two albums → one canonical entry, both paths
+        // captured (one as source_path, the other as alias).
+        let shared = b"shared-bytes".as_slice();
+        let tmp = setup_synthetic(&[
+            ("010-Alpha", "001-a.jpg", shared),
+            ("020-Beta", "001-copy.jpg", shared),
+        ]);
+        let manifest = scan(tmp.path()).unwrap();
+
+        let a_id = find_ref_by_path(&manifest, "010-Alpha/001-a.jpg")
+            .canonical_id
+            .clone()
+            .unwrap();
+        let b_id = find_ref_by_path(&manifest, "020-Beta/001-copy.jpg")
+            .canonical_id
+            .clone()
+            .unwrap();
+        assert_eq!(a_id, b_id, "byte-identical copies share an ImageId");
+
+        let canonical = manifest
+            .canonical_images
+            .iter()
+            .find(|c| c.id == a_id)
+            .unwrap();
+        let mut all_paths: Vec<&str> = std::iter::once(canonical.source_path.as_str())
+            .chain(canonical.aliases.iter().map(|s| s.as_str()))
+            .collect();
+        all_paths.sort();
+        assert_eq!(
+            all_paths,
+            vec!["010-Alpha/001-a.jpg", "020-Beta/001-copy.jpg"]
+        );
+        assert_eq!(
+            manifest.canonical_images.len(),
+            1,
+            "two refs but one unique content hash"
+        );
+    }
+
+    #[test]
+    fn canonical_count_matches_unique_content() {
+        // 4 refs, 3 distinct byte strings → 3 canonical entries.
+        let tmp = setup_synthetic(&[
+            ("010-Alpha", "001-a.jpg", b"content-1"),
+            ("010-Alpha", "002-b.jpg", b"content-2"),
+            ("020-Beta", "001-c.jpg", b"content-3"),
+            ("020-Beta", "002-d.jpg", b"content-1"), // duplicate of 1-a
+        ]);
+        let manifest = scan(tmp.path()).unwrap();
+        let total_refs: usize = manifest.albums.iter().map(|a| a.images.len()).sum();
+        assert_eq!(total_refs, 4);
+        assert_eq!(manifest.canonical_images.len(), 3);
+    }
+
+    #[test]
+    fn canonical_entry_source_path_is_first_scan_occurrence() {
+        // Albums are scanned in sort order (lexicographic by path),
+        // so 010-Alpha's copy wins canonical; 020-Beta's becomes the alias.
+        let shared = b"shared".as_slice();
+        let tmp = setup_synthetic(&[
+            ("010-Alpha", "001-a.jpg", shared),
+            ("020-Beta", "001-copy.jpg", shared),
+        ]);
+        let manifest = scan(tmp.path()).unwrap();
+        let id = find_ref_by_path(&manifest, "010-Alpha/001-a.jpg")
+            .canonical_id
+            .clone()
+            .unwrap();
+        let canonical = manifest
+            .canonical_images
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap();
+        assert_eq!(canonical.source_path, "010-Alpha/001-a.jpg");
+        assert_eq!(canonical.aliases, vec!["020-Beta/001-copy.jpg".to_string()]);
+    }
+
+    #[test]
+    fn byte_different_images_get_separate_canonical_ids() {
+        // Even with identical filenames, different bytes hash differently.
+        let tmp = setup_synthetic(&[
+            ("010-Alpha", "001-cover.jpg", b"alpha-cover"),
+            ("020-Beta", "001-cover.jpg", b"beta-cover"),
+        ]);
+        let manifest = scan(tmp.path()).unwrap();
+        let a = find_ref_by_path(&manifest, "010-Alpha/001-cover.jpg")
+            .canonical_id
+            .clone()
+            .unwrap();
+        let b = find_ref_by_path(&manifest, "020-Beta/001-cover.jpg")
+            .canonical_id
+            .clone()
+            .unwrap();
+        assert_ne!(a, b);
+        assert_eq!(manifest.canonical_images.len(), 2);
+    }
+
+    #[test]
+    fn canonical_entry_without_duplicates_has_empty_aliases() {
+        // A content hash seen exactly once → aliases vec empty.
+        let tmp = setup_synthetic(&[("010-Alpha", "001-only.jpg", b"unique")]);
+        let manifest = scan(tmp.path()).unwrap();
+        assert_eq!(manifest.canonical_images.len(), 1);
+        assert!(manifest.canonical_images[0].aliases.is_empty());
     }
 }
