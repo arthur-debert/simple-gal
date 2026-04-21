@@ -252,9 +252,13 @@ reviewable standalone. Targets `main`.
   the current names for stability.
 - Bump the manifest's `schema_version` to `2`. Coordinate the bump
   with `arthur-debert/simple-gal-action` per §5.1.
-- Update every remaining test that hand-constructs manifests.
-- CHANGELOG + README updates.
-- Estimated: ~200-400 LOC, mostly test migration.
+- Wire the nuke-on-mismatch cache-reset policy per §5.2 (clear error
+  + optional `--auto-reset-cache` flag). No in-place data migration
+  code.
+- Update every remaining test that hand-constructs manifests to use
+  the new shape.
+- CHANGELOG + README updates (including cache-reset instructions).
+- Estimated: ~200-400 LOC, mostly test updates.
 
 ### Phase 5 — Auto-reindex simplification (optional, post-refactor)
 
@@ -271,13 +275,35 @@ Once the refactor lands, the auto-reindex feature collapses:
 
 ## 5. Migration & backward compatibility
 
+Two distinct kinds of "migration" matter here; the refactor doc uses
+the word in the first sense only:
+
+- **Code migration** — moving internal stages from reading the old
+  manifest shape to the new one. This is the bulk of Phases 2-4 and
+  has no user-visible effect.
+- **Data migration** — transforming on-disk state (cache, manifests)
+  from one schema version to another. **We deliberately do not ship
+  data migration code.** See §5.2.
+
+What's on disk across runs:
+
+| Location | What it is | Schema-sensitive? | Survives builds? |
+| -------- | ---------- | ----------------- | ---------------- |
+| `content/` | User source files | No | Yes |
+| `dist/` | Generated HTML + AVIF | No | No (rebuilt every `generate`) |
+| `.simple-gal-temp/manifest.json` | Scan output | Yes | Overwritten each scan |
+| `.simple-gal-temp/processed/manifest.json` | Process output | Yes | Overwritten each process |
+| `.simple-gal-temp/processed/cache.json` + cached AVIFs | Content-addressed cache | Yes (from Phase 4 onward) | Yes |
+
+Fields summary:
+
 - **Content directory:** no changes required. Users' filesystems are
   already valid input.
 - **Deployed `dist/`:** URL paths unchanged (slug-based). AVIF output
   filenames unchanged (per-album copies). No cache-bust.
 - **JSON manifest consumers:** hard break at Phase 4. See §5.1.
-- **Cache on disk:** unchanged. Content hash + params hash is still
-  the key.
+- **Cache on disk:** Phases 1-3 don't change the cache shape. Phase 4
+  may add fields; when that happens, nuke-on-mismatch (§5.2).
 
 ### 5.1 GitHub Action coordination
 
@@ -299,6 +325,38 @@ Phase 4:
 4. **Document the version compat** in both repos' READMEs:
    `simple-gal-action@v1` → `simple-gal` up to the last pre-refactor
    release; `simple-gal-action@v2` → `simple-gal` from v0.20.0+.
+
+### 5.2 Data-migration policy: nuke-on-mismatch
+
+No on-disk transformation code. The cache and intermediate manifests
+are not user data — they're derived artifacts of a specific binary
+version — so a schema change calls for a clean rebuild, not a
+migration path.
+
+**Mechanism (lands with Phase 4):**
+
+- Embed a `schema_version: u32` (compile-time constant) in
+  `cache.json` and in each intermediate manifest that survives across
+  runs.
+- On load, if the persisted `schema_version` doesn't match the
+  current binary's version:
+  - Print a clear message to stderr naming the expected vs found
+    version and pointing at the affected directory.
+  - In text mode: refuse to use it and abort with a non-zero exit,
+    instructing the user to remove the affected dir and rerun. An
+    opt-in `--auto-reset-cache` CLI flag does the removal.
+  - In JSON mode: return a structured error (`ErrorKind::Config` or a
+    new `SchemaMismatch` kind) so automation can branch on it.
+- Never silently discard user state — the failure has to be loud
+  enough that a user who scripted around an old schema notices.
+- Document the expected workflow in README: bump `simple-gal`,
+  rerun `simple-gal build --auto-reset-cache` (or remove
+  `.simple-gal-temp/` manually) the first time after upgrade.
+
+**What this is not:** a replacement for the
+`arthur-debert/simple-gal-action` major-version coordination above.
+The action's published interface (what users pin in their workflow
+YAML) is separate from the local cache schema.
 
 ## 6. Interaction with auto-reindex
 
