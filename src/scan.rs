@@ -113,10 +113,18 @@ pub struct ImageId(pub String);
 
 /// First-class image entity: one record per unique source content.
 ///
-/// Fields here are strictly content-derived (identity + filesystem
-/// paths where the bytes appear). Album-specific data — caption
-/// overrides, sort position, per-album processed variants — lives on
-/// the per-album [`Image`] struct, which cascaded config determines.
+/// Fields here are strictly content-derived (identity, paths, and
+/// metadata read from the bytes themselves). Album-specific data —
+/// caption overrides, sort position, per-album processed variants —
+/// lives on the per-album [`Image`] struct, which cascaded config
+/// determines.
+///
+/// Scan populates the identity fields (`id`, `source_path`,
+/// `aliases`). Content-derived metadata — IPTC title/description and
+/// raw pixel dimensions — requires decoding the image, so it's
+/// written by the process stage once per unique content. Fields
+/// remain `Option` at the manifest level so legacy or partially-
+/// populated manifests still deserialize.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanonicalImage {
     pub id: ImageId,
@@ -126,6 +134,20 @@ pub struct CanonicalImage {
     /// Empty when the image is only referenced from one location.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    /// IPTC ObjectName (title) read from the image bytes. `None` from
+    /// scan; populated by process once per unique `id` across the
+    /// whole site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iptc_title: Option<String>,
+    /// IPTC Caption-Abstract. `None` from scan; populated by process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iptc_description: Option<String>,
+    /// Raw pixel width. Populated by process during the decode pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// Raw pixel height. Populated by process during the decode pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
 }
 
 /// Album with its images and resolved configuration.
@@ -263,6 +285,12 @@ fn build_canonical_index(
                         id: id.clone(),
                         source_path: image.source_path.clone(),
                         aliases: Vec::new(),
+                        // Content-derived metadata is filled in by the
+                        // process stage during decode (once per unique id).
+                        iptc_title: None,
+                        iptc_description: None,
+                        width: None,
+                        height: None,
                     });
                     by_id.insert(id.clone(), idx);
                 }

@@ -95,10 +95,14 @@ pub struct Manifest {
     pub canonical_images: Vec<CanonicalImage>,
 }
 
-/// Canonical-image record serialized through from process. Retained as
-/// forwarded metadata about each unique byte content and its on-disk
-/// paths; the current full-index renderer does not iterate this view
-/// directly (it walks albums and dedupes via `Image::canonical_id`).
+/// Canonical-image record serialized through from process. Carries
+/// content-derived metadata (IPTC title/description, raw dimensions)
+/// read once per unique byte content during the process stage. The
+/// full-index renderer walks album images and uses `Image::canonical_id`
+/// to dedupe; title/description/dimensions rendering currently uses
+/// the per-ref image values rather than a canonical fallback in this
+/// module. The canonical fields here are forwarded for external
+/// tooling and future renderers.
 #[derive(Debug, Deserialize)]
 pub struct CanonicalImage {
     pub id: String,
@@ -107,6 +111,16 @@ pub struct CanonicalImage {
     #[serde(default)]
     #[allow(dead_code)]
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub iptc_title: Option<String>,
+    #[serde(default)]
+    pub iptc_description: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub height: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

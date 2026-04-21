@@ -153,12 +153,22 @@ pub struct InputImage {
 }
 
 /// Mirror of `scan::CanonicalImage`, serialized through the manifest.
+/// The metadata fields start `None` on input (scan leaves them empty)
+/// and get filled in during this stage's decode pass.
 #[derive(Debug, Deserialize)]
 pub struct InputCanonicalImage {
     pub id: String,
     pub source_path: String,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub iptc_title: Option<String>,
+    #[serde(default)]
+    pub iptc_description: Option<String>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
 }
 
 /// Output manifest (after processing)
@@ -182,12 +192,23 @@ pub struct OutputManifest {
 
 /// Mirror of [`scan::CanonicalImage`] serialized through the processed
 /// manifest so downstream stages retain the flat canonical-image view.
+/// The content-derived metadata fields (`iptc_*`, `width`, `height`)
+/// are populated here in the process stage — read once per unique id
+/// and shared across every album that references the image.
 #[derive(Debug, Serialize)]
 pub struct OutputCanonicalImage {
     pub id: String,
     pub source_path: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iptc_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iptc_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -249,6 +270,17 @@ pub struct ProcessResult {
     /// previously-computed hash — one reuse per extra album that
     /// references the same canonical content.
     pub source_hash_stats: SourceHashStats,
+}
+
+/// Content-derived metadata for a canonical image. Populated once per
+/// unique `canonical_id` during the process stage and written back to
+/// the output canonical-images list.
+#[derive(Debug, Clone, Default)]
+struct CanonicalMetadata {
+    iptc_title: Option<String>,
+    iptc_description: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
 }
 
 /// Counts of source-hash dedup across a processing run.
@@ -389,6 +421,17 @@ pub fn process_with_backend(
     let source_hash_unique = std::sync::atomic::AtomicU32::new(0);
     let source_hash_reused = std::sync::atomic::AtomicU32::new(0);
 
+    // Per-canonical-id metadata memo (Phase 4b). Each entry is an
+    // `Arc<Mutex<Option<CanonicalMetadata>>>` cell — same pattern as
+    // `source_hash_memo` — so concurrent rayon workers on the same
+    // canonical_id serialize on the inner cell (first computes via
+    // `get_dimensions` + `read_metadata`, others block and read the
+    // cached values). Workers on different canonical_ids run in
+    // parallel; the outer mutex only guards the map itself.
+    type MetadataCell = std::sync::Arc<Mutex<Option<CanonicalMetadata>>>;
+    let canonical_metadata_memo: Mutex<std::collections::HashMap<String, MetadataCell>> =
+        Mutex::new(std::collections::HashMap::new());
+
     let mut output_albums = Vec::new();
 
     for album in &input.albums {
@@ -444,11 +487,55 @@ pub fn process_with_backend(
                     return Err(ProcessError::SourceNotFound(source_path));
                 }
 
-                let dimensions = get_dimensions(backend, &source_path)?;
-
-                // Read embedded IPTC metadata and merge with scan-phase values.
-                // This always runs so metadata changes are never stale.
-                let exif = backend.read_metadata(&source_path)?;
+                // Phase 4b: check the canonical-metadata memo first. On
+                // hit, skip `get_dimensions` and `read_metadata` entirely
+                // — we already read them from one sibling ref in another
+                // album. On miss, perform the reads, fill the cell, and
+                // let subsequent refs to this canonical_id short-circuit.
+                let metadata_cell: Option<MetadataCell> = image
+                    .canonical_id
+                    .as_ref()
+                    .filter(|id| canonical_by_id.contains_key(id.as_str()))
+                    .map(|id| {
+                        let mut memo = canonical_metadata_memo.lock().unwrap();
+                        memo.entry(id.clone())
+                            .or_insert_with(|| std::sync::Arc::new(Mutex::new(None)))
+                            .clone()
+                    });
+                let (dimensions, exif) = if let Some(ref cell) = metadata_cell {
+                    // First worker on this canonical_id computes; others
+                    // block on the inner mutex and read the cached values.
+                    let mut slot = cell.lock().unwrap();
+                    match slot.clone() {
+                        Some(m) => {
+                            let dims = (m.width.unwrap_or(0), m.height.unwrap_or(0));
+                            // Keywords aren't carried in the memo — they're
+                            // not consumed downstream today, so an empty
+                            // `keywords` is correct for the memo-hit path.
+                            let exif = crate::imaging::backend::ImageMetadata {
+                                title: m.iptc_title.clone(),
+                                description: m.iptc_description.clone(),
+                                keywords: Vec::new(),
+                            };
+                            (dims, exif)
+                        }
+                        None => {
+                            let dims = get_dimensions(backend, &source_path)?;
+                            let exif = backend.read_metadata(&source_path)?;
+                            *slot = Some(CanonicalMetadata {
+                                iptc_title: exif.title.clone(),
+                                iptc_description: exif.description.clone(),
+                                width: Some(dims.0),
+                                height: Some(dims.1),
+                            });
+                            (dims, exif)
+                        }
+                    }
+                } else {
+                    let dims = get_dimensions(backend, &source_path)?;
+                    let exif = backend.read_metadata(&source_path)?;
+                    (dims, exif)
+                };
                 let title = metadata::resolve(&[exif.title.as_deref(), image.title.as_deref()]);
                 let description =
                     metadata::resolve(&[image.description.as_deref(), exif.description.as_deref()]);
@@ -701,17 +788,40 @@ pub fn process_with_backend(
     };
 
     // Forward canonical image metadata into the processed manifest.
-    // This only transforms scan-stage data into the output manifest shape
-    // (same fields, different type); downstream consumers use the
-    // forwarded view as needed. A `From` impl would be cleaner if this
-    // duplication grows.
+    // Build OutputCanonicalImage from the scan-side view plus the
+    // canonical-metadata memo (Phase 4b) populated during the decode
+    // pass. Each memo entry is a per-key cell whose inner `Option`
+    // holds the fresh-decode values; the outer map stays behind a
+    // mutex to guard the key→cell mapping. A missing entry means no
+    // ref with this canonical_id was processed (e.g. all albums
+    // filter it out), so fall through to whatever the input already
+    // carried.
+    let metadata_memo = canonical_metadata_memo.into_inner().unwrap_or_default();
+    let resolved_metadata: std::collections::HashMap<String, CanonicalMetadata> = metadata_memo
+        .into_iter()
+        .filter_map(|(id, cell)| {
+            // The cell's inner mutex has no contention by now (process
+            // loops done), so a non-blocking take is safe.
+            let value = cell.lock().ok().and_then(|g| g.clone())?;
+            Some((id, value))
+        })
+        .collect();
     let canonical_images: Vec<OutputCanonicalImage> = input
         .canonical_images
         .into_iter()
-        .map(|c| OutputCanonicalImage {
-            id: c.id,
-            source_path: c.source_path,
-            aliases: c.aliases,
+        .map(|c| {
+            let fresh = resolved_metadata.get(&c.id);
+            OutputCanonicalImage {
+                aliases: c.aliases,
+                iptc_title: fresh.and_then(|m| m.iptc_title.clone()).or(c.iptc_title),
+                iptc_description: fresh
+                    .and_then(|m| m.iptc_description.clone())
+                    .or(c.iptc_description),
+                width: fresh.and_then(|m| m.width).or(c.width),
+                height: fresh.and_then(|m| m.height).or(c.height),
+                id: c.id,
+                source_path: c.source_path,
+            }
         })
         .collect();
 
@@ -1067,6 +1177,7 @@ mod tests {
     // =========================================================================
 
     use crate::imaging::Dimensions;
+    use crate::imaging::backend::ImageMetadata;
     use crate::imaging::backend::tests::MockBackend;
 
     fn create_test_manifest(tmp: &Path) -> PathBuf {
@@ -1959,5 +2070,218 @@ mod tests {
         // the shared (unresolved) canonical_id — no false dedup.
         assert_eq!(result.source_hash_stats.unique, 2);
         assert_eq!(result.source_hash_stats.reused, 0);
+    }
+
+    // =========================================================================
+    // Phase 4b: canonical metadata (IPTC + dimensions) populated per unique id
+    // =========================================================================
+
+    #[test]
+    fn canonical_metadata_populated_from_first_ref() {
+        // Two refs to the same canonical content. IPTC + dimensions
+        // should land on the single OutputCanonicalImage entry,
+        // populated from the first ref's decode.
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        create_dummy_source(&source_dir.join("album-a/001-shared.jpg"));
+        create_dummy_source(&source_dir.join("album-b/001-shared.jpg"));
+
+        let manifest_path = create_shared_canonical_manifest(tmp.path());
+        let backend = MockBackend::with_metadata(
+            vec![
+                Dimensions {
+                    width: 4000,
+                    height: 3000,
+                },
+                Dimensions {
+                    width: 4000,
+                    height: 3000,
+                },
+            ],
+            vec![
+                ImageMetadata {
+                    title: Some("Shared IPTC title".to_string()),
+                    description: Some("IPTC caption".to_string()),
+                    keywords: Vec::new(),
+                },
+                ImageMetadata {
+                    title: Some("Shared IPTC title".to_string()),
+                    description: Some("IPTC caption".to_string()),
+                    keywords: Vec::new(),
+                },
+            ],
+        );
+
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.manifest.canonical_images.len(), 1);
+        let canonical = &result.manifest.canonical_images[0];
+        assert_eq!(canonical.iptc_title.as_deref(), Some("Shared IPTC title"));
+        assert_eq!(canonical.iptc_description.as_deref(), Some("IPTC caption"));
+        assert_eq!(canonical.width, Some(4000));
+        assert_eq!(canonical.height, Some(3000));
+    }
+
+    #[test]
+    fn canonical_metadata_first_ref_wins_on_duplicate_reads() {
+        // First ref has its own IPTC values; second ref returns
+        // different ones (simulating a mismatch). First-writer wins
+        // semantics in the memo mean the canonical entry keeps the
+        // first ref's values.
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        create_dummy_source(&source_dir.join("album-a/001-shared.jpg"));
+        create_dummy_source(&source_dir.join("album-b/001-shared.jpg"));
+
+        let manifest_path = create_shared_canonical_manifest(tmp.path());
+        // MockBackend pops from the vec, LIFO — so the LAST element
+        // is consumed first. We set the "first processed" ref to have
+        // values A, and the second to have values B.
+        let backend = MockBackend::with_metadata(
+            vec![
+                Dimensions {
+                    width: 200,
+                    height: 150,
+                },
+                Dimensions {
+                    width: 100,
+                    height: 75,
+                },
+            ],
+            vec![
+                ImageMetadata {
+                    title: Some("Second ref title".to_string()),
+                    description: None,
+                    keywords: Vec::new(),
+                },
+                ImageMetadata {
+                    title: Some("First ref title".to_string()),
+                    description: None,
+                    keywords: Vec::new(),
+                },
+            ],
+        );
+
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        // Canonical entry carries the values from whichever ref ran
+        // first. We don't assert which specific one in a parallel
+        // setting, only that canonical holds ONE of the two, not
+        // something interpolated.
+        let canonical = &result.manifest.canonical_images[0];
+        let title = canonical.iptc_title.as_deref().unwrap_or("");
+        assert!(
+            title == "First ref title" || title == "Second ref title",
+            "canonical iptc_title should be one ref's value verbatim, got {title:?}"
+        );
+    }
+
+    #[test]
+    fn canonical_metadata_empty_when_no_canonical_id() {
+        // Legacy manifest with no canonical_id / empty canonical_images.
+        // Nothing to populate — the per-ref OutputImage still carries
+        // title/description/dimensions as before.
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        create_dummy_source(&source_dir.join("test-album/001-test.jpg"));
+
+        let manifest_path = create_test_manifest(tmp.path());
+        let backend = MockBackend::with_metadata(
+            vec![Dimensions {
+                width: 400,
+                height: 300,
+            }],
+            vec![ImageMetadata {
+                title: Some("Legacy title".to_string()),
+                description: None,
+                keywords: Vec::new(),
+            }],
+        );
+
+        let result = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert!(result.manifest.canonical_images.is_empty());
+    }
+
+    #[test]
+    fn canonical_metadata_dedupe_skips_second_read_on_hit() {
+        // Two refs sharing a canonical_id should result in exactly
+        // ONE `Identify` and ONE `ReadMetadata` call against the mock
+        // backend — the second ref hits the memo and reuses the
+        // cached values.
+        use crate::imaging::backend::tests::RecordedOp;
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("output");
+        create_dummy_source(&source_dir.join("album-a/001-shared.jpg"));
+        create_dummy_source(&source_dir.join("album-b/001-shared.jpg"));
+
+        let manifest_path = create_shared_canonical_manifest(tmp.path());
+        let backend = MockBackend::with_metadata(
+            vec![Dimensions {
+                width: 200,
+                height: 150,
+            }],
+            vec![ImageMetadata {
+                title: Some("shared".to_string()),
+                description: None,
+                keywords: Vec::new(),
+            }],
+        );
+
+        let _ = process_with_backend(
+            &backend,
+            &manifest_path,
+            &source_dir,
+            &output_dir,
+            false,
+            None,
+        )
+        .unwrap();
+
+        let ops = backend.get_operations();
+        let identifies = ops
+            .iter()
+            .filter(|op| matches!(op, RecordedOp::Identify(_)))
+            .count();
+        let metadatas = ops
+            .iter()
+            .filter(|op| matches!(op, RecordedOp::ReadMetadata(_)))
+            .count();
+        assert_eq!(
+            identifies, 1,
+            "expected exactly one Identify call across two refs sharing a canonical_id"
+        );
+        assert_eq!(
+            metadatas, 1,
+            "expected exactly one ReadMetadata call across two refs sharing a canonical_id"
+        );
     }
 }
