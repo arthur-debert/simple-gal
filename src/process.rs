@@ -160,15 +160,17 @@ pub struct OutputManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub config: SiteConfig,
-    /// Canonical-image view threaded through from scan (Phase 1). Forwarded
-    /// as-is so the generate stage can iterate it directly for the All
-    /// Photos page's natural dedup. Empty on legacy pre-Phase-1 manifests.
+    /// Canonical-image view threaded through from scan (Phase 1).
+    /// Forwarded as-is for downstream metadata resolution and future
+    /// consumers; the current All Photos dedup path is driven by
+    /// `OutputImage::canonical_id` while walking album images. Empty on
+    /// legacy pre-Phase-1 manifests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub canonical_images: Vec<OutputCanonicalImage>,
 }
 
 /// Mirror of [`scan::CanonicalImage`] serialized through the processed
-/// manifest so the generate stage sees the flat view.
+/// manifest so downstream stages retain the flat canonical-image view.
 #[derive(Debug, Serialize)]
 pub struct OutputCanonicalImage {
     pub id: String,
@@ -683,9 +685,10 @@ pub fn process_with_backend(
         reused: source_hash_reused.load(Ordering::Relaxed),
     };
 
-    // Forward canonical images through unchanged — generate iterates them
-    // for All Photos dedup. Transform scan's shape into the output shape
-    // (same fields, different type). A `From` impl would be cleaner if this
+    // Forward canonical image metadata into the processed manifest.
+    // This only transforms scan-stage data into the output manifest shape
+    // (same fields, different type); downstream consumers use the
+    // forwarded view as needed. A `From` impl would be cleaner if this
     // duplication grows.
     let canonical_images: Vec<OutputCanonicalImage> = input
         .canonical_images

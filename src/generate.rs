@@ -86,18 +86,19 @@ pub struct Manifest {
     #[serde(default)]
     pub description: Option<String>,
     pub config: SiteConfig,
-    /// Flat canonical-image view forwarded from scan through process. The
-    /// All Photos page iterates this directly so a single byte-identical
-    /// image shared across multiple albums renders as one entry, not one
-    /// per album. Empty on legacy pre-Phase-1 manifests — the full-index
-    /// code falls back to the per-album iteration in that case.
+    /// Flat canonical-image view forwarded from scan through process for
+    /// compatibility and future phases. The current All Photos renderer
+    /// still iterates `albums[..].images` and uses each image's
+    /// `canonical_id` to collapse byte-identical entries across albums.
+    /// Empty on legacy pre-Phase-1 manifests.
     #[serde(default)]
     pub canonical_images: Vec<CanonicalImage>,
 }
 
-/// Canonical-image record serialized through from process. Carries the
-/// paths where each unique byte content appears on disk so the full-
-/// index renderer can pick any one album to link into.
+/// Canonical-image record serialized through from process. Retained as
+/// forwarded metadata about each unique byte content and its on-disk
+/// paths; the current full-index renderer does not iterate this view
+/// directly (it walks albums and dedupes via `Image::canonical_id`).
 #[derive(Debug, Deserialize)]
 pub struct CanonicalImage {
     pub id: String,
