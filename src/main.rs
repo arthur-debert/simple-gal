@@ -16,6 +16,12 @@ struct CacheArgs {
     /// Disable the processing cache — force re-encoding of all images
     #[arg(long)]
     no_cache: bool,
+    /// Wipe `<temp-dir>/processed/` before loading the cache, if its
+    /// schema version doesn't match this binary. Matches the nuke-on-
+    /// mismatch policy in `docs/dev/data-model-refactor.md` §5.2.
+    /// Without this flag, a version mismatch aborts with a clear error.
+    #[arg(long)]
+    auto_reset_cache: bool,
 }
 
 /// Output format for all commands.
@@ -401,6 +407,11 @@ fn run_process(
             .tag(ErrorKind::Config)?;
     init_thread_pool(&site_config.processing);
     let processed_dir = cli.temp_dir.join("processed");
+    maybe_reset_cache(
+        &processed_dir,
+        cache_args.auto_reset_cache,
+        !json_mode && !quiet,
+    )?;
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress = (json_mode && !ndjson) || quiet;
     let printer = std::thread::spawn(move || {
@@ -512,6 +523,7 @@ fn run_build(cli: &Cli, cache_args: &CacheArgs, format: OutputFormat) -> Result<
     // === Stage 2: Process ===
     init_thread_pool(&manifest.config.processing);
     let processed_dir = cli.temp_dir.join("processed");
+    maybe_reset_cache(&processed_dir, cache_args.auto_reset_cache, stage_text)?;
     let (tx, rx) = std::sync::mpsc::channel();
     let suppress = !stage_text && !ndjson;
     let printer = std::thread::spawn(move || {
@@ -704,6 +716,49 @@ fn init_thread_pool(processing: &config::ProcessingConfig) {
 /// Resolve the content source directory for the build command.
 fn resolve_build_source(cli_source: &Path) -> PathBuf {
     cli_source.to_path_buf()
+}
+
+/// Honor `--auto-reset-cache`: when set and the cache manifest's
+/// `version` field doesn't match this binary's expected version, wipe
+/// `processed_dir` so the next load finds a clean slate.
+///
+/// Deliberately narrow: **only** a `VersionMismatch` triggers the
+/// wipe. `Io` and `Corrupt` errors bubble up so users see the real
+/// underlying failure — destructive auto-recovery on a transient IO
+/// error or corrupted file would hide the actual problem. Without
+/// `--auto-reset-cache`, the strict load inside `process::process`
+/// surfaces the mismatch as a loud error with instructions.
+///
+/// See `docs/dev/data-model-refactor.md` §5.2.
+fn maybe_reset_cache(
+    processed_dir: &Path,
+    auto_reset: bool,
+    text_mode: bool,
+) -> Result<(), CliError> {
+    if !auto_reset || !processed_dir.exists() {
+        return Ok(());
+    }
+    match simple_gal::cache::CacheManifest::load_strict(processed_dir) {
+        Ok(_) => Ok(()), // schema matches or no cache yet; nothing to do
+        Err(simple_gal::cache::CacheLoadError::VersionMismatch {
+            found, expected, ..
+        }) => {
+            if text_mode {
+                println!(
+                    "==> --auto-reset-cache: wiping {} (cache version {found}, expected {expected})",
+                    processed_dir.display()
+                );
+            }
+            std::fs::remove_dir_all(processed_dir).tag(ErrorKind::Io)?;
+            Ok(())
+        }
+        Err(err) => {
+            // Io / Corrupt aren't version mismatches — let the user see
+            // the real failure instead of silently wiping over it.
+            let boxed: Box<dyn std::error::Error + 'static> = Box::new(err);
+            Err(CliError::new(ErrorKind::Io, boxed))
+        }
+    }
 }
 
 /// Pre-scan hook: consult `[auto_indexing].auto` and reindex the source

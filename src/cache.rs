@@ -63,6 +63,44 @@ const MANIFEST_FILENAME: &str = ".cache-manifest.json";
 /// existing caches when the format or key computation changes.
 const MANIFEST_VERSION: u32 = 1;
 
+/// Public view of [`MANIFEST_VERSION`] for error messages and tests.
+pub fn expected_manifest_version() -> u32 {
+    MANIFEST_VERSION
+}
+
+/// Reasons [`CacheManifest::load_strict`] can fail.
+///
+/// The lenient [`CacheManifest::load`] wraps these and returns an empty
+/// manifest on any error — it's kept for tests and callers that have
+/// no way to surface a user-visible message. Production callers
+/// (process, build) should prefer `load_strict` so a version mismatch
+/// becomes a loud failure rather than a silent cache drop, matching
+/// the nuke-on-mismatch policy in `docs/dev/data-model-refactor.md` §5.2.
+#[derive(Debug, thiserror::Error)]
+pub enum CacheLoadError {
+    #[error("failed to read cache manifest `{path}`: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("cache manifest `{path}` is corrupt: {source}")]
+    Corrupt {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error(
+        "cache manifest `{path}` has schema version {found}, expected {expected}. \
+        Remove the processed directory and rerun — `--auto-reset-cache` does this for you."
+    )]
+    VersionMismatch {
+        path: PathBuf,
+        found: u32,
+        expected: u32,
+    },
+}
+
 /// A single cached output file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct CacheEntry {
@@ -95,23 +133,54 @@ impl CacheManifest {
         }
     }
 
-    /// Load from the output directory. Returns an empty manifest if the
-    /// file doesn't exist or can't be parsed (version mismatch, corruption).
+    /// Load from the output directory.
+    ///
+    /// Lenient variant kept for callers that don't want to reason about
+    /// load errors (tests, ad-hoc inspection): returns an empty manifest
+    /// on any failure — missing file, parse error, version mismatch.
+    /// Production callers should use [`load_strict`](Self::load_strict)
+    /// so a version mismatch surfaces as a loud failure rather than a
+    /// silent cache drop (see `docs/dev/data-model-refactor.md` §5.2).
     pub fn load(output_dir: &Path) -> Self {
+        Self::load_strict(output_dir).unwrap_or_else(|_| Self::empty())
+    }
+
+    /// Strict load: distinguish missing file, corrupt file, and version
+    /// mismatch as separate outcomes so the caller can pick the right
+    /// user-facing response.
+    ///
+    /// Outcomes:
+    /// - File missing → `Ok(Self::empty())` — a normal cold build.
+    /// - File present, parseable, matching version → `Ok(loaded)`.
+    /// - File present but can't be read → `Err(Io)`.
+    /// - File present but can't be deserialized → `Err(Corrupt)`.
+    /// - File present, version mismatch → `Err(VersionMismatch)`.
+    pub fn load_strict(output_dir: &Path) -> Result<Self, CacheLoadError> {
         let path = output_dir.join(MANIFEST_FILENAME);
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
-            Err(_) => return Self::empty(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::empty()),
+            Err(e) => {
+                return Err(CacheLoadError::Io {
+                    path: path.clone(),
+                    source: e,
+                });
+            }
         };
-        let mut manifest: Self = match serde_json::from_str(&content) {
-            Ok(m) => m,
-            Err(_) => return Self::empty(),
-        };
+        let mut manifest: Self =
+            serde_json::from_str(&content).map_err(|e| CacheLoadError::Corrupt {
+                path: path.clone(),
+                source: e,
+            })?;
         if manifest.version != MANIFEST_VERSION {
-            return Self::empty();
+            return Err(CacheLoadError::VersionMismatch {
+                path,
+                found: manifest.version,
+                expected: MANIFEST_VERSION,
+            });
         }
         manifest.content_index = build_content_index(&manifest.entries);
-        manifest
+        Ok(manifest)
     }
 
     /// Save to the output directory.
@@ -744,5 +813,77 @@ mod tests {
         let mut s = CacheStats::default();
         s.misses = 3;
         assert_eq!(format!("{}", s), "3 encoded");
+    }
+
+    // =========================================================================
+    // Phase 4a: strict load + nuke-on-mismatch policy
+    // =========================================================================
+
+    #[test]
+    fn load_strict_missing_file_returns_empty() {
+        let tmp = TempDir::new().unwrap();
+        let m = CacheManifest::load_strict(tmp.path()).unwrap();
+        assert_eq!(m.version, MANIFEST_VERSION);
+        assert!(m.entries.is_empty());
+    }
+
+    #[test]
+    fn load_strict_version_mismatch_surfaces_error() {
+        let tmp = TempDir::new().unwrap();
+        // Write a manifest with a version deliberately not matching ours.
+        let bogus = format!(
+            r#"{{"version": {}, "entries": {{}}}}"#,
+            MANIFEST_VERSION + 42
+        );
+        std::fs::write(tmp.path().join(MANIFEST_FILENAME), bogus).unwrap();
+        match CacheManifest::load_strict(tmp.path()) {
+            Err(CacheLoadError::VersionMismatch {
+                found, expected, ..
+            }) => {
+                assert_eq!(found, MANIFEST_VERSION + 42);
+                assert_eq!(expected, MANIFEST_VERSION);
+            }
+            other => panic!("expected VersionMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_strict_corrupt_file_surfaces_error() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(MANIFEST_FILENAME), "{ not json").unwrap();
+        assert!(matches!(
+            CacheManifest::load_strict(tmp.path()),
+            Err(CacheLoadError::Corrupt { .. })
+        ));
+    }
+
+    #[test]
+    fn version_mismatch_error_message_names_the_cache_flag() {
+        let err = CacheLoadError::VersionMismatch {
+            path: PathBuf::from("/tmp/processed/.cache-manifest.json"),
+            found: 1,
+            expected: 2,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("schema version 1"));
+        assert!(msg.contains("expected 2"));
+        assert!(
+            msg.contains("--auto-reset-cache"),
+            "error message must point users at the reset flag: {msg}"
+        );
+    }
+
+    #[test]
+    fn lenient_load_still_returns_empty_on_mismatch() {
+        // Back-compat: the original `load()` stays silent for tests that
+        // rely on the silent-empty-on-failure behavior.
+        let tmp = TempDir::new().unwrap();
+        let bogus = format!(
+            r#"{{"version": {}, "entries": {{}}}}"#,
+            MANIFEST_VERSION + 1
+        );
+        std::fs::write(tmp.path().join(MANIFEST_FILENAME), bogus).unwrap();
+        let m = CacheManifest::load(tmp.path());
+        assert!(m.entries.is_empty());
     }
 }

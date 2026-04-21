@@ -60,6 +60,17 @@ pub enum ProcessError {
     Imaging(#[from] BackendError),
     #[error("Source image not found: {0}")]
     SourceNotFound(PathBuf),
+    /// Loading the on-disk cache manifest failed. This covers the full
+    /// [`cache::CacheLoadError`] range — IO error, corrupt JSON, or a
+    /// `version`-field mismatch between the persisted manifest and this
+    /// binary's expected version. Phase 4a of the data-model refactor
+    /// made these surface loudly rather than silently drop the cache
+    /// (see §5.2 of the refactor plan). For the specific
+    /// version-mismatch case, `--auto-reset-cache` on the CLI wipes
+    /// the processed directory; other failures abort and expose the
+    /// underlying problem.
+    #[error(transparent)]
+    CacheLoad(#[from] cache::CacheLoadError),
 }
 
 /// Configuration for image processing
@@ -340,8 +351,12 @@ pub fn process_with_backend(
 
     std::fs::create_dir_all(output_dir)?;
 
+    // Strict load: a schema-version mismatch surfaces as `ProcessError::CacheSchemaMismatch`
+    // so the CLI can tell the user to wipe the processed dir (or pass
+    // --auto-reset-cache). Other load errors (missing file → empty; IO /
+    // corruption → error) behave as documented on `CacheLoadError`.
     let cache = Mutex::new(if use_cache {
-        CacheManifest::load(output_dir)
+        CacheManifest::load_strict(output_dir)?
     } else {
         CacheManifest::empty()
     });
