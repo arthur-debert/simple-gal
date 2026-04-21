@@ -160,6 +160,23 @@ pub struct OutputManifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub config: SiteConfig,
+    /// Canonical-image view threaded through from scan (Phase 1).
+    /// Forwarded as-is for downstream metadata resolution and future
+    /// consumers; the current All Photos dedup path is driven by
+    /// `OutputImage::canonical_id` while walking album images. Empty on
+    /// legacy pre-Phase-1 manifests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub canonical_images: Vec<OutputCanonicalImage>,
+}
+
+/// Mirror of [`scan::CanonicalImage`] serialized through the processed
+/// manifest so downstream stages retain the flat canonical-image view.
+#[derive(Debug, Serialize)]
+pub struct OutputCanonicalImage {
+    pub id: String,
+    pub source_path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -196,6 +213,11 @@ pub struct OutputImage {
     /// `[full_index] generates = true`. Uses full_index.thumb_ratio/thumb_size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_index_thumbnail: Option<String>,
+    /// Pointer into [`OutputManifest::canonical_images`]. Forwarded from
+    /// scan → process so generate can resolve shared-content metadata.
+    /// Absent on legacy manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -599,6 +621,7 @@ pub fn process_with_backend(
                         generated,
                         thumbnail: thumbnail_path,
                         full_index_thumbnail,
+                        canonical_id: image.canonical_id.clone(),
                     }
                 },
             )
@@ -662,6 +685,21 @@ pub fn process_with_backend(
         reused: source_hash_reused.load(Ordering::Relaxed),
     };
 
+    // Forward canonical image metadata into the processed manifest.
+    // This only transforms scan-stage data into the output manifest shape
+    // (same fields, different type); downstream consumers use the
+    // forwarded view as needed. A `From` impl would be cleaner if this
+    // duplication grows.
+    let canonical_images: Vec<OutputCanonicalImage> = input
+        .canonical_images
+        .into_iter()
+        .map(|c| OutputCanonicalImage {
+            id: c.id,
+            source_path: c.source_path,
+            aliases: c.aliases,
+        })
+        .collect();
+
     Ok(ProcessResult {
         manifest: OutputManifest {
             navigation: input.navigation,
@@ -669,6 +707,7 @@ pub fn process_with_backend(
             pages: input.pages,
             description: input.description,
             config: input.config,
+            canonical_images,
         },
         cache_stats: final_stats,
         source_hash_stats,
