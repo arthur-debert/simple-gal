@@ -627,45 +627,49 @@ pub struct ProcessingConfig {
 // Auto-indexing
 // =============================================================================
 
-/// When the auto-reindex hook fires during build.
-///
-/// See `docs/dev/auto-reindex.md` for the full feature spec. The hook is
-/// off by default — users opt in per-site (or per-album, since the parent
-/// `[auto_indexing]` section cascades like the rest of `SiteConfig`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AutoIndexingMode {
-    /// Never auto-run; only the explicit `reindex` command runs.
-    #[default]
-    Off,
-    /// Reindex source files in place during scan, before process.
-    SourceOnly,
-    /// Source untouched; manifest prefixes are rewritten in-memory so output
-    /// URLs and copied filenames use the normalized numbering.
-    ExportOnly,
-    /// Reindex source files in place; output regenerates from new source
-    /// naturally. Equivalent on disk to `SourceOnly` but states user intent.
-    Both,
-}
-
 /// Auto file-name index reindexing settings.
 ///
-/// `auto` controls whether (and where) the build pipeline runs reindex
-/// automatically. `spacing` and `padding` are the defaults used both by the
-/// auto hook and by the `reindex` CLI command when the user doesn't supply
-/// explicit `--spacing` / `--padding` flags.
+/// `sync_source_files` is the single opt-in switch: when `true`, the build
+/// pipeline runs the reindex walker over the source tree before scan,
+/// renaming files in place. When `false` (default), the build leaves source
+/// alone — users run `simple-gal reindex` manually when they want to tidy
+/// filenames.
+///
+/// `spacing` and `padding` are the defaults used both by the auto hook and
+/// by the `reindex` CLI command when the user doesn't supply explicit
+/// `--spacing` / `--padding` flags.
 ///
 /// Output prefix = `format!("{:0pad$}", n * 10^spacing)`:
 /// - `spacing=0, padding=0` → `1, 2, 3, …`
 /// - `spacing=1, padding=3` → `010, 020, 030, …` (the default)
 /// - `spacing=2, padding=4` → `0100, 0200, 0300, …`
+///
+/// # Migration from the old enum-based `auto` field
+///
+/// Earlier releases carried an `auto` field that accepted one of `off` |
+/// `source_only` | `export_only` | `both`. That design split user intent
+/// from user effect:
+///
+/// - `source_only` and `both` had identical on-disk effect (rename source),
+///   differing only in stated intent.
+/// - `export_only` (rewrite output URLs without touching source) was never
+///   implemented, and with ordinal-based URL naming it was tautological
+///   anyway — output URLs don't carry source prefixes.
+///
+/// Collapsing the enum to a single boolean keeps the one meaningful knob
+/// ("do I want source files renamed automatically?") and drops the three
+/// modes that weren't pulling their weight. Old configs using `auto = "..."`
+/// now fail with confique's unknown-field error, pointing users at this
+/// field.
 #[derive(Config, Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[config(layer_attr(derive(Clone)))]
 #[config(layer_attr(serde(deny_unknown_fields)))]
 pub struct AutoIndexingConfig {
-    /// When the auto-reindex hook fires during build.
-    #[config(default = "off")]
-    pub auto: AutoIndexingMode,
+    /// Whether the build pipeline renames source files before scan.
+    /// `false` (default) leaves source alone; `true` runs the reindex
+    /// walker over `--source` at build-start.
+    #[config(default = false)]
+    pub sync_source_files: bool,
     /// Step exponent: numbers are spaced by `10^spacing`.
     #[config(default = 1)]
     pub spacing: u32,
@@ -1494,7 +1498,7 @@ qualty = 90
     #[test]
     fn default_auto_indexing_is_off() {
         let config = SiteConfig::default();
-        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::Off);
+        assert!(!config.auto_indexing.sync_source_files);
         assert_eq!(config.auto_indexing.spacing, 1);
         assert_eq!(config.auto_indexing.padding, 3);
     }
@@ -1506,13 +1510,13 @@ qualty = 90
             tmp.path(),
             r#"
 [auto_indexing]
-auto = "source_only"
+sync_source_files = true
 spacing = 2
 padding = 4
 "#,
         );
         let config = load_config(tmp.path()).unwrap();
-        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::SourceOnly);
+        assert!(config.auto_indexing.sync_source_files);
         assert_eq!(config.auto_indexing.spacing, 2);
         assert_eq!(config.auto_indexing.padding, 4);
     }
@@ -1524,41 +1528,40 @@ padding = 4
             tmp.path(),
             r#"
 [auto_indexing]
-auto = "both"
+sync_source_files = true
 "#,
         );
         let config = load_config(tmp.path()).unwrap();
-        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::Both);
+        assert!(config.auto_indexing.sync_source_files);
         assert_eq!(config.auto_indexing.spacing, 1);
         assert_eq!(config.auto_indexing.padding, 3);
     }
 
     #[test]
-    fn auto_indexing_each_mode_parses() {
-        for (raw, expected) in [
-            ("off", AutoIndexingMode::Off),
-            ("source_only", AutoIndexingMode::SourceOnly),
-            ("export_only", AutoIndexingMode::ExportOnly),
-            ("both", AutoIndexingMode::Both),
-        ] {
-            let tmp = TempDir::new().unwrap();
-            write_config(tmp.path(), &format!("[auto_indexing]\nauto = \"{raw}\"\n"));
-            let config = load_config(tmp.path()).unwrap();
-            assert_eq!(config.auto_indexing.auto, expected, "mode {raw}");
-        }
-    }
-
-    #[test]
-    fn auto_indexing_unknown_mode_rejected() {
+    fn auto_indexing_old_auto_field_rejected() {
+        // Phase 5 migration: the old enum-based `auto` field is gone;
+        // confique's deny_unknown_fields rejects configs still using it
+        // so users get a loud error pointing at `sync_source_files`
+        // rather than silent no-ops. We assert on the specific error
+        // shape so a general "config broken" change couldn't accidentally
+        // let this regress.
         let tmp = TempDir::new().unwrap();
         write_config(
             tmp.path(),
             r#"
 [auto_indexing]
-auto = "always"
+auto = "source_only"
 "#,
         );
-        assert!(load_config(tmp.path()).is_err());
+        let err_text = load_config(tmp.path()).unwrap_err().to_string();
+        assert!(
+            err_text.contains("unknown field") && err_text.contains("`auto`"),
+            "expected unknown-field error naming `auto`, got: {err_text}"
+        );
+        assert!(
+            err_text.contains("sync_source_files"),
+            "error should point users at the new field `sync_source_files`, got: {err_text}"
+        );
     }
 
     #[test]
@@ -1586,7 +1589,7 @@ spacing = 0
         );
         let config = load_config(tmp.path()).unwrap();
         assert_eq!(config.auto_indexing.spacing, 0);
-        assert_eq!(config.auto_indexing.auto, AutoIndexingMode::Off);
+        assert!(!config.auto_indexing.sync_source_files);
         assert_eq!(config.auto_indexing.padding, 3);
         assert_eq!(config.images.sizes, vec![800, 1400, 2080]);
         assert_eq!(config.colors.light.background, "#ffffff");

@@ -1,17 +1,15 @@
-//! End-to-end tests for the `[auto_indexing].auto` build hook.
+//! End-to-end tests for the `[auto_indexing].sync_source_files` build hook.
 //!
 //! Each test builds a tiny self-contained content tree in a TempDir, runs
 //! `simple-gal build` against it, and asserts on the final state of both
-//! the source tree (`source_only` and `both` rename in place; `off` does
-//! not) and the generated output.
+//! the source tree (renamed in place when the hook is enabled; left alone
+//! otherwise) and the generated output.
 //!
-//! Focus is on the hook's on-disk effects before scan; the process stage
-//! may fail on the minimal reused fixture image but the rename work we
-//! assert on has already happened by then.
-//!
-//! `export_only` is covered only for its current unsupported behavior —
-//! we verify it errors with a clear "not yet supported" message rather
-//! than exercising a successful rename/build path.
+//! Phase 5 of the data-model refactor collapsed the earlier four-mode
+//! enum (`off` / `source_only` / `export_only` / `both`) into a single
+//! boolean. The `source_only` / `both` distinction was always cosmetic
+//! (identical on-disk effect); `export_only` never had an implementation.
+//! These tests exercise the one remaining toggle plus a migration check.
 
 use std::fs;
 use std::path::Path;
@@ -33,9 +31,9 @@ fn sample_image_bytes() -> Vec<u8> {
 }
 
 /// Build a content tree at `root` with two images numbered at arbitrary
-/// sparse positions, a `config.toml` enabling the given auto mode, and a
-/// minimal site description.
-fn seed_content(root: &Path, auto_mode: &str) {
+/// sparse positions, a `config.toml` with the given `sync_source_files`
+/// value, and a minimal site description.
+fn seed_content(root: &Path, sync: bool) {
     fs::create_dir_all(root).unwrap();
     fs::write(
         root.join("config.toml"),
@@ -44,7 +42,7 @@ fn seed_content(root: &Path, auto_mode: &str) {
 site_title = "Test"
 
 [auto_indexing]
-auto = "{auto_mode}"
+sync_source_files = {sync}
 spacing = 1
 padding = 3
 
@@ -79,10 +77,7 @@ fn run_build(source: &Path, temp: &Path, output: &Path) -> std::process::Output 
 }
 
 /// `run_build` wrapper that asserts the build command succeeded. The
-/// minimal placeholder image used here is a real JPEG, so the pipeline
-/// goes end-to-end. Using this on passing-path tests prevents a silent
-/// `process` / `generate` failure from faking a green test via surviving
-/// filesystem state.
+/// fixture image is a real JPEG, so the pipeline goes end-to-end.
 fn run_build_ok(source: &Path, temp: &Path, output: &Path) {
     let result = run_build(source, temp, output);
     assert!(
@@ -94,16 +89,16 @@ fn run_build_ok(source: &Path, temp: &Path, output: &Path) {
 }
 
 // ----------------------------------------------------------------------------
-// off (default behavior)
+// sync_source_files = false (default)
 // ----------------------------------------------------------------------------
 
 #[test]
-fn auto_off_leaves_source_alone() {
+fn sync_off_leaves_source_alone() {
     let workspace = TempDir::new().unwrap();
     let source = workspace.path().join("content");
     let temp = workspace.path().join("temp");
     let output = workspace.path().join("dist");
-    seed_content(&source, "off");
+    seed_content(&source, false);
 
     run_build_ok(&source, &temp, &output);
 
@@ -114,16 +109,16 @@ fn auto_off_leaves_source_alone() {
 }
 
 // ----------------------------------------------------------------------------
-// source_only
+// sync_source_files = true
 // ----------------------------------------------------------------------------
 
 #[test]
-fn auto_source_only_renames_source_in_place() {
+fn sync_on_renames_source_in_place() {
     let workspace = TempDir::new().unwrap();
     let source = workspace.path().join("content");
     let temp = workspace.path().join("temp");
     let output = workspace.path().join("dist");
-    seed_content(&source, "source_only");
+    seed_content(&source, true);
 
     run_build_ok(&source, &temp, &output);
 
@@ -137,43 +132,43 @@ fn auto_source_only_renames_source_in_place() {
 }
 
 // ----------------------------------------------------------------------------
-// both (same on-disk effect as source_only)
+// Migration: old `auto = "..."` field is loud-rejected (Phase 5)
 // ----------------------------------------------------------------------------
 
 #[test]
-fn auto_both_renames_source_like_source_only() {
+fn legacy_auto_field_errors_clearly() {
     let workspace = TempDir::new().unwrap();
     let source = workspace.path().join("content");
     let temp = workspace.path().join("temp");
     let output = workspace.path().join("dist");
-    seed_content(&source, "both");
-
-    run_build_ok(&source, &temp, &output);
-
-    assert!(source.join("010-Album/010-first.jpg").exists());
-    assert!(source.join("010-Album/020-second.jpg").exists());
-}
-
-// ----------------------------------------------------------------------------
-// export_only (explicit not-yet-supported error)
-// ----------------------------------------------------------------------------
-
-#[test]
-fn auto_export_only_errors_clearly() {
-    let workspace = TempDir::new().unwrap();
-    let source = workspace.path().join("content");
-    let temp = workspace.path().join("temp");
-    let output = workspace.path().join("dist");
-    seed_content(&source, "export_only");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("config.toml"),
+        r#"
+[auto_indexing]
+auto = "source_only"
+"#,
+    )
+    .unwrap();
+    let album = source.join("5-Album");
+    fs::create_dir_all(&album).unwrap();
+    fs::write(album.join("1-first.jpg"), sample_image_bytes()).unwrap();
 
     let result = run_build(&source, &temp, &output);
-    assert!(!result.status.success(), "expected non-zero exit");
+    assert!(
+        !result.status.success(),
+        "expected non-zero exit on legacy field"
+    );
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(
-        stderr.contains("export_only") && stderr.contains("not yet supported"),
-        "stderr did not mention export_only unsupported: {stderr}"
+        stderr.contains("unknown field") && stderr.contains("`auto`"),
+        "expected stderr to flag the unknown `auto` field specifically, got: {stderr}"
     );
-    // Source untouched.
+    assert!(
+        stderr.contains("sync_source_files"),
+        "expected stderr to point users at the new `sync_source_files` field, got: {stderr}"
+    );
+    // Source untouched because config load fails before the hook runs.
     assert!(source.join("5-Album/1-first.jpg").exists());
 }
 
@@ -182,14 +177,14 @@ fn auto_export_only_errors_clearly() {
 // ----------------------------------------------------------------------------
 
 #[test]
-fn source_only_invalidates_processed_dir_on_rename() {
+fn sync_on_invalidates_processed_dir_on_rename() {
     // Seed a stale `processed/` directory that would otherwise be reused,
     // confirm the hook wipes it when it actually renames something.
     let workspace = TempDir::new().unwrap();
     let source = workspace.path().join("content");
     let temp = workspace.path().join("temp");
     let output = workspace.path().join("dist");
-    seed_content(&source, "source_only");
+    seed_content(&source, true);
 
     let processed = temp.join("processed");
     fs::create_dir_all(&processed).unwrap();
@@ -198,7 +193,6 @@ fn source_only_invalidates_processed_dir_on_rename() {
 
     run_build_ok(&source, &temp, &output);
 
-    // The stale marker should be gone because the hook wiped the cache.
     assert!(
         !stale_marker.exists(),
         "expected processed/ to have been wiped after rename"
@@ -206,14 +200,14 @@ fn source_only_invalidates_processed_dir_on_rename() {
 }
 
 #[test]
-fn source_only_preserves_processed_dir_when_no_renames_needed() {
+fn sync_on_preserves_processed_dir_when_no_renames_needed() {
     // If the source is already normalized, the hook shouldn't touch the
     // cache directory.
     let workspace = TempDir::new().unwrap();
     let source = workspace.path().join("content");
     let temp = workspace.path().join("temp");
     let output = workspace.path().join("dist");
-    seed_content(&source, "source_only");
+    seed_content(&source, true);
 
     // First build: renames happen, cache gets populated by process stage.
     run_build_ok(&source, &temp, &output);

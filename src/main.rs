@@ -761,94 +761,75 @@ fn maybe_reset_cache(
     }
 }
 
-/// Pre-scan hook: consult `[auto_indexing].auto` and reindex the source
-/// tree if the user has opted in.
+/// Pre-scan hook: consult `[auto_indexing].sync_source_files` and reindex
+/// the source tree when the user has opted in.
 ///
-/// Behavior per mode:
+/// Behavior:
 ///
-/// - `off` (default): no-op.
-/// - `source_only` / `both`: walk the source tree through `reindex::reindex_tree`
-///   with the configured `spacing`/`padding`. Any on-disk rename invalidates
-///   the processing cache (by removing `<temp-dir>/processed/`); the
-///   subsequent process stage rebuilds from scratch. Cache invalidation
-///   here is deliberately coarse — per-file content-addressed caching could
-///   preserve more state across renames, but that's a follow-up optimization.
-/// - `export_only`: not yet implemented. Returns an error telling the user
-///   to use the manual `simple-gal reindex` command or switch modes; the
-///   source-untouched manifest-rewrite path lands in a later release.
+/// - `sync_source_files = false` (default): no-op.
+/// - `sync_source_files = true`: walk the source tree through
+///   [`reindex::reindex_tree`] with the configured `spacing` / `padding`.
+///   Any on-disk rename invalidates the processing cache (by removing
+///   `<temp-dir>/processed/`); the subsequent process stage rebuilds
+///   from scratch. Cache invalidation here is deliberately coarse —
+///   per-file content-addressed caching could preserve more state
+///   across renames, but that's a follow-up optimization.
+///
+/// Earlier versions exposed a four-value enum (`off` / `source_only` /
+/// `export_only` / `both`). That design never paid off — `source_only`
+/// and `both` had identical effect, and `export_only` was never
+/// implemented. Phase 5 of the data-model refactor collapsed the enum
+/// to this single boolean; old configs using `auto = "..."` now fail
+/// with confique's unknown-field error and are pointed at
+/// `sync_source_files` via the migration note on
+/// [`config::AutoIndexingConfig`].
 fn maybe_auto_reindex(cli: &Cli, source: &Path, text_mode: bool) -> Result<(), CliError> {
     // Load from the resolved `source`, not `&cli.source` — `resolve_build_source`
     // is a passthrough today but could normalize/canonicalize in the future,
     // and a stale reference here would silently diverge.
     let site_config = config::load_config(source).tag(ErrorKind::Config)?;
-    let auto = site_config.auto_indexing.auto.clone();
+    if !site_config.auto_indexing.sync_source_files {
+        return Ok(());
+    }
     let spacing = site_config.auto_indexing.spacing;
     let padding = site_config.auto_indexing.padding;
 
-    use config::AutoIndexingMode;
-    match auto {
-        AutoIndexingMode::Off => Ok(()),
-        mode @ (AutoIndexingMode::SourceOnly | AutoIndexingMode::Both) => {
-            if text_mode {
-                let mode_name = match mode {
-                    AutoIndexingMode::SourceOnly => "source_only",
-                    AutoIndexingMode::Both => "both",
-                    _ => unreachable!(),
-                };
-                println!(
-                    "==> Stage 0: Auto-reindex (mode={mode_name}, spacing={spacing}, padding={padding})"
-                );
-            }
-            let opts = reindex::WalkOptions {
-                is_root: true,
-                assets_dir: Some(site_config.assets_dir.as_str()),
-                site_description_file: site_config.site_description_file.as_str(),
-            };
-            let reports = reindex::reindex_tree(source, spacing, padding, false, false, &opts)
-                .tag(ErrorKind::Reindex)?;
-            let total_renames: usize = reports.iter().map(|r| r.plan.len()).sum();
-            if text_mode {
-                if total_renames == 0 {
-                    println!("  (already normalized)");
-                } else {
-                    println!(
-                        "  {total_renames} rename(s) across {} director{}.",
-                        reports.iter().filter(|r| !r.plan.is_empty()).count(),
-                        if reports.iter().filter(|r| !r.plan.is_empty()).count() == 1 {
-                            "y"
-                        } else {
-                            "ies"
-                        }
-                    );
-                }
-            }
-            // Coarse cache invalidation: if anything on disk moved, throw
-            // away the processed dir so the process stage can't hand back
-            // stale variants keyed by old paths. See doc-comment above.
-            if total_renames > 0 {
-                let processed_dir = cli.temp_dir.join("processed");
-                if processed_dir.exists() {
-                    if text_mode {
-                        println!(
-                            "  Invalidating processing cache ({})",
-                            processed_dir.display()
-                        );
-                    }
-                    std::fs::remove_dir_all(&processed_dir).tag(ErrorKind::Io)?;
-                }
-            }
-            Ok(())
-        }
-        AutoIndexingMode::ExportOnly => {
-            let msg: Box<dyn std::error::Error + 'static> =
-                "auto_indexing.auto = \"export_only\" is not yet supported. \
-                 Use \"source_only\" (renames source files in place) or run \
-                 `simple-gal reindex` manually; export-only manifest rewrite \
-                 lands in a follow-up release."
-                    .into();
-            Err(CliError::new(ErrorKind::Config, msg))
+    if text_mode {
+        println!("==> Stage 0: Auto-reindex source files (spacing={spacing}, padding={padding})");
+    }
+    let opts = reindex::WalkOptions {
+        is_root: true,
+        assets_dir: Some(site_config.assets_dir.as_str()),
+        site_description_file: site_config.site_description_file.as_str(),
+    };
+    let reports = reindex::reindex_tree(source, spacing, padding, false, false, &opts)
+        .tag(ErrorKind::Reindex)?;
+    let total_renames: usize = reports.iter().map(|r| r.plan.len()).sum();
+    if text_mode {
+        if total_renames == 0 {
+            println!("  (already normalized)");
+        } else {
+            let dirs = reports.iter().filter(|r| !r.plan.is_empty()).count();
+            let suffix = if dirs == 1 { "y" } else { "ies" };
+            println!("  {total_renames} rename(s) across {dirs} director{suffix}.");
         }
     }
+    // Coarse cache invalidation: if anything on disk moved, throw away
+    // the processed dir so the process stage can't hand back stale
+    // variants keyed by old paths.
+    if total_renames > 0 {
+        let processed_dir = cli.temp_dir.join("processed");
+        if processed_dir.exists() {
+            if text_mode {
+                println!(
+                    "  Invalidating processing cache ({})",
+                    processed_dir.display()
+                );
+            }
+            std::fs::remove_dir_all(&processed_dir).tag(ErrorKind::Io)?;
+        }
+    }
+    Ok(())
 }
 
 /// Run `simple-gal reindex`.
