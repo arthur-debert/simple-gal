@@ -336,11 +336,18 @@ pub fn process_with_backend(
         .collect();
 
     // Source-hash memo. Keys are either `canonical_id` (preferred) or
-    // the per-ref `source_path` (fallback for legacy manifests). Two
-    // refs to the same canonical content hit the memo and skip the
+    // the per-ref `source_path` (fallback for legacy manifests and for
+    // refs whose `canonical_id` doesn't resolve in `canonical_by_id`).
+    // Two refs to the same canonical content hit the memo and skip the
     // second `hash_file` call entirely, avoiding the redundant disk
     // read the Phase 1 CHANGELOG flagged as the current-model cost.
-    let source_hash_memo: Mutex<std::collections::HashMap<String, String>> =
+    //
+    // Each entry is a per-key `Arc<Mutex<Option<String>>>` so concurrent
+    // rayon workers on the same key serialize on that inner mutex
+    // (one worker computes, others wait and read the cached value).
+    // The outer mutex only guards the map itself — brief.
+    type HashCell = std::sync::Arc<Mutex<Option<String>>>;
+    let source_hash_memo: Mutex<std::collections::HashMap<String, HashCell>> =
         Mutex::new(std::collections::HashMap::new());
     let source_hash_unique = std::sync::atomic::AtomicU32::new(0);
     let source_hash_reused = std::sync::atomic::AtomicU32::new(0);
@@ -422,45 +429,43 @@ pub fn process_with_backend(
 
                 // Compute source hash once per canonical content across the
                 // whole site. The memo key is `canonical_id` when the scan
-                // stage stamped one (Phase 1+) and falls back to the ref's
-                // own source_path on legacy manifests. Bytes are identical
-                // regardless of which alias we read, so hashing any one path
-                // per canonical entry gives a correct hash.
-                let memo_key = image
+                // stage stamped one AND that id actually resolves in
+                // `canonical_by_id` — otherwise we fall back to the ref's
+                // own `source_path`. Guarding on resolution prevents a
+                // manifest where `canonical_id` was set without a matching
+                // entry (inconsistent input) from causing two genuinely
+                // distinct images to share a hash.
+                let canonical = image
                     .canonical_id
-                    .clone()
-                    .unwrap_or_else(|| image.source_path.clone());
+                    .as_deref()
+                    .and_then(|id| canonical_by_id.get(id).map(|c| (id, *c)));
+                let (memo_key, hash_input_path) = match canonical {
+                    Some((id, c)) => (id.to_string(), source_root.join(&c.source_path)),
+                    None => (image.source_path.clone(), source_path.clone()),
+                };
+                // Per-key cell: first worker locks it, hashes, stores; later
+                // workers block on the same cell and just read the stored
+                // hash. Workers on different keys run in parallel (each has
+                // its own cell). The stats counter is now race-free because
+                // only one thread ever reaches the miss branch per key.
+                let cell: HashCell = {
+                    let mut memo = source_hash_memo.lock().unwrap();
+                    memo.entry(memo_key)
+                        .or_insert_with(|| std::sync::Arc::new(Mutex::new(None)))
+                        .clone()
+                };
                 let source_hash = {
                     use std::sync::atomic::Ordering;
-                    let existing = {
-                        let memo = source_hash_memo.lock().unwrap();
-                        memo.get(&memo_key).cloned()
-                    };
-                    match existing {
+                    let mut slot = cell.lock().unwrap();
+                    match slot.clone() {
                         Some(h) => {
                             source_hash_reused.fetch_add(1, Ordering::Relaxed);
                             h
                         }
                         None => {
-                            // Prefer the canonical source_path when available:
-                            // on a shared image, this picks a stable file path
-                            // that won't change as albums are added or removed.
-                            let hash_input_path = image
-                                .canonical_id
-                                .as_deref()
-                                .and_then(|id| canonical_by_id.get(id))
-                                .map(|c| source_root.join(&c.source_path))
-                                .unwrap_or_else(|| source_path.clone());
                             let h = cache::hash_file(&hash_input_path)?;
-                            let mut memo = source_hash_memo.lock().unwrap();
-                            // Idempotent: if another rayon worker raced us to
-                            // the insert, count this one as a reuse so the
-                            // stats reflect actual disk reads.
-                            if memo.insert(memo_key.clone(), h.clone()).is_none() {
-                                source_hash_unique.fetch_add(1, Ordering::Relaxed);
-                            } else {
-                                source_hash_reused.fetch_add(1, Ordering::Relaxed);
-                            }
+                            *slot = Some(h.clone());
+                            source_hash_unique.fetch_add(1, Ordering::Relaxed);
                             h
                         }
                     }
@@ -1820,22 +1825,61 @@ mod tests {
     }
 
     #[test]
-    fn canonical_resolution_reads_from_canonical_source_path() {
-        // When canonical_id is set and the canonical source_path points
-        // at album-a's copy, hashing should read from THAT path even if
-        // the ref belongs to album-b. Easy way to check: delete album-b's
-        // file after scan but keep album-a's; processing should still
-        // succeed because the canonical hash uses album-a's file.
+    fn unresolved_canonical_id_falls_back_to_source_path_key() {
+        // Defensive test: a manifest where `canonical_id` is set but the
+        // id isn't present in `canonical_images` (inconsistent input).
+        // Without the resolution guard, two genuinely distinct images
+        // sharing a bad id would collide on memo_key and the second ref
+        // would get the first ref's hash. With the guard, we fall back
+        // to each ref's own `source_path` key so they hash independently
+        // and get their correct, distinct hashes.
         let tmp = TempDir::new().unwrap();
         let source_dir = tmp.path().join("source");
         let output_dir = tmp.path().join("output");
-        create_dummy_source(&source_dir.join("album-a/001-shared.jpg"));
-        create_dummy_source(&source_dir.join("album-b/001-shared.jpg"));
-        // Simulate user deleting the second copy after scan captured it.
-        fs::remove_file(source_dir.join("album-b/001-shared.jpg")).unwrap();
+        fs::create_dir_all(source_dir.join("album-a")).unwrap();
+        fs::create_dir_all(source_dir.join("album-b")).unwrap();
+        // Different bytes — correct behavior requires two hash calls
+        // producing two distinct hashes.
+        fs::write(source_dir.join("album-a/001-x.jpg"), b"alpha").unwrap();
+        fs::write(source_dir.join("album-b/001-x.jpg"), b"beta").unwrap();
 
-        let manifest_path = create_shared_canonical_manifest(tmp.path());
-        // One dimension per image processed (two refs → two identify calls).
+        let manifest = r##"{
+            "navigation": [],
+            "albums": [
+                {
+                    "path": "album-a",
+                    "title": "Album A",
+                    "description": null,
+                    "preview_image": "album-a/001-x.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-a/001-x.jpg",
+                        "filename": "001-x.jpg",
+                        "canonical_id": "sha256-ghost"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                },
+                {
+                    "path": "album-b",
+                    "title": "Album B",
+                    "description": null,
+                    "preview_image": "album-b/001-x.jpg",
+                    "images": [{
+                        "number": 1,
+                        "source_path": "album-b/001-x.jpg",
+                        "filename": "001-x.jpg",
+                        "canonical_id": "sha256-ghost"
+                    }],
+                    "in_nav": true,
+                    "config": {}
+                }
+            ],
+            "config": {},
+            "canonical_images": []
+        }"##;
+        let manifest_path = tmp.path().join("manifest.json");
+        fs::write(&manifest_path, manifest).unwrap();
         let backend = MockBackend::with_dimensions(vec![
             Dimensions {
                 width: 400,
@@ -1847,23 +1891,19 @@ mod tests {
             },
         ]);
 
-        // Album-b's ref still tries to load the file via `source_path`
-        // for dimensions/IPTC — so this test is really just that the
-        // canonical-path-based hash *doesn't* error on album-a's still-
-        // present file. Album-b's ref itself would fail at dimensions
-        // read; accept that and assert only the hash step succeeds at
-        // least once against album-a's path.
-        let err = process_with_backend(
+        let result = process_with_backend(
             &backend,
             &manifest_path,
             &source_dir,
             &output_dir,
             false,
             None,
-        );
-        // Expect SourceNotFound for album-b's ref (can't read its own
-        // dimensions). The canonical-hash read from album-a succeeded
-        // before that — which is what this test is really probing.
-        assert!(matches!(err, Err(ProcessError::SourceNotFound(_))));
+        )
+        .unwrap();
+
+        // Both refs hashed independently via source_path fallback despite
+        // the shared (unresolved) canonical_id — no false dedup.
+        assert_eq!(result.source_hash_stats.unique, 2);
+        assert_eq!(result.source_hash_stats.reused, 0);
     }
 }
