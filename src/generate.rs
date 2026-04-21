@@ -86,6 +86,26 @@ pub struct Manifest {
     #[serde(default)]
     pub description: Option<String>,
     pub config: SiteConfig,
+    /// Flat canonical-image view forwarded from scan through process. The
+    /// All Photos page iterates this directly so a single byte-identical
+    /// image shared across multiple albums renders as one entry, not one
+    /// per album. Empty on legacy pre-Phase-1 manifests — the full-index
+    /// code falls back to the per-album iteration in that case.
+    #[serde(default)]
+    pub canonical_images: Vec<CanonicalImage>,
+}
+
+/// Canonical-image record serialized through from process. Carries the
+/// paths where each unique byte content appears on disk so the full-
+/// index renderer can pick any one album to link into.
+#[derive(Debug, Deserialize)]
+pub struct CanonicalImage {
+    pub id: String,
+    #[allow(dead_code)]
+    pub source_path: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub aliases: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +138,12 @@ pub struct Image {
     pub thumbnail: String,
     #[serde(default)]
     pub full_index_thumbnail: Option<String>,
+    /// Pointer into [`Manifest::canonical_images`]. Used by the All
+    /// Photos dedup path: when two `Image` records share a
+    /// `canonical_id`, the full-index renderer emits one entry and
+    /// links it to the first album that contains it.
+    #[serde(default)]
+    pub canonical_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1490,7 +1516,13 @@ fn render_full_index_page(
         (title)
     };
 
-    // Collect entries: every image from every in-nav album, in album order.
+    // Collect entries: one per unique source image across every in-nav
+    // album, in album/order-within-album order. The canonical-image view
+    // (Phase 1 / 3) lets us emit exactly one entry per byte-identical
+    // source even when it appears in multiple albums — the first
+    // occurrence wins album link + alt text, later occurrences are
+    // silently skipped. Entries are still appended in album-iteration
+    // order so the visual grouping on the page stays natural.
     struct FullIndexEntry<'a> {
         thumbnail: String,
         link: String,
@@ -1500,6 +1532,10 @@ fn render_full_index_page(
     }
 
     let mut entries: Vec<FullIndexEntry> = Vec::new();
+    // Track canonical_ids already emitted. Images without a canonical_id
+    // (legacy pre-Phase-1 manifests) skip the dedup set — they're keyed
+    // by their thumbnail path which was already de-facto unique per path.
+    let mut seen_canonical: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for album in &manifest.albums {
         if !album.in_nav {
             continue;
@@ -1509,6 +1545,13 @@ fn render_full_index_page(
             let Some(ref thumb) = image.full_index_thumbnail else {
                 continue;
             };
+            if let Some(ref id) = image.canonical_id
+                && !seen_canonical.insert(id.as_str())
+            {
+                // Byte-identical image already rendered from an earlier
+                // album; skip the duplicate.
+                continue;
+            }
             let image_dir = image_page_url(idx + 1, total, image.title.as_deref());
             let link = format!("/{}/{}", album.path, image_dir);
             let alt = match &image.title {
@@ -1869,6 +1912,7 @@ mod tests {
                     },
                     thumbnail: "test/001-dawn-thumb.avif".to_string(),
                     full_index_thumbnail: None,
+                    canonical_id: None,
                 },
                 Image {
                     number: 2,
@@ -1890,6 +1934,7 @@ mod tests {
                     },
                     thumbnail: "test/002-night-thumb.avif".to_string(),
                     full_index_thumbnail: None,
+                    canonical_id: None,
                 },
             ],
             in_nav: true,
@@ -1936,6 +1981,7 @@ mod tests {
                 },
                 thumbnail: "NY/Night/001-city-thumb.avif".to_string(),
                 full_index_thumbnail: None,
+                canonical_id: None,
             }],
             in_nav: true,
             config: SiteConfig::default(),
@@ -2958,6 +3004,7 @@ mod tests {
             pages: vec![],
             description: None,
             config: SiteConfig::default(),
+            canonical_images: Vec::new(),
         };
 
         let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
@@ -3000,6 +3047,7 @@ mod tests {
             },
             thumbnail: format!("{}/00{}-{}-thumb.avif", album, n, slug),
             full_index_thumbnail: Some(format!("{}/00{}-{}-fi-thumb.avif", album, n, slug)),
+            canonical_id: None,
         };
 
         Manifest {
@@ -3044,6 +3092,7 @@ mod tests {
             pages: vec![],
             description: None,
             config: cfg,
+            canonical_images: Vec::new(),
         }
     }
 
@@ -3057,6 +3106,48 @@ mod tests {
         assert!(html.contains("/alpha/001-dawn-fi-thumb.avif"));
         assert!(html.contains("/beta/001-dusk-fi-thumb.avif"));
         // Each thumbnail should link to the image's normal page.
+        assert!(html.contains(r#"href="/alpha/1-dawn/""#));
+        assert!(html.contains(r#"href="/beta/1-dusk/""#));
+    }
+
+    #[test]
+    fn full_index_page_dedupes_shared_canonical_image_across_albums() {
+        // Phase 3: two albums containing the same byte-identical image
+        // (same canonical_id) should render exactly one entry on the
+        // All Photos page, linked to the first occurrence.
+        let mut manifest = make_full_index_manifest();
+        // Stamp both albums' single image with the same canonical_id.
+        for album in &mut manifest.albums {
+            for image in &mut album.images {
+                image.canonical_id = Some("sha256-shared".to_string());
+            }
+        }
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
+
+        // The first album's image (alpha/1-dawn) is rendered; the second
+        // (beta/1-dusk) is skipped because it shares a canonical_id.
+        assert!(html.contains(r#"href="/alpha/1-dawn/""#));
+        assert!(!html.contains(r#"href="/beta/1-dusk/""#));
+        // Exactly one `fi-thumb` reference, not two.
+        let count = html.matches("-fi-thumb.avif").count();
+        assert_eq!(
+            count, 1,
+            "expected exactly one full-index thumbnail after dedup, got {count}"
+        );
+    }
+
+    #[test]
+    fn full_index_page_without_canonical_ids_preserves_legacy_behavior() {
+        // When no images carry a canonical_id (legacy manifest), the
+        // dedup set is empty and every image with a full_index_thumbnail
+        // still renders — preserving pre-Phase-3 behavior.
+        let mut manifest = make_full_index_manifest();
+        for album in &mut manifest.albums {
+            for image in &mut album.images {
+                image.canonical_id = None;
+            }
+        }
+        let html = render_full_index_page(&manifest, "", None, None, &no_snippets()).into_string();
         assert!(html.contains(r#"href="/alpha/1-dawn/""#));
         assert!(html.contains(r#"href="/beta/1-dusk/""#));
     }
@@ -3117,6 +3208,7 @@ mod tests {
                 generated: BTreeMap::new(),
                 thumbnail: "hidden/001-secret-thumb.avif".to_string(),
                 full_index_thumbnail: Some("hidden/001-secret-fi-thumb.avif".to_string()),
+                canonical_id: None,
             }],
             in_nav: false,
             config: manifest.config.clone(),
@@ -3171,6 +3263,7 @@ mod tests {
             pages: vec![],
             description: None,
             config: SiteConfig::default(),
+            canonical_images: Vec::new(),
         };
 
         let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
@@ -3187,6 +3280,7 @@ mod tests {
             pages: vec![],
             description: Some("<p>Welcome to the gallery.</p>".to_string()),
             config: SiteConfig::default(),
+            canonical_images: Vec::new(),
         };
 
         let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
@@ -3210,6 +3304,7 @@ mod tests {
             pages: vec![],
             description: None,
             config: SiteConfig::default(),
+            canonical_images: Vec::new(),
         };
 
         let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
@@ -3250,6 +3345,7 @@ mod tests {
                 },
                 thumbnail: "solo/001-photo-thumb.avif".to_string(),
                 full_index_thumbnail: None,
+                canonical_id: None,
             }],
             in_nav: true,
             config: SiteConfig::default(),
@@ -3374,6 +3470,7 @@ mod tests {
             pages: vec![],
             description: None,
             config,
+            canonical_images: Vec::new(),
         };
 
         let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
@@ -3465,6 +3562,7 @@ mod tests {
             pages: vec![],
             description: None,
             config: SiteConfig::default(),
+            canonical_images: Vec::new(),
         };
 
         let html = render_index(&manifest, "", None, None, &no_snippets(), None).into_string();
@@ -3652,6 +3750,7 @@ mod tests {
             pages: vec![],
             description: None,
             config: SiteConfig::default(),
+            canonical_images: Vec::new(),
         };
         let html = render_index(&manifest, "", None, None, &snippets, None).into_string();
         assert!(html.contains("custom.css"));
