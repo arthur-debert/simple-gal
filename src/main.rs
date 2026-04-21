@@ -722,7 +722,10 @@ fn resolve_build_source(cli_source: &Path) -> PathBuf {
 ///   to use the manual `simple-gal reindex` command or switch modes; the
 ///   source-untouched manifest-rewrite path lands in a later release.
 fn maybe_auto_reindex(cli: &Cli, source: &Path, text_mode: bool) -> Result<(), CliError> {
-    let site_config = config::load_config(&cli.source).tag(ErrorKind::Config)?;
+    // Load from the resolved `source`, not `&cli.source` — `resolve_build_source`
+    // is a passthrough today but could normalize/canonicalize in the future,
+    // and a stale reference here would silently diverge.
+    let site_config = config::load_config(source).tag(ErrorKind::Config)?;
     let auto = site_config.auto_indexing.auto.clone();
     let spacing = site_config.auto_indexing.spacing;
     let padding = site_config.auto_indexing.padding;
@@ -730,10 +733,15 @@ fn maybe_auto_reindex(cli: &Cli, source: &Path, text_mode: bool) -> Result<(), C
     use config::AutoIndexingMode;
     match auto {
         AutoIndexingMode::Off => Ok(()),
-        AutoIndexingMode::SourceOnly | AutoIndexingMode::Both => {
+        mode @ (AutoIndexingMode::SourceOnly | AutoIndexingMode::Both) => {
             if text_mode {
+                let mode_name = match mode {
+                    AutoIndexingMode::SourceOnly => "source_only",
+                    AutoIndexingMode::Both => "both",
+                    _ => unreachable!(),
+                };
                 println!(
-                    "==> Stage 0: Auto-reindex (mode=source_only, spacing={spacing}, padding={padding})"
+                    "==> Stage 0: Auto-reindex (mode={mode_name}, spacing={spacing}, padding={padding})"
                 );
             }
             let opts = reindex::WalkOptions {

@@ -5,16 +5,16 @@
 //! the source tree (`source_only` and `both` rename in place; `off` does
 //! not) and the generated output.
 //!
-//! We intentionally don't exercise the full image-processing pipeline with
-//! real JPEGs here — the hook runs *before* scan, so placeholder images are
-//! enough to reach the rename step. The process stage will fail to decode
-//! them, but we capture output before that point where needed.
+//! Focus is on the hook's on-disk effects before scan; the process stage
+//! may fail on the minimal reused fixture image but the rename work we
+//! assert on has already happened by then.
 //!
-//! The one mode not covered by these tests is `export_only`, which simply
-//! errors with a clear "not yet supported" message in the current release.
+//! `export_only` is covered only for its current unsupported behavior —
+//! we verify it errors with a clear "not yet supported" message rather
+//! than exercising a successful rename/build path.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -22,9 +22,10 @@ fn simple_gal() -> Command {
     Command::new(env!("CARGO_BIN_EXE_simple-gal"))
 }
 
-/// Minimal real AVIF byte — the tiniest valid file the decoder will accept
-/// so the build can reach the generate stage without panicking on image
-/// decode. Taken from the existing fixture used by other CLI tests.
+/// Reuse a real JPEG fixture from `fixtures/content/` so the decoder
+/// doesn't panic when the build reaches the process stage. The tests
+/// only care about the pre-scan rename step; this just needs to be a
+/// valid image the pipeline can open.
 fn sample_image_bytes() -> Vec<u8> {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/content/010-Landscapes/001-dawn.jpg");
@@ -77,6 +78,21 @@ fn run_build(source: &Path, temp: &Path, output: &Path) -> std::process::Output 
         .expect("build command failed to spawn")
 }
 
+/// `run_build` wrapper that asserts the build command succeeded. The
+/// minimal placeholder image used here is a real JPEG, so the pipeline
+/// goes end-to-end. Using this on passing-path tests prevents a silent
+/// `process` / `generate` failure from faking a green test via surviving
+/// filesystem state.
+fn run_build_ok(source: &Path, temp: &Path, output: &Path) {
+    let result = run_build(source, temp, output);
+    assert!(
+        result.status.success(),
+        "build failed unexpectedly.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
 // ----------------------------------------------------------------------------
 // off (default behavior)
 // ----------------------------------------------------------------------------
@@ -89,7 +105,7 @@ fn auto_off_leaves_source_alone() {
     let output = workspace.path().join("dist");
     seed_content(&source, "off");
 
-    let _ = run_build(&source, &temp, &output);
+    run_build_ok(&source, &temp, &output);
 
     // Source filenames unchanged.
     assert!(source.join("5-Album/1-first.jpg").exists());
@@ -109,7 +125,7 @@ fn auto_source_only_renames_source_in_place() {
     let output = workspace.path().join("dist");
     seed_content(&source, "source_only");
 
-    let _ = run_build(&source, &temp, &output);
+    run_build_ok(&source, &temp, &output);
 
     // Album dir renumbered at root (position 1 → 010).
     assert!(source.join("010-Album").exists());
@@ -132,7 +148,7 @@ fn auto_both_renames_source_like_source_only() {
     let output = workspace.path().join("dist");
     seed_content(&source, "both");
 
-    let _ = run_build(&source, &temp, &output);
+    run_build_ok(&source, &temp, &output);
 
     assert!(source.join("010-Album/010-first.jpg").exists());
     assert!(source.join("010-Album/020-second.jpg").exists());
@@ -180,7 +196,7 @@ fn source_only_invalidates_processed_dir_on_rename() {
     let stale_marker = processed.join("stale-marker.txt");
     fs::write(&stale_marker, "from a previous build").unwrap();
 
-    let _ = run_build(&source, &temp, &output);
+    run_build_ok(&source, &temp, &output);
 
     // The stale marker should be gone because the hook wiped the cache.
     assert!(
@@ -199,31 +215,24 @@ fn source_only_preserves_processed_dir_when_no_renames_needed() {
     let output = workspace.path().join("dist");
     seed_content(&source, "source_only");
 
-    // First build: renames happen, cache gets populated.
-    let _ = run_build(&source, &temp, &output);
+    // First build: renames happen, cache gets populated by process stage.
+    run_build_ok(&source, &temp, &output);
 
-    // Plant a marker in the freshly-built processed/ directory.
+    // Plant a marker in the freshly-built processed/ dir.
     let processed = temp.join("processed");
-    if !processed.exists() {
-        // If the process stage failed (placeholder images), skip this
-        // assertion — the cache-preservation path still exercises here.
-        fs::create_dir_all(&processed).unwrap();
-    }
+    assert!(
+        processed.exists(),
+        "expected process stage to create {}",
+        processed.display()
+    );
     let marker = processed.join("second-build-marker.txt");
     fs::write(&marker, "should survive").unwrap();
 
     // Second build on already-normalized tree: no renames, no wipe.
-    let _ = run_build(&source, &temp, &output);
+    run_build_ok(&source, &temp, &output);
 
     assert!(
         marker.exists(),
         "expected cache marker to survive a no-op auto-reindex"
     );
 }
-
-// ----------------------------------------------------------------------------
-// Helper: PathBuf import check (silence unused warning if CI enables strict)
-// ----------------------------------------------------------------------------
-
-#[allow(dead_code)]
-fn _pathbuf_use(_: PathBuf) {}
