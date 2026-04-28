@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Release workflow: cross install is now guarded with `command -v cross` so it's a no-op when the binary is restored from `actions/cache`. Without this, the second linux build of a release fails with "binary cross already exists in destination", which prevented aarch64-linux-gnu builds from completing in v0.20.2.
+
 ## [0.20.2] - 2026-04-28
 
 ### Fixed
