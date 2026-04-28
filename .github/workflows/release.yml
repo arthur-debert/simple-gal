@@ -1,105 +1,226 @@
 name: Release
 
+# CI-driven release workflow for simple-gal.
+#
+# Triggered via `scripts/release <version|major|minor|patch>` (which calls
+# `gh workflow run release.yml -f version=...`). CI does the version bump,
+# CHANGELOG roll, commit, tag, GitHub Release, multi-platform build,
+# macOS sign+notarize, .deb attach, crates.io publish, simple-gal-action
+# smoke test, and Homebrew formula push.
+#
+# Project-specific values live in `env:` below — copy this file to a new
+# cargo project and change only that block.
+
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.21.0 or 0.21.0-rc.1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # ─── Project-specific values — edit these when reusing ────────────────
+  BIN_NAME: simple-gal
+  CRATE_NAME: simple-gal
+  # ─── Homebrew tap ─────────────────────────────────────────────────────
+  HOMEBREW_TAP: arthur-debert/homebrew-tools
+  HOMEBREW_FORMULA: simple-gal
+  # ─── Debian/Ubuntu packages ───────────────────────────────────────────
+  ENABLE_DEB: "true"
 
 jobs:
-  create-release:
+  prepare-release:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.bump.outputs.version }}
+      release-sha: ${{ steps.bump.outputs.sha }}
+      prerelease: ${{ steps.bump.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag
-        id: version
+      - name: Validate and prepare
+        id: bump
+        env:
+          NEW_VERSION: ${{ inputs.version }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Release version: $VERSION"
+          set -euo pipefail
+
+          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "::error::version must be MAJOR.MINOR.PATCH[-PRERELEASE] (got: $NEW_VERSION)"
+            exit 1
+          fi
+
+          IS_PRERELEASE=false
+          if [[ "$NEW_VERSION" == *-* ]]; then
+            IS_PRERELEASE=true
+          fi
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+
+          TAG="v$NEW_VERSION"
+          # simple-gal is single-crate; version lives at the top of the
+          # one Cargo.toml.
+          CURRENT_VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+
+          git fetch --tags origin >/dev/null 2>&1 || true
+
+          # Resume case: tag already exists and Cargo.toml at that commit
+          # is at NEW_VERSION. Skip bump; downstream jobs re-run against
+          # the tagged commit. See dodot/padz for the same logic.
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            TAG_SHA=$(git rev-list -n 1 "$TAG")
+            TAG_VERSION=$(git show "$TAG_SHA:Cargo.toml" | grep -E '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
+            if [ "$TAG_VERSION" = "$NEW_VERSION" ]; then
+              echo "tag $TAG already exists at $TAG_SHA (Cargo.toml=$TAG_VERSION) — resuming release"
+              echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+              echo "sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::tag $TAG exists but Cargo.toml at that commit is $TAG_VERSION, not $NEW_VERSION"
+            exit 1
+          fi
+
+          OLD_VERSION="$CURRENT_VERSION"
+          if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+            echo "::error::Cargo.toml is already at $NEW_VERSION (but no tag)"
+            exit 1
+          fi
+
+          # Read content under ## [Unreleased] (until next ## [). simple-gal
+          # uses the Keep-a-Changelog "Unreleased section in CHANGELOG.md"
+          # model, like padz.
+          BODY=$(awk '/^## \[Unreleased\]/{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md)
+          if [ -z "$(echo "$BODY" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md has no entries under ## [Unreleased]"
+            exit 1
+          fi
+
+          echo "Releasing $OLD_VERSION → $NEW_VERSION"
+
+          # Single-crate bump — just the top-level Cargo.toml.
+          sed -i -E "s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+          cargo update -p simple-gal
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            # Pre-releases share unreleased entries with the final they
+            # lead up to: leave ## [Unreleased] intact so subsequent
+            # rc.N / the final release see the same entries.
+            git add Cargo.toml Cargo.lock
+            git commit -m "chore: Release $TAG"
+          else
+            TODAY=$(date -u +%Y-%m-%d)
+            # Replace `## [Unreleased]` with `## [Unreleased]\n\n## [VERSION] - DATE`.
+            awk -v ver="$NEW_VERSION" -v today="$TODAY" '
+              !done && /^## \[Unreleased\]/ {
+                print
+                print ""
+                print "## [" ver "] - " today
+                done=1
+                next
+              }
+              { print }
+            ' CHANGELOG.md > CHANGELOG.md.tmp
+            mv CHANGELOG.md.tmp CHANGELOG.md
+
+            git add Cargo.toml Cargo.lock CHANGELOG.md
+            git commit -m "chore: Release $TAG"
+          fi
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin main
+          git push origin "$TAG"
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  create-release:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release-sha }}
 
       - name: Extract release notes from CHANGELOG
-        id: notes
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # Extract section between ## [VERSION] and next ## [
-          awk '/^## \['"$VERSION"'\]/{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > release-notes.md
+          if [ "$PRERELEASE" = "true" ]; then
+            # Pre-releases haven't rolled into a versioned section yet —
+            # read the still-uncleared ## [Unreleased] entries.
+            awk '/^## \[Unreleased\]/{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > release-notes.md
+          else
+            awk '/^## \['"$VERSION"'\]/{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > release-notes.md
+          fi
           if [ ! -s release-notes.md ]; then
             echo "Release v$VERSION" > release-notes.md
           fi
-          echo "=== Release Notes ==="
           cat release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.prepare-release.outputs.version }}
+          name: v${{ needs.prepare-release.outputs.version }}
           body_path: release-notes.md
           draft: false
+          prerelease: ${{ needs.prepare-release.outputs.prerelease == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-binaries:
-    needs: create-release
-    # Run even if create-release was skipped (release already exists)
+    needs: [prepare-release, create-release]
     if: always() && !failure() && !cancelled()
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: simple-gal-x86_64-linux-gnu
-            cross: false
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: simple-gal-aarch64-linux-gnu
-            cross: true
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: simple-gal-aarch64-apple-darwin
             cross: false
+            sign: true
+            deb_arch: ""
+            is_windows: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: simple-gal-x86_64-linux-gnu
+            cross: false
+            sign: false
+            deb_arch: amd64
+            is_windows: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: simple-gal-aarch64-linux-gnu
+            cross: true
+            sign: false
+            deb_arch: arm64
+            is_windows: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             artifact: simple-gal-x86_64-windows
             cross: false
+            sign: false
+            deb_arch: ""
+            is_windows: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check if asset already exists
-        id: check_asset
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
-          TAG="v$VERSION"
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            ASSET="${{ matrix.artifact }}.zip"
-          else
-            ASSET="${{ matrix.artifact }}.tar.gz"
-          fi
-          if gh release view "$TAG" --json assets --jq ".assets[].name" 2>/dev/null | grep -q "^${ASSET}$"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Asset $ASSET already exists, skipping build"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
+        with:
+          ref: ${{ needs.prepare-release.outputs.release-sha }}
 
       - name: Read toolchain from rust-toolchain.toml
-        if: steps.check_asset.outputs.exists != 'true'
         id: toolchain
         shell: bash
         run: |
@@ -107,14 +228,12 @@ jobs:
           echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
 
       - name: Setup Rust
-        if: steps.check_asset.outputs.exists != 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo
-        if: steps.check_asset.outputs.exists != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -128,11 +247,11 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Install cross
-        if: matrix.cross && steps.check_asset.outputs.exists != 'true'
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
 
       - name: Build binary
-        if: steps.check_asset.outputs.exists != 'true'
+        id: build
         shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
@@ -141,8 +260,106 @@ jobs:
             cargo build --release --target ${{ matrix.target }}
           fi
 
+      # ─── macOS code signing + notarization (matrix.sign == true) ──────
+      # Same scaffolding as dodot v1.0.0-rc.3 / padz v1.8.0-rc.5. Signs
+      # the binary at `target/<target>/release/simple-gal` BEFORE the
+      # Package step copies it into the tarball.
+      - name: Import signing certificate
+        id: import-cert
+        if: matrix.sign
+        continue-on-error: true
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE_P12_BASE64" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ]; then
+            echo "::warning::No signing certificate configured, skipping code signing"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -hex 16)"
+          echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Sign binary
+        if: matrix.sign && steps.import-cert.outputs.signed == 'true'
+        run: |
+          codesign --sign "$CODESIGN_IDENTITY" --options runtime \
+            target/${{ matrix.target }}/release/${{ env.BIN_NAME }}
+          codesign --verify --deep --strict target/${{ matrix.target }}/release/${{ env.BIN_NAME }}
+
+      - name: Write App Store Connect API key
+        if: matrix.sign && steps.import-cert.outputs.signed == 'true'
+        env:
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+        run: |
+          if [ -z "$ASC_API_KEY_BASE64" ]; then
+            echo "::warning::No ASC API key configured, skipping notarization"
+            exit 0
+          fi
+          echo "$ASC_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Submit for notarization
+        id: notarize-submit
+        if: matrix.sign && steps.import-cert.outputs.signed == 'true'
+        env:
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+        run: |
+          if [ -z "$ASC_API_KEY_BASE64" ]; then exit 0; fi
+          cd target/${{ matrix.target }}/release
+          zip "${BIN_NAME}-notarize.zip" "$BIN_NAME"
+          RESULT=$(xcrun notarytool submit "${BIN_NAME}-notarize.zip" \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "${{ secrets.ASC_API_KEY_ID }}" \
+            --issuer "${{ secrets.ASC_API_ISSUER_ID }}" \
+            --output-format json \
+            --no-wait)
+          ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "submission-id=$ID" >> "$GITHUB_OUTPUT"
+          rm "${BIN_NAME}-notarize.zip"
+
+      - name: Wait for notarization
+        if: matrix.sign && steps.notarize-submit.outputs.submission-id
+        run: |
+          ID="${{ steps.notarize-submit.outputs.submission-id }}"
+          for i in $(seq 1 60); do
+            RESULT=$(xcrun notarytool info "$ID" \
+              --key "$RUNNER_TEMP/AuthKey.p8" \
+              --key-id "${{ secrets.ASC_API_KEY_ID }}" \
+              --issuer "${{ secrets.ASC_API_ISSUER_ID }}" \
+              --output-format json 2>&1) || true
+            STATUS=$(echo "$RESULT" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('status','Unknown'))" \
+              2>/dev/null || echo "Unknown")
+            echo "  [$i/60] status=$STATUS ($(date -u +%H:%M:%S))"
+            if [ "$STATUS" = "Accepted" ]; then exit 0; fi
+            if [ "$STATUS" = "Invalid" ] || [ "$STATUS" = "Rejected" ]; then
+              xcrun notarytool log "$ID" \
+                --key "$RUNNER_TEMP/AuthKey.p8" \
+                --key-id "${{ secrets.ASC_API_KEY_ID }}" \
+                --issuer "${{ secrets.ASC_API_ISSUER_ID }}" 2>&1 || true
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::warning::Notarization timed out after 30 min. Binary is signed but not notarized."
+
+      # Packaging preserves simple-gal's existing layout: binary renamed
+      # to artifact name (e.g. `simple-gal-x86_64-linux-gnu`) at tarball
+      # root. simple-gal-action consumes this exact shape; the brew
+      # template's def install handles it via a Dir.children fallback.
       - name: Package binary (Unix)
-        if: matrix.os != 'windows-latest' && steps.check_asset.outputs.exists != 'true'
+        if: matrix.os != 'windows-latest'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/simple-gal dist/${{ matrix.artifact }}
@@ -150,7 +367,7 @@ jobs:
           tar -czvf ../${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
       - name: Package binary (Windows)
-        if: matrix.os == 'windows-latest' && steps.check_asset.outputs.exists != 'true'
+        if: matrix.os == 'windows-latest'
         shell: bash
         run: |
           mkdir -p dist
@@ -159,43 +376,104 @@ jobs:
           7z a ../${{ matrix.artifact }}.zip ${{ matrix.artifact }}.exe
 
       - name: Upload to GitHub Release
-        if: steps.check_asset.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          TAG="v${{ needs.create-release.outputs.version }}"
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          TAG="v${{ needs.prepare-release.outputs.version }}"
+          if [[ "${{ matrix.is_windows }}" == "true" ]]; then
             gh release upload "$TAG" "${{ matrix.artifact }}.zip" --clobber
           else
             gh release upload "$TAG" "${{ matrix.artifact }}.tar.gz" --clobber
           fi
 
+      # Workflow artifact for downstream homebrew-formula consumption.
+      # Windows entry uploads the .zip but homebrew-formula ignores it
+      # (it only sha256s tarball entries it has placeholders for).
+      - name: Upload tarball as workflow artifact (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload zip as workflow artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      # ─── Debian package (linux targets only, gated on ENABLE_DEB) ────
+      - name: Install cargo-deb
+        if: matrix.deb_arch != '' && env.ENABLE_DEB == 'true' && steps.build.outcome == 'success'
+        run: cargo install cargo-deb --locked
+
+      - name: Build .deb package
+        id: deb
+        if: matrix.deb_arch != '' && env.ENABLE_DEB == 'true' && steps.build.outcome == 'success'
+        run: |
+          cargo deb -p simple-gal \
+            --target ${{ matrix.target }} \
+            --no-build \
+            --no-strip
+
+      - name: Upload .deb to GitHub Release
+        if: always() && !cancelled() && steps.deb.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ needs.prepare-release.outputs.version }}"
+          DEB=$(ls target/${{ matrix.target }}/debian/*.deb | head -1)
+          if [ -z "$DEB" ]; then
+            echo "::error::No .deb found at target/${{ matrix.target }}/debian/"
+            exit 1
+          fi
+          gh release upload "$TAG" "$DEB" --clobber
+
+      - name: Upload .deb as workflow artifact
+        if: always() && !cancelled() && steps.deb.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple-gal-${{ matrix.deb_arch }}-deb
+          path: target/${{ matrix.target }}/debian/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
   # Smoke-test the GitHub Action against the just-released binary.
   # Catches CLI changes that break the action's invocation pattern.
   smoke-test-action:
-    needs: build-binaries
+    needs: [prepare-release, build-binaries]
     if: always() && !failure() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release-sha }}
 
       - name: Build with simple-gal-action
         uses: arthur-debert/simple-gal-action@v1
         with:
           source: fixtures/content
-          version: ${{ github.ref_name }}
+          # workflow_dispatch trigger means github.ref_name is the branch
+          # (main), not the tag. Pass the prepared release tag explicitly.
+          version: v${{ needs.prepare-release.outputs.version }}
 
       - name: Verify output
         run: test -f dist/index.html
 
   publish-crates:
-    needs: create-release
-    # Run even if create-release was skipped (release already exists)
+    needs: [prepare-release, create-release]
     if: always() && !failure() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release-sha }}
 
       - name: Read toolchain from rust-toolchain.toml
         id: toolchain
@@ -224,7 +502,7 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
-          VERSION: ${{ needs.create-release.outputs.version }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
           cargo publish 2>&1 || {
             if cargo search simple-gal --limit 1 2>/dev/null | grep -q "simple-gal.*\"$VERSION\""; then
@@ -234,3 +512,146 @@ jobs:
               exit 1
             fi
           }
+
+  homebrew-formula:
+    # Generates a Homebrew formula from .github/homebrew-formula.rb.tmpl
+    # using the per-target tarball SHAs and pushes it to the tap repo.
+    # Skips cleanly when HOMEBREW_TAP_TOKEN isn't configured.
+    needs: [prepare-release, build-binaries]
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check tap token
+        id: guard
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not configured — skipping formula update."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout source (for template + Cargo.toml)
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release-sha }}
+
+      - name: Setup Rust (for cargo metadata)
+        if: steps.guard.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Download release tarballs
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ env.BIN_NAME }}-*
+          merge-multiple: true
+
+      - name: Gather values for formula
+        id: values
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          CLASS_NAME=$(echo "$HOMEBREW_FORMULA" | awk -F'[-_]' '{
+            for(i=1;i<=NF;i++) printf "%s", toupper(substr($i,1,1)) tolower(substr($i,2))
+          }')
+
+          PKG_META=$(cargo metadata --no-deps --format-version=1 \
+            | jq -cer --arg c "$CRATE_NAME" '.packages[] | select(.name==$c)')
+          DESC=$(echo     "$PKG_META" | jq -r '.description // ""')
+          LICENSE=$(echo  "$PKG_META" | jq -r '.license // ""')
+          HOMEPAGE=$(echo "$PKG_META" | jq -r '.homepage // .repository // ""')
+
+          die_if_empty() {
+            local name="$1" value="$2" fix="$3"
+            if [ -z "$value" ]; then
+              echo "::error::Missing $name for crate '$CRATE_NAME'. $fix"
+              exit 1
+            fi
+          }
+          die_if_empty description "$DESC"     "Set package.description in Cargo.toml."
+          die_if_empty license     "$LICENSE"  "Set package.license in Cargo.toml."
+          die_if_empty homepage    "$HOMEPAGE" "Set package.homepage or package.repository in Cargo.toml."
+
+          URL_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/${BIN_NAME}"
+
+          sha_for() { sha256sum "${BIN_NAME}-$1.tar.gz" | cut -d' ' -f1; }
+
+          # simple-gal ships macOS arm64 only — no URL_X86_64_APPLE_DARWIN.
+          # Windows tarball exists but isn't referenced from the brew
+          # formula (brew is mac/linux only).
+          {
+            echo "class_name=$CLASS_NAME"
+            echo "desc=$DESC"
+            echo "license=$LICENSE"
+            echo "homepage=$HOMEPAGE"
+            echo "url_aarch64_apple_darwin=${URL_BASE}-aarch64-apple-darwin.tar.gz"
+            echo "url_x86_64_linux_gnu=${URL_BASE}-x86_64-linux-gnu.tar.gz"
+            echo "url_aarch64_linux_gnu=${URL_BASE}-aarch64-linux-gnu.tar.gz"
+            echo "sha_aarch64_apple_darwin=$(sha_for aarch64-apple-darwin)"
+            echo "sha_x86_64_linux_gnu=$(sha_for     x86_64-linux-gnu)"
+            echo "sha_aarch64_linux_gnu=$(sha_for    aarch64-linux-gnu)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render Homebrew formula
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          VERSION:                   ${{ needs.prepare-release.outputs.version }}
+          CLASS_NAME:                ${{ steps.values.outputs.class_name }}
+          DESC:                      ${{ steps.values.outputs.desc }}
+          LICENSE:                   ${{ steps.values.outputs.license }}
+          HOMEPAGE:                  ${{ steps.values.outputs.homepage }}
+          URL_AARCH64_APPLE_DARWIN:  ${{ steps.values.outputs.url_aarch64_apple_darwin }}
+          URL_X86_64_LINUX_GNU:      ${{ steps.values.outputs.url_x86_64_linux_gnu }}
+          URL_AARCH64_LINUX_GNU:     ${{ steps.values.outputs.url_aarch64_linux_gnu }}
+          SHA_AARCH64_APPLE_DARWIN:  ${{ steps.values.outputs.sha_aarch64_apple_darwin }}
+          SHA_X86_64_LINUX_GNU:      ${{ steps.values.outputs.sha_x86_64_linux_gnu }}
+          SHA_AARCH64_LINUX_GNU:     ${{ steps.values.outputs.sha_aarch64_linux_gnu }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 .github/render-homebrew-formula.py \
+            .github/homebrew-formula.rb.tmpl \
+            "out/${HOMEBREW_FORMULA}.rb"
+
+          echo "=== Generated formula ==="
+          cat "out/${HOMEBREW_FORMULA}.rb"
+
+      - name: Ruby syntax check
+        if: steps.guard.outputs.skip != 'true'
+        run: ruby -c "out/${HOMEBREW_FORMULA}.rb"
+
+      - name: Checkout tap repo
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Commit and push formula
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p tap/Formula
+          cp "out/${HOMEBREW_FORMULA}.rb" "tap/Formula/${HOMEBREW_FORMULA}.rb"
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Formula/${HOMEBREW_FORMULA}.rb"
+          if git diff --cached --quiet; then
+            echo "Formula unchanged — nothing to push."
+            exit 0
+          fi
+          git commit -m "${HOMEBREW_FORMULA} ${VERSION}"
+          git push

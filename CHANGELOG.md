@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Releases now run end-to-end in CI via `scripts/release`.** Triggering a release with `scripts/release <version|major|minor|patch>` queues a `workflow_dispatch` run that performs the version bump, `## [Unreleased]` roll, commit, tag, GitHub Release, multi-platform build (mac arm64 signed+notarized, linux x86_64+arm64, win x86_64), `.deb` attach, crates.io publish, simple-gal-action smoke test, and Homebrew formula push to `arthur-debert/homebrew-tools` — all in CI. Replaces the previous local `cargo release` + tag-push trigger model. The local `release.toml` remains for ad-hoc dry-runs but is no longer the supported release path.
+- **macOS arm64 binaries are now Developer ID signed and Apple-notarized.** Earlier `simple-gal` macOS binaries were adhoc/linker-signed only, which would have triggered Gatekeeper "unidentified developer" warnings if installed via the new Homebrew tap. The release workflow now imports the Developer ID Application certificate, signs the binary with `codesign --options runtime` (hardened runtime + secure timestamp), and submits to Apple's notarization service via App Store Connect API key.
+
+### Added
+- **Homebrew installation via `arthur-debert/homebrew-tools` tap.** New `Formula/simple-gal.rb` is generated and pushed on every release. Install with `brew install arthur-debert/tools/simple-gal`. The formula's `def install` handles the existing renamed-flat tarball layout (binary at root with target suffix) for backwards compat with `simple-gal-action`.
+- **`.deb` packages for Debian/Ubuntu (amd64 + arm64).** Built by `cargo deb` in CI using the new `[package.metadata.deb]` block in `Cargo.toml` and attached to each GitHub Release alongside the tarballs.
+
 ## [0.20.0] - 2026-04-21
 
 ### Added
