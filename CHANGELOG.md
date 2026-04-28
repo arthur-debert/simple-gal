@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-04-28
+
 ### Changed
 - **Releases now run end-to-end in CI via `scripts/release`.** Triggering a release with `scripts/release <version|major|minor|patch>` queues a `workflow_dispatch` run that performs the version bump, `## [Unreleased]` roll, commit, tag, GitHub Release, multi-platform build (mac arm64 signed+notarized, linux x86_64+arm64, win x86_64), `.deb` attach, crates.io publish, simple-gal-action smoke test, and Homebrew formula push to `arthur-debert/homebrew-tools` — all in CI. Replaces the previous local `cargo release` + tag-push trigger model. The local `release.toml` remains for ad-hoc dry-runs but is no longer the supported release path.
 - **macOS arm64 binaries are now Developer ID signed and Apple-notarized.** Earlier `simple-gal` macOS binaries were adhoc/linker-signed only, which would have triggered Gatekeeper "unidentified developer" warnings if installed via the new Homebrew tap. The release workflow now imports the Developer ID Application certificate, signs the binary with `codesign --options runtime` (hardened runtime + secure timestamp), and submits to Apple's notarization service via App Store Connect API key.
