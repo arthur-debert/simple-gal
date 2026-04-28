@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Release workflow: cargo-deb install is now guarded with `command -v cargo-deb` so it's a no-op when the binary is restored from `actions/cache`. Without this, the second linux build of a release fails with "binary already exists in destination", which prevented `.deb` packages from attaching to v0.20.1.
+
 ## [0.20.1] - 2026-04-28
 
 ### Changed
