@@ -411,7 +411,10 @@ jobs:
       # ─── Debian package (linux targets only, gated on ENABLE_DEB) ────
       - name: Install cargo-deb
         if: matrix.deb_arch != '' && env.ENABLE_DEB == 'true' && steps.build.outcome == 'success'
-        run: cargo install cargo-deb --locked
+        # `command -v` guard skips reinstall when cargo-deb was restored
+        # from actions/cache. Without it, `cargo install --locked` fails
+        # the second build with "binary already exists in destination".
+        run: command -v cargo-deb >/dev/null 2>&1 || cargo install cargo-deb --locked
 
       - name: Build .deb package
         id: deb
