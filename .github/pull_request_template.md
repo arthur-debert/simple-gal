@@ -5,7 +5,7 @@
 ## Checklist
 
 - [ ] Changelog `Unreleased` section updated (or chore/docs-only)
-- [ ] `scripts/check` or `scripts/pre-commit` passes locally (or `cargo fmt --check && cargo clippy -- -D warnings && cargo test`)
+- [ ] Project umbrella check passes locally — `scripts/check`, `scripts/pre-commit`, `scripts/ci.sh`, or `cargo fmt --check && cargo clippy -- -D warnings && cargo test`
 - [ ] Tests added or updated for behavior changes
 
 ## Notes for reviewers

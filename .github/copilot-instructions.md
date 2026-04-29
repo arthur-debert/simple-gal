@@ -4,10 +4,11 @@ This is a Rust project (CLI, library crate, or workspace).
 
 ## Before suggesting a fix
 
-- Run the project's umbrella check script if one exists (commonly
-  `scripts/check` or `scripts/pre-commit` — `ls scripts/` to see which);
-  otherwise `cargo fmt --check && cargo clippy -- -D warnings && cargo test`.
-  CI runs the same; suggestions that don't pass won't merge.
+- Run the project's umbrella check script if one exists (in `scripts/`,
+  commonly named `check`, `pre-commit`, `ci.sh`, or `rust-pre-commit` — run
+  `ls scripts/` to see which); otherwise `cargo fmt --check && cargo clippy
+  -- -D warnings && cargo test`. CI runs the same; suggestions that don't
+  pass won't merge.
 - Never propose changes that leave tests failing.
 - Update the changelog's `Unreleased` section for user-visible changes
   (`CHANGELOG_UNRELEASED.md` if the project has one, otherwise the
