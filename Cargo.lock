@@ -394,9 +394,9 @@ checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "clapfig"
-version = "0.15.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7192cac8f20bbd67ffcc621a9b6d4c59562d561ebb6ecf5086a486aa05c87f4"
+checksum = "10db2a4a2699f79b6479a91417baf343582a8a895f7e68df1c70300848261a35"
 dependencies = [
  "clap",
  "confique",

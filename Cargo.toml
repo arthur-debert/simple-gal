@@ -50,7 +50,7 @@ clap = { version = "4", features = ["derive"] }
 # `SiteConfig`, the `simple-gal config` subcommand group (gen|get|set|list|
 # schema|unset), per-directory cascade via `Resolver::resolve_at`, and
 # rich/plain rendering of TOML parse errors.
-clapfig = { version = "0.15", default-features = false, features = ["clap", "rich-errors"] }
+clapfig = { version = "0.17", default-features = false, features = ["clap", "rich-errors"] }
 confique = { version = "0.4", default-features = false, features = ["toml"] }
 image = { version = "0.25", default-features = false, features = [
     "jpeg", "png", "tiff", "webp",
