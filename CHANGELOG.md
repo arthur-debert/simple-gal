@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-05-01
+
+
 ### Changed
 
 - **Release pipeline migrated to canonical reusable workflow at
@@ -35,7 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow as part of the migration to the reusable pipeline. If the
   smoke is needed back, it can be added as a separate workflow that
   triggers on `release.published`.
-
 ## [0.20.3] - 2026-04-28
 
 ### Fixed
