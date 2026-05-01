@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Release pipeline migrated to canonical reusable workflow at
+  `arthur-debert/release/.github/workflows/rust-cli.yml@v1`.** simple-gal's
+  `.github/workflows/release.yml` is now a thin caller. Third consumer
+  of the new pipeline (after dodot v2.0.0 and padz v1.8.2). simple-gal
+  is the first to exercise the action's Windows build path
+  (`windows-archs: 'x86_64'`).
+- **Tarball naming + layout changed to canonical.** Per-target archives
+  now use full Rust target triples in their names
+  (`simple-gal-x86_64-unknown-linux-gnu.tar.gz` instead of
+  `simple-gal-x86_64-linux-gnu.tar.gz`) and contain a subdirectory
+  matching the archive name (`simple-gal-x86_64-unknown-linux-gnu/simple-gal`)
+  instead of a flat binary at the root. The Homebrew formula's
+  `def install` handles both layouts; direct downloads from the GH
+  release will need to descend one directory level into the tarball.
+  This breaks `simple-gal-action`'s current asset-name + layout
+  assumptions — `simple-gal-action` will need a follow-up update.
+- **Intel-mac dropped from release artifacts** (`x86_64-apple-darwin`).
+  Per canonical: arm64-only macOS. Existing v0.20.3 and earlier remain
+  available for Intel users via direct GH release download.
+
+### Removed
+
+- **Inline `simple-gal-action` smoke-test** removed from the release
+  workflow as part of the migration to the reusable pipeline. If the
+  smoke is needed back, it can be added as a separate workflow that
+  triggers on `release.published`.
+
 ## [0.20.3] - 2026-04-28
 
 ### Fixed
