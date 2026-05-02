@@ -26,7 +26,7 @@ jobs:
         run: cargo build --release
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: simple-gal-linux
           path: target/release/simple-gal
