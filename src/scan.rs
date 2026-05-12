@@ -1583,7 +1583,7 @@ mod tests {
         let album_titles: Vec<&str> = manifest.albums.iter().map(|a| a.title.as_str()).collect();
         assert!(album_titles.contains(&"Test"));
         assert!(album_titles.contains(&"assets"));
-        assert!(!album_titles.iter().any(|t| *t == "site-assets"));
+        assert!(!album_titles.contains(&"site-assets"));
     }
 
     // =========================================================================

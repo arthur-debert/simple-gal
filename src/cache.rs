@@ -793,25 +793,30 @@ mod tests {
 
     #[test]
     fn cache_stats_display_with_hits() {
-        let mut s = CacheStats::default();
-        s.hits = 5;
-        s.misses = 2;
+        let s = CacheStats {
+            hits: 5,
+            misses: 2,
+            ..Default::default()
+        };
         assert_eq!(format!("{}", s), "5 cached, 2 encoded (7 total)");
     }
 
     #[test]
     fn cache_stats_display_with_copies() {
-        let mut s = CacheStats::default();
-        s.hits = 3;
-        s.copies = 2;
-        s.misses = 1;
+        let s = CacheStats {
+            hits: 3,
+            copies: 2,
+            misses: 1,
+        };
         assert_eq!(format!("{}", s), "3 cached, 2 copied, 1 encoded (6 total)");
     }
 
     #[test]
     fn cache_stats_display_no_hits() {
-        let mut s = CacheStats::default();
-        s.misses = 3;
+        let s = CacheStats {
+            misses: 3,
+            ..Default::default()
+        };
         assert_eq!(format!("{}", s), "3 encoded");
     }
 

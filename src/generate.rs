@@ -3477,8 +3477,10 @@ mod tests {
 
     #[test]
     fn index_page_uses_custom_site_title() {
-        let mut config = SiteConfig::default();
-        config.site_title = "My Portfolio".to_string();
+        let config = SiteConfig {
+            site_title: "My Portfolio".to_string(),
+            ..Default::default()
+        };
         let manifest = Manifest {
             navigation: vec![],
             albums: vec![],
