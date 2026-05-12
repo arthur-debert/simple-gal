@@ -44,4 +44,4 @@ jobs:
           rust-components: clippy, rustfmt
 
       - name: Run checks (fmt, clippy, tests)
-        run: ./scripts/pre-commit
+        run: ./scripts/check
