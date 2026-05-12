@@ -520,7 +520,7 @@ fn parse_srcset(srcset: &str) -> Vec<(String, u32)> {
     srcset
         .split(',')
         .map(|entry| {
-            let parts: Vec<&str> = entry.trim().split_whitespace().collect();
+            let parts: Vec<&str> = entry.split_whitespace().collect();
             let url = parts[0].to_string();
             let w: u32 = parts[1].trim_end_matches('w').parse().unwrap();
             (url, w)
