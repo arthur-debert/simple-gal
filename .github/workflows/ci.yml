@@ -1,0 +1,15 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: arthur-debert/release/.github/workflows/rust-ci.yml@v1
+    with:
+      binary-name: simple-gal
