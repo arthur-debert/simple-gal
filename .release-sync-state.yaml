@@ -1,8 +1,8 @@
 # Managed by release-sync. Do not edit.
 synced_from: arthur-debert/release
 ref: origin/main
-sha: ce6430e90d34f7251537a098fab414a362e325a6
-synced_at: 2026-05-22T17:10:52Z
+sha: cb73a7eb69624253a1f35474f970ed622fb49db3
+synced_at: 2026-05-22T17:30:57Z
 stack: rust
 components:
   - shell-quality
