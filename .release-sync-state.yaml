@@ -1,8 +1,8 @@
 # Managed by release-sync. Do not edit.
 synced_from: arthur-debert/release
 ref: origin/main
-sha: 692391cc0b8ce4d7c0f977f5702c5185c65da05c
-synced_at: 2026-05-21T03:38:54Z
+sha: cb73a7eb69624253a1f35474f970ed622fb49db3
+synced_at: 2026-05-22T17:30:57Z
 stack: rust
 components:
   - shell-quality
@@ -19,6 +19,7 @@ files:
   - .release-sync-state.yaml
   - .shellcheckrc
   - .yamllint
+  - bin/build
   - bin/check
   - bin/check-fmt
   - bin/check-lint
