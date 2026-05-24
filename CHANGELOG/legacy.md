@@ -1,11 +1,3 @@
-<!-- generated - do not edit. See CHANGELOG/README.txt -->
-
-# Changelog
-
-## Unreleased
-
-- Internal: changelog migrated to fragment-directory model (release/#201). Author entries via `bin/changelog add <slug>`; render is automated on release. See `CHANGELOG/README.txt`.
-
 
 All notable changes to this project will be documented in this file.
 
