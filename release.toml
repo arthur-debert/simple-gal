@@ -1,10 +1,12 @@
 # cargo-release configuration
 # Usage: cargo release patch|minor|major
 
-# Update CHANGELOG.md: move Unreleased items under new version heading
-pre-release-replacements = [
-  { file = "CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}", exactly = 1 },
-]
+# Changelog handling is done by bin/changelog (fragment-directory model,
+# release/#201). The pre-release hook cuts unreleased fragments into a
+# versioned file and re-renders CHANGELOG.md. cargo-release's own
+# markdown surgery is disabled.
+pre-release-hook = ["bin/changelog", "new-version", "{{version}}"]
+pre-release-replacements = []
 
 # Create a git tag like v0.1.0
 tag-name = "v{{version}}"
