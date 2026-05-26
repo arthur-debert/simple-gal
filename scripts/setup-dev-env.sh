@@ -40,8 +40,8 @@ cd "${REPO_ROOT}"
 #
 # Default: lefthook (binary installed at env-setup time in cloud, by
 # brew/cargo/npm locally). Fallback for repos that ship a hand-rolled
-# scripts/pre-commit instead (zed-lex, tree-sitter-lex pattern): symlink
-# it into .git/hooks/.
+# app-bin/pre-commit (or legacy scripts/pre-commit): symlink it into
+# .git/hooks/.
 #
 # Husky migration: if a previous `husky install` set
 # `core.hooksPath=.husky`, git routes hooks to `.husky/pre-commit` and
@@ -54,7 +54,7 @@ cd "${REPO_ROOT}"
 # installed at `node_modules/.bin/lefthook` (via `prepare: lefthook install`
 # in package.json) — `command -v lefthook` doesn't find that location, so
 # without this check the script silently falls through to the
-# scripts/pre-commit branch in cloud sessions for npm consumers.
+# app-bin/pre-commit branch in cloud sessions for npm consumers.
 _lefthook=""
 if [ -x node_modules/.bin/lefthook ]; then
   _lefthook="node_modules/.bin/lefthook"
@@ -85,7 +85,7 @@ if [ -f lefthook.yml ] && [ -n "${_lefthook}" ]; then
   if ! "${_lefthook}" install >/dev/null; then
     echo "warning: lefthook install failed — pre-commit hook NOT wired" >&2
   fi
-elif [ -x scripts/pre-commit ]; then
+elif [ -x app-bin/pre-commit ] || [ -x scripts/pre-commit ]; then
   # Resolve the hooks dir via git plumbing rather than hardcoding
   # `.git/hooks`. In a git-worktree the per-worktree hooks live under
   # `.git/worktrees/<name>/hooks/`, and `.git` itself is a file (not
@@ -99,14 +99,19 @@ elif [ -x scripts/pre-commit ]; then
   # the script's continue-on-transient-errors stance — a failed
   # mkdir/symlink on an unusual worktree layout shouldn't abort the
   # entire dev-env setup).
+  if [ -x app-bin/pre-commit ]; then
+    _precommit_src="${REPO_ROOT}/app-bin/pre-commit"
+  else
+    _precommit_src="${REPO_ROOT}/scripts/pre-commit"
+  fi
   _hooks_dir="$(git config --get core.hooksPath 2>/dev/null || git rev-parse --git-path hooks)"
   # Best-effort with full diagnostics: don't suppress mkdir/ln stderr —
   # if either fails, the user needs the underlying error to fix it
   # (e.g. "Permission denied" pinpoints the actual issue).
   if ! mkdir -p "${_hooks_dir}"; then
     echo "warning: failed to mkdir -p \"${_hooks_dir}\" — pre-commit hook NOT wired" >&2
-  elif ! ln -sf "${REPO_ROOT}/scripts/pre-commit" "${_hooks_dir}/pre-commit"; then
-    echo "warning: failed to symlink scripts/pre-commit into \"${_hooks_dir}\" — pre-commit hook NOT wired" >&2
+  elif ! ln -sf "${_precommit_src}" "${_hooks_dir}/pre-commit"; then
+    echo "warning: failed to symlink pre-commit into \"${_hooks_dir}\" — pre-commit hook NOT wired" >&2
   fi
 fi
 
