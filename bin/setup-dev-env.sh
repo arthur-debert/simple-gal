@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# scripts/setup-dev-env.sh — per-session dev-environment setup, invoked by
+# bin/setup-dev-env.sh — per-session dev-environment setup, invoked by
 # the SessionStart hook in .claude/settings.json.
 #
-# Source of truth: arthur-debert/release templates/setup-dev-env.sh.
-# To re-sync, copy this file verbatim over the consumer's
-# scripts/setup-dev-env.sh. (The gh-repo-setup skill does not currently
-# route this top-level template; it only handles per-stack trees under
-# templates/<stack>/.)
+# Source of truth: arthur-debert/release templates/commons/bin/setup-dev-env.sh.
+# Synced to consumers by release-sync (full file replace, no markers).
+#
 # Repos that need project-specific extras (Xvfb daemon, pinned-binary
-# fetch, extra rustup targets, etc.) append them below the marker at the
-# bottom — anything above it is rsync'd from the template.
+# fetch, extra rustup targets, etc.) put them in app-bin/post-setup-hook.sh
+# — this script calls that hook at the end if it exists.
 #
 # Pre-commit hook wiring runs in BOTH local and cloud sessions (a fresh
 # clone has no `.git/hooks/pre-commit` wired regardless of where the dev
@@ -40,8 +38,8 @@ cd "${REPO_ROOT}"
 #
 # Default: lefthook (binary installed at env-setup time in cloud, by
 # brew/cargo/npm locally). Fallback for repos that ship a hand-rolled
-# app-bin/pre-commit (or legacy scripts/pre-commit): symlink it into
-# .git/hooks/.
+# scripts/pre-commit instead (zed-lex, tree-sitter-lex pattern): symlink
+# it into .git/hooks/.
 #
 # Husky migration: if a previous `husky install` set
 # `core.hooksPath=.husky`, git routes hooks to `.husky/pre-commit` and
@@ -54,7 +52,7 @@ cd "${REPO_ROOT}"
 # installed at `node_modules/.bin/lefthook` (via `prepare: lefthook install`
 # in package.json) — `command -v lefthook` doesn't find that location, so
 # without this check the script silently falls through to the
-# app-bin/pre-commit branch in cloud sessions for npm consumers.
+# scripts/pre-commit branch in cloud sessions for npm consumers.
 _lefthook=""
 if [ -x node_modules/.bin/lefthook ]; then
   _lefthook="node_modules/.bin/lefthook"
@@ -85,7 +83,7 @@ if [ -f lefthook.yml ] && [ -n "${_lefthook}" ]; then
   if ! "${_lefthook}" install >/dev/null; then
     echo "warning: lefthook install failed — pre-commit hook NOT wired" >&2
   fi
-elif [ -x app-bin/pre-commit ] || [ -x scripts/pre-commit ]; then
+elif [ -x scripts/pre-commit ]; then
   # Resolve the hooks dir via git plumbing rather than hardcoding
   # `.git/hooks`. In a git-worktree the per-worktree hooks live under
   # `.git/worktrees/<name>/hooks/`, and `.git` itself is a file (not
@@ -99,19 +97,14 @@ elif [ -x app-bin/pre-commit ] || [ -x scripts/pre-commit ]; then
   # the script's continue-on-transient-errors stance — a failed
   # mkdir/symlink on an unusual worktree layout shouldn't abort the
   # entire dev-env setup).
-  if [ -x app-bin/pre-commit ]; then
-    _precommit_src="${REPO_ROOT}/app-bin/pre-commit"
-  else
-    _precommit_src="${REPO_ROOT}/scripts/pre-commit"
-  fi
   _hooks_dir="$(git config --get core.hooksPath 2>/dev/null || git rev-parse --git-path hooks)"
   # Best-effort with full diagnostics: don't suppress mkdir/ln stderr —
   # if either fails, the user needs the underlying error to fix it
   # (e.g. "Permission denied" pinpoints the actual issue).
   if ! mkdir -p "${_hooks_dir}"; then
     echo "warning: failed to mkdir -p \"${_hooks_dir}\" — pre-commit hook NOT wired" >&2
-  elif ! ln -sf "${_precommit_src}" "${_hooks_dir}/pre-commit"; then
-    echo "warning: failed to symlink pre-commit into \"${_hooks_dir}\" — pre-commit hook NOT wired" >&2
+  elif ! ln -sf "${REPO_ROOT}/scripts/pre-commit" "${_hooks_dir}/pre-commit"; then
+    echo "warning: failed to symlink scripts/pre-commit into \"${_hooks_dir}\" — pre-commit hook NOT wired" >&2
   fi
 fi
 
@@ -247,7 +240,7 @@ if { [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f setup.py ]; } \
     # (pinned-binary downloads from GitHub releases, etc) should drop
     # them directly into ${HOME}/.local/bin rather than .venv/bin, so
     # they're discoverable on the same PATH without needing a second
-    # symlink pass below the marker.
+    # symlink pass.
     if [ -d .venv/bin ]; then
       # Create ~/.local/bin if missing — env/setup.sh doesn't and Ubuntu
       # cloud images don't ship it by default in fresh users. The
@@ -364,20 +357,12 @@ if [ "$(uname -s)" = "Linux" ] \
   ) || true
 fi
 
-# --- 4. Project-local extras ---------------------------------------------
-# Everything above this marker is the canonical cross-repo setup-dev-env.sh
-# from arthur-debert/release templates/setup-dev-env.sh. Do NOT modify it
-# in-place; consumers append project-specific steps BELOW this marker.
-# (See e.g. lex-fmt/lexed for an Xvfb start, lex-fmt/nvim for pinned-bin
-# fetches.)
-#
-# No trailing `exit 0` — bash exits 0 on EOF when `set -euo pipefail`
-# succeeded. Adding one here would make appended extras unreachable.
-#
-# Below: the `release-sync:marker-end` sentinel marks the end of the
-# canonical section. release-sync splits the consumer's file at this
-# sentinel — content at or above is replaced on every sync from
-# release/; content below is the consumer's project-local extras and is
-# preserved across syncs. The sentinel must be the LAST line of the
-# canonical (no trailing prose) so the splitter knows where to cut.
-# release-sync:marker-end
+# --- 4. Per-repo hook -------------------------------------------------------
+_hook="${REPO_ROOT}/app-bin/post-setup-hook.sh"
+if [ -f "${_hook}" ]; then
+  if [ -x "${_hook}" ]; then
+    "${_hook}"
+  else
+    echo "warning: ${_hook} exists but is not executable; skipping" >&2
+  fi
+fi
