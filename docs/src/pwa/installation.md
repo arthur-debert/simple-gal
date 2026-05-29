@@ -31,10 +31,12 @@ The portfolio appears in the app drawer and on the home screen, and opens withou
 Desktop browsers also support PWA installation:
 
 **Chrome:**
+
 1. Visit your portfolio.
 2. Click the **install icon** in the address bar (a monitor with a down arrow), or open the three-dot menu and select **Install**.
 
 **Edge:**
+
 1. Visit your portfolio.
 2. Click the **App available** icon in the address bar, or open the three-dot menu and select **Apps > Install this site as an app**.
 

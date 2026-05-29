@@ -81,7 +81,7 @@ To use a custom domain (e.g., `photos.example.com`):
 photos.example.com
 ```
 
-3. Configure DNS with your domain registrar -- a CNAME record pointing to `<username>.github.io`.
+1. Configure DNS with your domain registrar -- a CNAME record pointing to `<username>.github.io`.
 
 GitHub will provision an SSL certificate automatically.
 

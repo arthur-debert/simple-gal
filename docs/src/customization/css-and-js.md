@@ -105,7 +105,7 @@ Create `assets/body-end.html`:
 
 A typical setup with all three convention files:
 
-```
+```text
 my-portfolio/
   config.toml
   assets/

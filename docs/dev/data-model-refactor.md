@@ -253,7 +253,7 @@ reviewable standalone. Targets `main`.
 - Bump the manifest's `schema_version` to `2`. Coordinate the bump
   with `arthur-debert/simple-gal-action` per §5.1.
 - Wire the nuke-on-mismatch cache-reset policy per §5.2 (clear error
-  + optional `--auto-reset-cache` flag). No in-place data migration
+  - optional `--auto-reset-cache` flag). No in-place data migration
   code.
 - Update every remaining test that hand-constructs manifests to use
   the new shape.
@@ -409,6 +409,7 @@ All six design questions approved:
 - [x] Auto-reindex simplification **deferred** to Phase 5 (§6).
 
 Additional decision:
+
 - [x] Processed variants live on `ImageRef`, not `Image`, because
       config cascades per-album and the same source can have different
       responsive sizes / thumbnail ratios / quality in different

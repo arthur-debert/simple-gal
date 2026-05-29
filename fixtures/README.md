@@ -7,7 +7,7 @@ feature set with minimal data — every file is here for a reason.
 
 Used by `scan.rs` tests (copied to a temp dir via `setup_fixtures()`).
 
-```
+```text
 content/
 ├── config.toml                    # Root config — overrides ALL defaults
 ├── 010-Landscapes/                # Numbered album (in nav)

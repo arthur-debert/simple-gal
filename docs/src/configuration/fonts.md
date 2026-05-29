@@ -15,7 +15,7 @@ font_type = "sans"
 
 This generates a `<link>` tag pointing to:
 
-```
+```text
 https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600&display=swap
 ```
 
@@ -64,6 +64,7 @@ source = "fonts/MyFont.woff2"
 ```
 
 When `source` is set:
+
 - No Google Fonts `<link>` tag is generated.
 - A `@font-face` CSS declaration is generated inline.
 - The font file must be placed in your assets directory so it gets copied to the output.

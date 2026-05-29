@@ -6,7 +6,7 @@ The `assets/` directory holds static files -- favicons, fonts, images, and anyth
 
 Place an `assets/` directory next to your `config.toml`:
 
-```
+```text
 my-portfolio/
   config.toml
   assets/
@@ -20,7 +20,7 @@ my-portfolio/
 
 After building, these files appear at the output root:
 
-```
+```text
 dist/
   favicon.svg          # → accessible at /favicon.svg
   fonts/
@@ -73,14 +73,14 @@ To use a locally hosted font instead of a Google Font:
 
 1. Place font files in `assets/fonts/`:
 
-```
+```text
 assets/
   fonts/
     garamond.woff2
     garamond-italic.woff2
 ```
 
-2. Declare the font face in `assets/custom.css`:
+1. Declare the font face in `assets/custom.css`:
 
 ```css
 @font-face {
@@ -100,7 +100,7 @@ assets/
 }
 ```
 
-3. Set the font family in `config.toml`:
+1. Set the font family in `config.toml`:
 
 ```toml
 [font]
