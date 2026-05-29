@@ -252,8 +252,8 @@ reviewable standalone. Targets `main`.
   the current names for stability.
 - Bump the manifest's `schema_version` to `2`. Coordinate the bump
   with `arthur-debert/simple-gal-action` per §5.1.
-- Wire the nuke-on-mismatch cache-reset policy per §5.2 (clear error
-  - optional `--auto-reset-cache` flag). No in-place data migration
+- Wire the nuke-on-mismatch cache-reset policy per §5.2 (clear error +
+  optional `--auto-reset-cache` flag). No in-place data migration
   code.
 - Update every remaining test that hand-constructs manifests to use
   the new shape.
