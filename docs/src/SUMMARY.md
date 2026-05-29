@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD025 -- mdBook part titles use multiple top-level headings -->
 # Summary
 
 [Introduction](introduction.md)

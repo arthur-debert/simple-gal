@@ -57,6 +57,7 @@ Two orthogonal parameters drive the output prefix:
   independent of spacing.
 
 Examples:
+
 | spacing | padding | output                    |
 | ------- | ------- | ------------------------- |
 | 0       | 0       | `1-Foo`, `2-Bar`          |
@@ -81,10 +82,9 @@ By default the walk is **recursive**: after reindexing the children of the
 target, descend into each numbered subdirectory and reindex there too.
 `--flat` limits reindex to the target directory only.
 
-
 ## 3. CLI surface
 
-```
+```text
 simple-gal reindex [PATH] [--spacing N] [--padding P] [--flat] [--dry-run] [--yes]
 ```
 

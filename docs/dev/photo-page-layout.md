@@ -5,7 +5,7 @@ its layout structure, terminology, and the three rendering variants.
 
 ## Zones
 
-```
+```text
 ╔══════════════════════════════════════════════╗
 ║  Site Header                            ☰   ║  fixed top
 ╠══════════════════════════════════════════════╣
@@ -74,7 +74,7 @@ A given image has one, the other, or neither. Never both.
 
 No text metadata. Photo centered in mat, no scroll.
 
-```
+```text
 ╠══════════════════════════════════════════════╣
 ║                                              ║
 ║            ┊  top mat  ┊                     ║
@@ -98,7 +98,7 @@ No text metadata. Photo centered in mat, no scroll.
 Caption is flush below the photo, inside the mat. Photo shrinks to make room;
 mat boundary unchanged. No scroll.
 
-```
+```text
 ╠══════════════════════════════════════════════╣
 ║                                              ║
 ║            ┊  top mat  ┊                     ║
@@ -124,7 +124,7 @@ to guarantee the teaser is visible; mat dimensions unchanged. The entire
 content (matted photo + description) scrolls as a unit; Image Nav stays
 sticky at the bottom.
 
-```
+```text
 ╠══════════════════════════════════════════════╣
 ║                                              ║  ↑
 ║            ┊  top mat  ┊                     ║  │

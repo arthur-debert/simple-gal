@@ -56,6 +56,7 @@ quality = 90
 ```
 
 Validation rules:
+
 - `quality` must be 0--100.
 - `sizes` must contain at least one value.
 

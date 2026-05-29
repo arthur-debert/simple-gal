@@ -74,14 +74,14 @@ That is all. The workflow handles the rest.
 
 To use a custom domain (e.g., `photos.example.com`):
 
-1. In your repository settings under **Pages > Custom domain**, enter your domain.
-2. Add a `CNAME` file to the root of your content directory containing just the domain name:
+- **1.** In your repository settings under **Pages > Custom domain**, enter your domain.
+- **2.** Add a `CNAME` file to the root of your content directory containing just the domain name:
 
 ```text
 photos.example.com
 ```
 
-3. Configure DNS with your domain registrar -- a CNAME record pointing to `<username>.github.io`.
+- **3.** Configure DNS with your domain registrar -- a CNAME record pointing to `<username>.github.io`.
 
 GitHub will provision an SSL certificate automatically.
 

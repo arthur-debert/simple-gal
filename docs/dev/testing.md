@@ -24,7 +24,7 @@ cargo test --test browser_pwa -- --ignored          # Browser PWA tests (needs C
 
 `fixtures/content/` is a single dataset that covers the full feature set. Tests copy it to a temp dir via `setup_fixtures()` so they can't interfere with each other.
 
-```
+```text
 content/
 ├── config.toml                         # Root config — overrides ALL defaults
 ├── 010-Landscapes/                     # Numbered album (in nav)
