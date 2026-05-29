@@ -71,7 +71,7 @@ As with favicons, your files in `assets/` overwrite the defaults because assets 
 
 To use a locally hosted font instead of a Google Font:
 
-1. Place font files in `assets/fonts/`:
+- **1.** Place font files in `assets/fonts/`:
 
 ```text
 assets/
@@ -80,7 +80,7 @@ assets/
     garamond-italic.woff2
 ```
 
-1. Declare the font face in `assets/custom.css`:
+- **2.** Declare the font face in `assets/custom.css`:
 
 ```css
 @font-face {
@@ -100,7 +100,7 @@ assets/
 }
 ```
 
-1. Set the font family in `config.toml`:
+- **3.** Set the font family in `config.toml`:
 
 ```toml
 [font]
