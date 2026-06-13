@@ -1,4 +1,4 @@
-# Thin caller of arthur-debert/release/.github/workflows/mdbook.yml@v2.
+# Thin caller of arthur-debert/release/.github/workflows/mdbook.yml@v3.
 # Book lives under `docs/` (so `book-dir: docs`); the book.toml sets
 # `build-dir = "../target/book"`, but the canonical workflow passes
 # `--dest-dir` as an absolute path so `output-dir` is authoritative.
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   docs:
-    uses: arthur-debert/release/.github/workflows/mdbook.yml@v2
+    uses: arthur-debert/release/.github/workflows/mdbook.yml@v3
     with:
       book-dir: docs
       output-dir: target/book
