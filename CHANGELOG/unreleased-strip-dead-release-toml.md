@@ -1,0 +1,1 @@
+- Remove dead release.toml (cargo-release config superseded by release-core cut)
