@@ -74,8 +74,14 @@ fn parse_iptc_iim(data: &[u8]) -> IptcData {
 
         // Only care about Record 2 (Application Record)
         if record == 2 {
+            // Some IPTC writers null-terminate ASCII values; `str::trim()` won't
+            // strip NULs. Drop trailing NULs and any surrounding whitespace, then
+            // trim whitespace from the start — but leave a *leading* NUL alone on
+            // the remote chance a writer meant it (NULs are end-marker / padding
+            // in practice; this is what ExifTool does).
             let value = String::from_utf8_lossy(&data[pos..pos + length])
-                .trim()
+                .trim_end_matches(|c: char| c == '\0' || c.is_whitespace())
+                .trim_start()
                 .to_string();
 
             if !value.is_empty() {
@@ -410,51 +416,426 @@ mod tests {
         assert_eq!(result, IptcData::default());
     }
 
-    // Integration tests against real files (skipped if not available)
+    #[test]
+    fn trims_surrounding_whitespace_in_value() {
+        // Value with leading/trailing whitespace (and null) should be trimmed.
+        let mut data = vec![0x1C, 0x02, 0x05, 0x00, 0x09];
+        data.extend_from_slice(b"  Hello \0");
+        let result = parse_iptc_iim(&data);
+        assert_eq!(result.object_name, Some("Hello".to_string()));
+    }
 
     #[test]
-    fn read_iptc_from_real_jpeg() {
-        let path = Path::new("content/001-NY/Q1021613.jpg");
-        if !path.exists() {
-            return;
+    fn trims_trailing_nul_only() {
+        // Writers that pad ASCII with a single NUL must not leak it into the value.
+        let mut data = vec![0x1C, 0x02, 0x78, 0x00, 0x05];
+        data.extend_from_slice(b"Done\0");
+        let result = parse_iptc_iim(&data);
+        assert_eq!(result.caption, Some("Done".to_string()));
+    }
+
+    #[test]
+    fn leading_nul_is_preserved() {
+        // Trimming is end-only for NULs: a (very unusual) value that begins with
+        // a NUL stays intact at the front. Surrounding whitespace still goes.
+        let mut data = vec![0x1C, 0x02, 0x05, 0x00, 0x07];
+        data.extend_from_slice(b" \0Hi  \0");
+        let result = parse_iptc_iim(&data);
+        // Trailing NULs gone; outer whitespace gone; the inner leading NUL stays.
+        assert_eq!(result.object_name, Some("\0Hi".to_string()));
+    }
+
+    #[test]
+    fn empty_value_is_skipped() {
+        // Length-0 ObjectName should not set the field.
+        let data = [0x1C, 0x02, 0x05, 0x00, 0x00];
+        let result = parse_iptc_iim(&data);
+        assert_eq!(result, IptcData::default());
+    }
+
+    #[test]
+    fn unknown_dataset_is_ignored() {
+        // Record 2, Dataset 0xFF (not 5/25/120) — must be ignored, no panic.
+        let data = [0x1C, 0x02, 0xFF, 0x00, 0x03, b'a', b'b', b'c'];
+        let result = parse_iptc_iim(&data);
+        assert_eq!(result, IptcData::default());
+    }
+
+    #[test]
+    fn truncated_length_stops_parsing() {
+        // Declared length (10) exceeds remaining bytes (3) — must stop, not panic.
+        let data = [0x1C, 0x02, 0x05, 0x00, 0x0A, b'a', b'b', b'c'];
+        let result = parse_iptc_iim(&data);
+        assert_eq!(result, IptcData::default());
+    }
+
+    #[test]
+    fn leading_noise_before_tag_marker() {
+        // Garbage before the 0x1C tag marker is skipped byte-by-byte.
+        let mut data = vec![0xAA, 0xBB, 0xCC];
+        data.extend_from_slice(&[0x1C, 0x02, 0x05, 0x00, 0x03, b'h', b'i', b'!']);
+        let result = parse_iptc_iim(&data);
+        assert_eq!(result.object_name, Some("hi!".to_string()));
+    }
+
+    // =========================================================================
+    // Test helpers for synthetic JPEG / TIFF / 8BIM construction.
+    // =========================================================================
+
+    /// Build a single IIM dataset record: 0x1C, record, dataset, BE u16 length, payload.
+    fn iim_record(record: u8, dataset: u8, value: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x1C, record, dataset];
+        let len = u16::try_from(value.len()).expect("test payload <= u16::MAX");
+        v.extend_from_slice(&len.to_be_bytes());
+        v.extend_from_slice(value);
+        v
+    }
+
+    /// Build an 8BIM resource block with the given resource_id and payload.
+    /// Uses an empty pascal name (padded to 2 bytes) and pads data to even length.
+    fn bim_block(resource_id: u16, payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"8BIM");
+        v.extend_from_slice(&resource_id.to_be_bytes());
+        v.extend_from_slice(&[0x00, 0x00]); // empty pascal name, padded to even
+        let plen = u32::try_from(payload.len()).expect("payload fits in u32");
+        v.extend_from_slice(&plen.to_be_bytes());
+        v.extend_from_slice(payload);
+        if !payload.len().is_multiple_of(2) {
+            v.push(0x00); // pad data to even
         }
-        let result = read_iptc(path);
-        // This JPEG has keywords but no title/caption
-        assert!(
-            !result.keywords.is_empty(),
-            "Expected keywords in JPEG, got: {:?}",
-            result
+        v
+    }
+
+    /// Build an 8BIM block with a non-empty pascal name (exercises pascal padding).
+    fn bim_block_named(resource_id: u16, name: &[u8], payload: &[u8]) -> Vec<u8> {
+        assert!(name.len() < 256);
+        let mut v = Vec::new();
+        v.extend_from_slice(b"8BIM");
+        v.extend_from_slice(&resource_id.to_be_bytes());
+        v.push(name.len() as u8);
+        v.extend_from_slice(name);
+        if !(1 + name.len()).is_multiple_of(2) {
+            v.push(0x00);
+        }
+        let plen = u32::try_from(payload.len()).unwrap();
+        v.extend_from_slice(&plen.to_be_bytes());
+        v.extend_from_slice(payload);
+        if !payload.len().is_multiple_of(2) {
+            v.push(0x00);
+        }
+        v
+    }
+
+    /// Wrap a Photoshop image-resources blob (one or more 8BIM blocks) in a JPEG
+    /// APP13 segment, between SOI and SOS markers.
+    fn jpeg_with_photoshop(blob: &[u8]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PHOTOSHOP_HEADER);
+        payload.extend_from_slice(blob);
+        // APP13 length field counts itself + payload (per JPEG spec).
+        let seg_len = u16::try_from(2 + payload.len()).unwrap();
+
+        let mut v = vec![0xFF, 0xD8]; // SOI
+        v.extend_from_slice(&[0xFF, 0xED]); // APP13
+        v.extend_from_slice(&seg_len.to_be_bytes());
+        v.extend_from_slice(&payload);
+        v.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]); // SOS marker (stops scan)
+        v
+    }
+
+    /// Build a minimal TIFF (one IFD, one entry) carrying the given tag/payload.
+    /// IPTC payloads always live at an offset past the IFD (they exceed 4 bytes).
+    fn tiff_with_tag(big_endian: bool, tag: u16, typ: u16, payload: &[u8]) -> Vec<u8> {
+        // Layout: header(8) | IFD count(2) | entry(12) | next_ifd(4) | payload@offset
+        let payload_offset: u32 = 8 + 2 + 12 + 4;
+        let count: u32 = payload.len() as u32; // type 1/7 → 1 byte per count
+
+        let u16b = |x: u16| -> [u8; 2] {
+            if big_endian {
+                x.to_be_bytes()
+            } else {
+                x.to_le_bytes()
+            }
+        };
+        let u32b = |x: u32| -> [u8; 4] {
+            if big_endian {
+                x.to_be_bytes()
+            } else {
+                x.to_le_bytes()
+            }
+        };
+
+        let mut v = Vec::new();
+        v.extend_from_slice(if big_endian { b"MM" } else { b"II" });
+        v.extend_from_slice(&u16b(42));
+        v.extend_from_slice(&u32b(8)); // IFD at offset 8
+        v.extend_from_slice(&u16b(1)); // one entry
+        v.extend_from_slice(&u16b(tag));
+        v.extend_from_slice(&u16b(typ));
+        v.extend_from_slice(&u32b(count));
+        v.extend_from_slice(&u32b(payload_offset));
+        v.extend_from_slice(&u32b(0)); // no next IFD
+        v.extend_from_slice(payload);
+        v
+    }
+
+    // =========================================================================
+    // 8BIM resource block parsing
+    // =========================================================================
+
+    #[test]
+    fn bim_finds_iptc_among_other_resources() {
+        let iim = iim_record(2, 5, b"Title");
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&bim_block(0x03ED, b"\x00\x01\x02\x03")); // non-IPTC resource
+        blob.extend_from_slice(&bim_block(0x0404, &iim));
+        blob.extend_from_slice(&bim_block(0x0425, b"trailing"));
+
+        let extracted = extract_iptc_from_8bim(&blob).expect("found IPTC block");
+        assert_eq!(parse_iptc_iim(extracted).object_name, Some("Title".into()));
+    }
+
+    #[test]
+    fn bim_returns_none_when_no_iptc_resource() {
+        let blob = bim_block(0x03ED, b"not iptc data");
+        assert!(extract_iptc_from_8bim(&blob).is_none());
+    }
+
+    #[test]
+    fn bim_handles_named_resource_padding() {
+        // Non-empty pascal name exercises the `(1 + n) % 2` padding branch.
+        let iim = iim_record(2, 120, b"Caption text");
+        // Name "ab" → 1 + 2 = 3 bytes → +1 pad. Resource before the IPTC one.
+        let blob_pre = bim_block_named(0x03ED, b"ab", b"prelude");
+        let blob_iptc = bim_block_named(0x0404, b"x", &iim); // name "x" → no extra pad
+        let mut blob = blob_pre;
+        blob.extend_from_slice(&blob_iptc);
+        let extracted = extract_iptc_from_8bim(&blob).expect("found IPTC");
+        assert_eq!(
+            parse_iptc_iim(extracted).caption,
+            Some("Caption text".into())
         );
     }
 
     #[test]
-    fn read_iptc_from_real_tiff() {
-        let path = Path::new("/Users/adebert/Downloads/photo-exports/20260125-Q1021613.tif");
-        if !path.exists() {
-            return;
-        }
-        let result = read_iptc(path);
+    fn bim_accepts_blob_with_photoshop_header() {
+        // extract_iptc_from_8bim must transparently strip the "Photoshop 3.0\0" header.
+        let iim = iim_record(2, 5, b"Header");
+        let mut blob = Vec::new();
+        blob.extend_from_slice(PHOTOSHOP_HEADER);
+        blob.extend_from_slice(&bim_block(0x0404, &iim));
+        let extracted = extract_iptc_from_8bim(&blob).unwrap();
+        assert_eq!(parse_iptc_iim(extracted).object_name, Some("Header".into()));
+    }
+
+    // =========================================================================
+    // JPEG APP13 scanning
+    // =========================================================================
+
+    #[test]
+    fn jpeg_round_trip_with_synthetic_app13() {
+        let mut iim = Vec::new();
+        iim.extend_from_slice(&iim_record(2, 5, b"My Photo"));
+        iim.extend_from_slice(&iim_record(2, 120, b"On a winter morning"));
+        iim.extend_from_slice(&iim_record(2, 25, b"snow"));
+        iim.extend_from_slice(&iim_record(2, 25, b"winter"));
+        let jpeg = jpeg_with_photoshop(&bim_block(0x0404, &iim));
+
+        let result = read_iptc_from_jpeg(&jpeg);
+        assert_eq!(result.object_name, Some("My Photo".into()));
+        assert_eq!(result.caption, Some("On a winter morning".into()));
+        assert_eq!(result.keywords, vec!["snow", "winter"]);
+    }
+
+    #[test]
+    fn jpeg_with_no_app13_returns_default() {
+        // SOI + JFIF APP0 + SOS, no APP13 anywhere.
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00];
+        jpeg.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]);
+        assert_eq!(read_iptc_from_jpeg(&jpeg), IptcData::default());
+    }
+
+    #[test]
+    fn jpeg_with_app13_but_no_iptc_resource_returns_default() {
+        // APP13 holds a non-IPTC 8BIM resource only.
+        let jpeg = jpeg_with_photoshop(&bim_block(0x03ED, b"not iptc"));
+        assert_eq!(read_iptc_from_jpeg(&jpeg), IptcData::default());
+    }
+
+    #[test]
+    fn jpeg_skips_rst_markers_without_length_field() {
+        // Inject restart markers (0xFF 0xD0..0xD7) before APP13 — they have no length
+        // field, so the marker-walk must advance by 2, not by 2+length.
+        let iim = iim_record(2, 5, b"After RST");
+        let body = bim_block(0x0404, &iim);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PHOTOSHOP_HEADER);
+        payload.extend_from_slice(&body);
+        let seg_len = u16::try_from(2 + payload.len()).unwrap();
+
+        let mut jpeg = vec![0xFF, 0xD8];
+        // RST0..RST3 inline — no length bytes.
+        jpeg.extend_from_slice(&[0xFF, 0xD0, 0xFF, 0xD1, 0xFF, 0xD2, 0xFF, 0xD3]);
+        jpeg.extend_from_slice(&[0xFF, 0xED]);
+        jpeg.extend_from_slice(&seg_len.to_be_bytes());
+        jpeg.extend_from_slice(&payload);
+        jpeg.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]);
+
+        let result = read_iptc_from_jpeg(&jpeg);
+        assert_eq!(result.object_name, Some("After RST".into()));
+    }
+
+    #[test]
+    fn jpeg_stops_scanning_at_sos_marker() {
+        // SOS appears *before* a synthetic APP13 — the scanner must stop and miss it.
+        let iim = iim_record(2, 5, b"Past SOS");
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PHOTOSHOP_HEADER);
+        payload.extend_from_slice(&bim_block(0x0404, &iim));
+        let seg_len = u16::try_from(2 + payload.len()).unwrap();
+
+        let mut jpeg = vec![0xFF, 0xD8];
+        jpeg.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]); // SOS — stop here
+        jpeg.extend_from_slice(&[0xFF, 0xED]);
+        jpeg.extend_from_slice(&seg_len.to_be_bytes());
+        jpeg.extend_from_slice(&payload);
+
+        assert_eq!(read_iptc_from_jpeg(&jpeg), IptcData::default());
+    }
+
+    #[test]
+    fn jpeg_skips_stuffed_ff00_bytes() {
+        // 0xFF 0x00 inside compressed data is a stuffed byte, not a marker.
+        // The scanner's "if data[pos+1] != 0x00" branch should advance one byte and
+        // keep going, eventually finding the real APP13.
+        let iim = iim_record(2, 25, b"keyword-after-stuffing");
+        let mut payload = Vec::new();
+        payload.extend_from_slice(PHOTOSHOP_HEADER);
+        payload.extend_from_slice(&bim_block(0x0404, &iim));
+        let seg_len = u16::try_from(2 + payload.len()).unwrap();
+
+        let mut jpeg = vec![0xFF, 0xD8];
+        // Stuffed-byte noise before the APP13 marker.
+        jpeg.extend_from_slice(&[0xFF, 0x00, 0xFF, 0x00, 0xAB, 0xCD]);
+        jpeg.extend_from_slice(&[0xFF, 0xED]);
+        jpeg.extend_from_slice(&seg_len.to_be_bytes());
+        jpeg.extend_from_slice(&payload);
+        jpeg.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]);
+
+        let result = read_iptc_from_jpeg(&jpeg);
+        assert_eq!(result.keywords, vec!["keyword-after-stuffing"]);
+    }
+
+    #[test]
+    fn jpeg_read_iptc_dispatches_by_extension() {
+        // .jpg / .jpeg → JPEG path; .png/.bmp → unsupported (default).
+        let dir = tempfile::tempdir().expect("tmpdir");
+
+        let iim = iim_record(2, 5, b"Disp");
+        let jpeg = jpeg_with_photoshop(&bim_block(0x0404, &iim));
+
+        let jpg = dir.path().join("img.jpg");
+        std::fs::write(&jpg, &jpeg).unwrap();
+        assert_eq!(read_iptc(&jpg).object_name, Some("Disp".into()));
+
+        let jpeg_ext = dir.path().join("img.JPEG"); // case-insensitive ext match
+        std::fs::write(&jpeg_ext, &jpeg).unwrap();
+        assert_eq!(read_iptc(&jpeg_ext).object_name, Some("Disp".into()));
+
+        let png = dir.path().join("img.png");
+        std::fs::write(&png, &jpeg).unwrap();
+        assert_eq!(read_iptc(&png), IptcData::default());
+    }
+
+    // =========================================================================
+    // TIFF parsing
+    // =========================================================================
+
+    #[test]
+    fn tiff_little_endian_with_iptc_naa_tag() {
+        let mut iim = Vec::new();
+        iim.extend_from_slice(&iim_record(2, 5, b"LE Title"));
+        iim.extend_from_slice(&iim_record(2, 120, b"LE Caption"));
+        iim.extend_from_slice(&iim_record(2, 25, b"alpha"));
+        let tiff = tiff_with_tag(false, 33723, 1, &iim);
+
+        let result = read_iptc_from_tiff(&tiff);
+        assert_eq!(result.object_name, Some("LE Title".into()));
+        assert_eq!(result.caption, Some("LE Caption".into()));
+        assert_eq!(result.keywords, vec!["alpha"]);
+    }
+
+    #[test]
+    fn tiff_big_endian_with_iptc_naa_tag() {
+        let iim = iim_record(2, 5, b"BE Title");
+        let tiff = tiff_with_tag(true, 33723, 7, &iim);
         assert_eq!(
-            result.object_name,
-            Some("This is the title".to_string()),
-            "TIFF title mismatch: {:?}",
-            result
+            read_iptc_from_tiff(&tiff).object_name,
+            Some("BE Title".into())
         );
+    }
+
+    #[test]
+    fn tiff_falls_back_to_photoshop_8bim_tag() {
+        // No 33723 tag, only 34377 (Photoshop ImageResources containing 8BIM IPTC).
+        let iim = iim_record(2, 120, b"Via Photoshop");
+        let blob = bim_block(0x0404, &iim);
+        let tiff = tiff_with_tag(false, 34377, 1, &blob);
         assert_eq!(
-            result.caption,
-            Some("Tihs is the caption".to_string()),
-            "TIFF caption mismatch: {:?}",
-            result
+            read_iptc_from_tiff(&tiff).caption,
+            Some("Via Photoshop".into())
         );
-        assert!(
-            result.keywords.contains(&"snow-storm".to_string()),
-            "Expected 'snow-storm' in keywords: {:?}",
-            result.keywords
+    }
+
+    #[test]
+    fn tiff_invalid_byte_order_returns_default() {
+        let mut tiff = vec![b'X', b'Y'];
+        tiff.extend_from_slice(&[0u8; 10]);
+        assert_eq!(read_iptc_from_tiff(&tiff), IptcData::default());
+    }
+
+    #[test]
+    fn tiff_invalid_magic_returns_default() {
+        // II + magic 41 (not 42) = invalid.
+        let mut tiff = vec![b'I', b'I', 41, 0];
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&[0u8; 10]);
+        assert_eq!(read_iptc_from_tiff(&tiff), IptcData::default());
+    }
+
+    #[test]
+    fn tiff_too_small_returns_default() {
+        assert_eq!(read_iptc_from_tiff(&[]), IptcData::default());
+        assert_eq!(
+            read_iptc_from_tiff(&[0xFF, 0xFF, 0xFF]),
+            IptcData::default()
         );
-        assert!(
-            result.keywords.contains(&"white".to_string()),
-            "Expected 'white' in keywords: {:?}",
-            result.keywords
-        );
+    }
+
+    #[test]
+    fn tiff_unrelated_tag_returns_default() {
+        // Tag 256 (ImageWidth) — not an IPTC source. Use type 1 (BYTE) so
+        // `byte_len = count * 1 == payload.len()`, keeping the IFD entry valid;
+        // the parser must skip the tag *because it's not 33723/34377*, not
+        // because of a bounds rejection.
+        let tiff = tiff_with_tag(false, 256, 1, &[0x00, 0x04]);
+        assert_eq!(read_iptc_from_tiff(&tiff), IptcData::default());
+    }
+
+    #[test]
+    fn read_iptc_dispatches_tiff_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let iim = iim_record(2, 5, b"From TIFF");
+        let tiff = tiff_with_tag(true, 33723, 1, &iim);
+
+        let tif = dir.path().join("photo.tif");
+        std::fs::write(&tif, &tiff).unwrap();
+        assert_eq!(read_iptc(&tif).object_name, Some("From TIFF".into()));
+
+        let tiff_ext = dir.path().join("photo.TIFF");
+        std::fs::write(&tiff_ext, &tiff).unwrap();
+        assert_eq!(read_iptc(&tiff_ext).object_name, Some("From TIFF".into()));
     }
 }
