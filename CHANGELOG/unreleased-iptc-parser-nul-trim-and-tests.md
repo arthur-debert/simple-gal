@@ -1,0 +1,1 @@
+- iptc_parser: strip trailing NULs from values, and add JPEG/TIFF synthetic-fixture tests covering APP13/8BIM scanning, RST/stuffed-byte/SOS marker walk, both-endian TIFF parsing, and Photoshop 8BIM fallback (coverage 48% → 98%).
