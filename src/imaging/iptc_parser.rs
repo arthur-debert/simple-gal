@@ -75,9 +75,13 @@ fn parse_iptc_iim(data: &[u8]) -> IptcData {
         // Only care about Record 2 (Application Record)
         if record == 2 {
             // Some IPTC writers null-terminate ASCII values; `str::trim()` won't
-            // strip NULs, so we trim NUL alongside ASCII whitespace explicitly.
+            // strip NULs. Drop trailing NULs and any surrounding whitespace, then
+            // trim whitespace from the start — but leave a *leading* NUL alone on
+            // the remote chance a writer meant it (NULs are end-marker / padding
+            // in practice; this is what ExifTool does).
             let value = String::from_utf8_lossy(&data[pos..pos + length])
-                .trim_matches(|c: char| c.is_whitespace() || c == '\0')
+                .trim_end_matches(|c: char| c == '\0' || c.is_whitespace())
+                .trim_start()
                 .to_string();
 
             if !value.is_empty() {
@@ -428,6 +432,17 @@ mod tests {
         data.extend_from_slice(b"Done\0");
         let result = parse_iptc_iim(&data);
         assert_eq!(result.caption, Some("Done".to_string()));
+    }
+
+    #[test]
+    fn leading_nul_is_preserved() {
+        // Trimming is end-only for NULs: a (very unusual) value that begins with
+        // a NUL stays intact at the front. Surrounding whitespace still goes.
+        let mut data = vec![0x1C, 0x02, 0x05, 0x00, 0x07];
+        data.extend_from_slice(b" \0Hi  \0");
+        let result = parse_iptc_iim(&data);
+        // Trailing NULs gone; outer whitespace gone; the inner leading NUL stays.
+        assert_eq!(result.object_name, Some("\0Hi".to_string()));
     }
 
     #[test]
@@ -801,8 +816,11 @@ mod tests {
 
     #[test]
     fn tiff_unrelated_tag_returns_default() {
-        // Tag 256 (ImageWidth) — not an IPTC source. Parser must skip and return empty.
-        let tiff = tiff_with_tag(false, 256, 3, &[0x00, 0x04]);
+        // Tag 256 (ImageWidth) — not an IPTC source. Use type 1 (BYTE) so
+        // `byte_len = count * 1 == payload.len()`, keeping the IFD entry valid;
+        // the parser must skip the tag *because it's not 33723/34377*, not
+        // because of a bounds rejection.
+        let tiff = tiff_with_tag(false, 256, 1, &[0x00, 0x04]);
         assert_eq!(read_iptc_from_tiff(&tiff), IptcData::default());
     }
 
