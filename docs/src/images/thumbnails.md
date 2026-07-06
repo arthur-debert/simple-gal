@@ -41,7 +41,7 @@ aspect_ratio = [3, 2]
 Common choices:
 
 | Ratio | Shape | Notes |
-|-------|-------|-------|
+| ------- | ------- | ------- |
 | `[4, 5]` | Portrait | Default. Works well for figure photography and vertical compositions. |
 | `[1, 1]` | Square | Clean, symmetric grids. Good all-rounder. |
 | `[3, 2]` | Landscape | Matches the 35mm frame. Good for horizontal work. |
@@ -110,7 +110,7 @@ The thumb image is **not** included in the gallery — it is only used as the al
 Any image whose name (after the number prefix) starts with `thumb` is a thumb designator:
 
 | Filename | Thumb? |
-|----------|--------|
+| ---------- | -------- |
 | `005-thumb.jpg` | Yes |
 | `005-thumb-The-Sunset.jpg` | Yes |
 | `thumb.jpg` | Yes |

@@ -31,7 +31,7 @@ This processes all images and generates the complete static site in the output d
 ## CLI commands
 
 | Command | What it does |
-|---------|-------------|
+| --------- | ------------- |
 | `simple-gal build` | Run the full pipeline: scan, process images, generate HTML |
 | `simple-gal scan` | Scan the content directory and print the manifest (no image processing or HTML output) |
 | `simple-gal process` | Scan and process images (generate responsive sizes and thumbnails) without generating HTML |

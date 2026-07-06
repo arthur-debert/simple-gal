@@ -5,7 +5,7 @@ Simple Gal supports three **convention files** that let you inject custom CSS, a
 ## Convention Files
 
 | File | Injection point | Typical use |
-|------|----------------|-------------|
+| ------ | ---------------- | ------------- |
 | `custom.css` | `<link>` after the main stylesheet | CSS overrides, layout tweaks, custom fonts |
 | `head.html` | End of `<head>`, after all other tags | Analytics snippets, Open Graph meta tags, additional `<link>` or `<meta>` elements |
 | `body-end.html` | Immediately before `</body>` | Tracking scripts, chat widgets, cookie banners |

@@ -5,7 +5,7 @@ Every configuration key, its type, default value, and purpose. All keys are opti
 ## Top-level keys
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `site_title` | string | `"Gallery"` | Site title used in breadcrumbs and the browser tab for the index page. |
 | `assets_dir` | string | `"assets"` | Directory for static assets (favicon, fonts, etc.), relative to content root. Contents are copied verbatim to the output root. Silently skipped if it does not exist. |
 | `site_description_file` | string | `"site"` | Stem of the site description file in the content root. If `site.md` or `site.txt` exists, its content is rendered on the index page. |
@@ -21,7 +21,7 @@ site_description_file = "site"
 Controls how thumbnails are cropped and sized.
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `aspect_ratio` | `[u32, u32]` | `[4, 5]` | Width-to-height ratio for thumbnail crops. `[1, 1]` for square, `[3, 2]` for landscape. |
 | `size` | `u32` | `400` | Short-edge size in pixels for generated thumbnails. |
 
@@ -34,7 +34,7 @@ size = 400
 Common aspect ratio choices:
 
 | Ratio | Effect |
-|---|---|
+| --- | --- |
 | `[1, 1]` | Square thumbnails |
 | `[4, 5]` | Slightly tall portrait (default) |
 | `[3, 2]` | Classic landscape |
@@ -45,7 +45,7 @@ Common aspect ratio choices:
 Controls responsive image generation.
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `sizes` | `[u32, ...]` | `[800, 1400, 2080]` | Pixel widths (longer edge) to generate for responsive `<picture>` elements. |
 | `quality` | `u32` | `90` | AVIF encoding quality. 0 = smallest file / worst quality, 100 = largest file / best quality. |
 
@@ -65,7 +65,7 @@ Validation rules:
 Layout spacing values. All values are CSS length strings.
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `thumbnail_gap` | string | `"0.2rem"` | Gap between thumbnails in album and image grids. |
 | `grid_padding` | string | `"2rem"` | Padding around the thumbnail grid container. |
 
@@ -80,7 +80,7 @@ grid_padding = "2rem"
 Horizontal mat (spacing) around images on photo pages. Rendered as CSS `clamp(min, size, max)`.
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `size` | string | `"3vw"` | Preferred/fluid value, typically viewport-relative. |
 | `min` | string | `"1rem"` | Minimum bound. |
 | `max` | string | `"2.5rem"` | Maximum bound. |
@@ -97,7 +97,7 @@ max = "2.5rem"
 Vertical mat (spacing) around images on photo pages. Same structure as `mat_x`.
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `size` | string | `"6vw"` | Preferred/fluid value. |
 | `min` | string | `"2rem"` | Minimum bound. |
 | `max` | string | `"5rem"` | Maximum bound. |
@@ -114,7 +114,7 @@ max = "5rem"
 Light mode color scheme. Applied by default and when the user's system is set to light mode.
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `background` | string | `"#ffffff"` | Page background color. |
 | `text` | string | `"#111111"` | Primary text color. |
 | `text_muted` | string | `"#666666"` | Secondary text: nav menu, breadcrumbs, captions. |
@@ -139,7 +139,7 @@ link_hover = "#000000"
 Dark mode color scheme. Applied when the user's system prefers dark mode (`prefers-color-scheme: dark`).
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `background` | string | `"#000000"` | Page background color. |
 | `text` | string | `"#fafafa"` | Primary text color. |
 | `text_muted` | string | `"#999999"` | Secondary text. |
@@ -164,7 +164,7 @@ link_hover = "#ffffff"
 Typography settings. By default, fonts are loaded from Google Fonts. Set `source` to use a local font file instead.
 
 | Key | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `font` | string | `"Space Grotesk"` | Font family name. Used as the Google Fonts family name, or as the `font-family` name for local fonts. |
 | `weight` | string | `"600"` | Font weight to load. |
 | `font_type` | string | `"sans"` | `"sans"` or `"serif"`. Determines the CSS fallback font stack. |
@@ -205,7 +205,7 @@ Config values are compiled into CSS custom properties, injected as inline `<styl
 ### Color variables
 
 | CSS variable | Config key |
-|---|---|
+| --- | --- |
 | `--color-bg` | `colors.{light,dark}.background` |
 | `--color-text` | `colors.{light,dark}.text` |
 | `--color-text-muted` | `colors.{light,dark}.text_muted` |
@@ -219,7 +219,7 @@ Light mode values are set on `:root`. Dark mode values are set inside `@media (p
 ### Theme variables
 
 | CSS variable | Config key | Generated as |
-|---|---|---|
+| --- | --- | --- |
 | `--mat-x` | `theme.mat_x.*` | `clamp(min, size, max)` |
 | `--mat-y` | `theme.mat_y.*` | `clamp(min, size, max)` |
 | `--thumbnail-gap` | `theme.thumbnail_gap` | Direct value |
@@ -228,6 +228,6 @@ Light mode values are set on `:root`. Dark mode values are set inside `@media (p
 ### Font variables
 
 | CSS variable | Config key |
-|---|---|
+| --- | --- |
 | `--font-family` | `font.font` + `font.font_type` (includes fallback stack) |
 | `--font-weight` | `font.weight` |

@@ -16,7 +16,7 @@ The value is an integer from 0 to 100. Higher values produce larger files with f
 The default of 90 is a good starting point for fine art photography. At this level, compression artifacts are invisible at normal viewing distances, and the files are roughly half the size of equivalent JPEGs.
 
 | Quality | Use case | Notes |
-|---------|----------|-------|
+| --------- | ---------- | ------- |
 | 95-100 | Archival, print-resolution work | Minimal compression. Large files. Diminishing returns above 95. |
 | 85-90 | Portfolio display (default range) | Visually lossless for web viewing. Good balance. |
 | 70-80 | Documentation, travel snapshots | Noticeable softening on close inspection. Significantly smaller files. |
@@ -50,7 +50,7 @@ This gallery uses quality 75 while other galleries inherit the root config's qua
 To give a sense of scale, here are approximate file sizes for a single 2080px-wide landscape image at different quality levels:
 
 | Quality | Approximate size |
-|---------|-----------------|
+| --------- | ----------------- |
 | 100 | 800-1200 KB |
 | 90 | 200-400 KB |
 | 80 | 100-200 KB |

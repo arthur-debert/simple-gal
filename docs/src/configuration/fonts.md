@@ -109,7 +109,7 @@ When `source` is set:
 ### Supported font formats
 
 | Extension | CSS format | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `.woff2` | `woff2` | Recommended. Best compression, wide browser support. |
 | `.woff` | `woff` | Good compression, universal support. |
 | `.ttf` | `truetype` | Larger files, universal support. |
@@ -122,7 +122,7 @@ Use `.woff2` when possible for the smallest file size.
 The `font_type` setting determines which system fonts are used as fallbacks while the custom font loads or if it fails to load:
 
 | `font_type` | Fallback stack |
-|---|---|
+| --- | --- |
 | `"sans"` | `Helvetica, Verdana, sans-serif` |
 | `"serif"` | `Georgia, "Times New Roman", serif` |
 
@@ -143,7 +143,7 @@ Choose the `font_type` that best matches the character of your chosen font. This
 The `weight` key is a string (not a number) that specifies which weight to load. Common values:
 
 | Weight | Name |
-|---|---|
+| --- | --- |
 | `"100"` | Thin |
 | `"200"` | Extra Light |
 | `"300"` | Light |

@@ -46,7 +46,7 @@ The path is relative to the content root.
 Simple Gal ships with a default `favicon.png`. To use your own, place a favicon file in `assets/`. The build detects favicon files in this priority order:
 
 | Priority | File | MIME type |
-|----------|------|-----------|
+| ---------- | ------ | ----------- |
 | 1 | `favicon.svg` | `image/svg+xml` |
 | 2 | `favicon.ico` | `image/x-icon` |
 | 3 | `favicon.png` | `image/png` |
@@ -60,7 +60,7 @@ For best results, use an SVG favicon. It scales to any size and supports dark mo
 Simple Gal generates a Progressive Web App manifest with default icons. To use your own, place these files in `assets/`:
 
 | File | Size | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `icon-192.png` | 192x192 px | Android home screen icon |
 | `icon-512.png` | 512x512 px | Android splash screen |
 | `apple-touch-icon.png` | 180x180 px | iOS home screen icon |

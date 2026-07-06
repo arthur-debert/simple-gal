@@ -9,7 +9,7 @@ Two independent color schemes are defined under `[colors.light]` and `[colors.da
 Each scheme has seven color slots:
 
 | Slot | Used for |
-|---|---|
+| --- | --- |
 | `background` | Page background |
 | `text` | Primary body text |
 | `text_muted` | Secondary text: navigation, breadcrumbs, captions |
@@ -141,7 +141,7 @@ min = "0.5rem"
 Two values control the thumbnail grid layout:
 
 | Key | Default | Effect |
-|---|---|---|
+| --- | --- | --- |
 | `thumbnail_gap` | `"0.2rem"` | Space between individual thumbnails in the grid |
 | `grid_padding` | `"2rem"` | Padding around the entire grid container |
 

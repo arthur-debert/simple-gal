@@ -36,7 +36,7 @@ content/
 ### What each piece exercises
 
 | Fixture element | Feature tested |
-|---|---|
+| --- | --- |
 | Root `config.toml` (all keys) | Config loading picks up every field, not just defaults |
 | `010-Landscapes/config.toml` | Per-gallery config overrides root; config chain merging |
 | `description.txt` (Landscapes) | Album description from plain text (paragraphs, linkification) |

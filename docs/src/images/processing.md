@@ -57,7 +57,7 @@ Setting `max_processes = 1` disables parallelism and processes images sequential
 Simple Gal accepts the following source image formats:
 
 | Format | Extensions |
-|--------|-----------|
+| -------- | ----------- |
 | JPEG | `.jpg`, `.jpeg` |
 | PNG | `.png` |
 | TIFF | `.tiff`, `.tif` |

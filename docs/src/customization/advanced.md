@@ -9,7 +9,7 @@ Simple Gal generates CSS custom properties from your `config.toml` values and in
 ### Color Properties
 
 | Property | Default | Controls |
-|----------|---------|----------|
+| ---------- | --------- | ---------- |
 | `--color-bg` | `#ffffff` | Page background |
 | `--color-text` | `#1a1a1a` | Primary text |
 | `--color-text-muted` | `#6b6b6b` | Secondary text (captions, descriptions) |
@@ -23,7 +23,7 @@ These are best set via `config.toml` under `[colors]`, but you can override them
 ### Theme Properties
 
 | Property | Default | Controls |
-|----------|---------|----------|
+| ---------- | --------- | ---------- |
 | `--mat-x` | `2rem` | Horizontal mat (padding) around photos on image pages |
 | `--mat-y` | `2rem` | Vertical mat (padding) around photos on image pages |
 | `--thumbnail-gap` | `0.5rem` | Gap between thumbnails in album and index grids |
@@ -41,7 +41,7 @@ These are best set via `config.toml` under `[colors]`, but you can override them
 These are defined in the stylesheet and not generated from config, but you can still override them:
 
 | Property | Default | Controls |
-|----------|---------|----------|
+| ---------- | --------- | ---------- |
 | `--header-height` | `3rem` | Height of the fixed header bar |
 | `--font-size-base` | `18px` | Base font size |
 | `--font-size-small` | `14px` | Small text (captions, metadata) |
@@ -55,7 +55,7 @@ These are the main classes in the generated HTML. Target them in `custom.css` fo
 ### Layout
 
 | Class | Element | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `.site-header` | `<header>` | Fixed top bar with breadcrumb and navigation |
 | `.breadcrumb` | `<nav>` | Breadcrumb trail inside the header |
 | `.site-nav` | `<nav>` | Navigation container (hamburger menu) |
@@ -66,7 +66,7 @@ These are the main classes in the generated HTML. Target them in `custom.css` fo
 The index page and group gallery-list pages (e.g. `/Travel/`) share the same HTML structure and CSS classes.
 
 | Class | Element | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `.index-page` | `<main>` | Page main container (used on both index and gallery-list pages) |
 | `.index-header` | `<div>` | Title and description block |
 | `.album-grid` | `<div>` | Grid of album/group cards |
@@ -76,7 +76,7 @@ The index page and group gallery-list pages (e.g. `/Travel/`) share the same HTM
 ### Album Page
 
 | Class | Element | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `.album-page` | `<main>` | Album page main container |
 | `.album-header` | `<div>` | Album title and description block |
 | `.album-description` | `<div>` | Album description text |
@@ -86,7 +86,7 @@ The index page and group gallery-list pages (e.g. `/Travel/`) share the same HTM
 ### Image Page
 
 | Class | Element | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `body.image-view` | `<body>` | Body class on image pages (sets `overflow: hidden`) |
 | `.image-page` | `<div>` | Image page main container |
 | `.image-frame` | `<div>` | Container for the photo itself |

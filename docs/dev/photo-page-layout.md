@@ -18,7 +18,7 @@ its layout structure, terminology, and the three rendering variants.
 ```
 
 | Zone | CSS | Role |
-|---|---|---|
+| --- | --- | --- |
 | **Site Header** | `.site-header` | Fixed top bar. Breadcrumb (left) + hamburger nav (right). |
 | **Photo Viewport** | `body.image-view main` | The gallery wall — everything between header and image-nav. |
 | **Image Nav** | `.image-nav` | Sticky bottom bar. Dot per image, current highlighted. |
@@ -159,7 +159,7 @@ sticky at the bottom.
 ## CSS class → spec mapping
 
 | CSS class | Spec term | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `.site-header` | Site Header | |
 | `.image-nav` | Image Nav | |
 | `body.image-view main` | Photo Viewport | |

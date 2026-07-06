@@ -80,7 +80,7 @@ quality = 75
 Here is what each level sees:
 
 | Setting | 010-Portraits | 020-Travel | 020-Travel/010-Japan |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `site_title` | `"My Portfolio"` | `"My Portfolio"` | `"My Portfolio"` |
 | `font.font` | `"Playfair Display"` | `"Playfair Display"` | `"Playfair Display"` |
 | `thumbnails.aspect_ratio` | `[3, 4]` | `[1, 1]` | `[1, 1]` |

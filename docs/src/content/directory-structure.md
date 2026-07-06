@@ -76,7 +76,7 @@ All other files in album directories are ignored during scanning (except for spe
 The generated site mirrors the directory hierarchy with number prefixes stripped:
 
 | Filesystem path | URL | Page type |
-|-----------------|-----|-----------|
+| ----------------- | ----- | ----------- |
 | `010-Landscapes/` | `/Landscapes/` | Album (thumbnail grid) |
 | `020-Travel/` | `/Travel/` | Gallery list (child album cards) |
 | `020-Travel/010-Japan/` | `/Travel/Japan/` | Album (thumbnail grid) |
@@ -89,7 +89,7 @@ Number prefixes control ordering and navigation visibility, but they are removed
 These files are recognized at the content root:
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `config.toml` | Site configuration |
 | `site.md` or `site.txt` | Site description rendered on the home page |
 | `NNN-name.md` | Pages (appear in navigation if numbered) |
@@ -97,7 +97,7 @@ These files are recognized at the content root:
 These files are recognized inside album and group directories:
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `config.toml` | Per-album/group configuration override |
 | `description.md` or `description.txt` | Description shown above the thumbnail grid (albums) or gallery list (groups) |
 | `NNN-name.txt` | Sidecar description for the image with the same stem (albums only) |

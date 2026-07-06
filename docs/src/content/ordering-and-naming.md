@@ -17,7 +17,7 @@ The number can be any non-negative integer. Leading zeros are stripped during pa
 Common numbering patterns:
 
 | Pattern | Use case |
-|---------|----------|
+| --------- | ---------- |
 | `001`, `002`, `003` | Sequential, no room for insertion |
 | `010`, `020`, `030` | Gaps of 10, easy to insert between |
 | `100`, `200`, `300` | Large gaps for frequently reorganized content |
@@ -27,7 +27,7 @@ Common numbering patterns:
 The name portion after the numeric prefix becomes the display title. Dashes in the name are converted to spaces:
 
 | Filename | Display title |
-|----------|--------------|
+| ---------- | -------------- |
 | `020-My-Best-Photos/` | My Best Photos |
 | `010-Landscapes/` | Landscapes |
 | `001-dawn.jpg` | dawn |

@@ -69,7 +69,7 @@ When you provide a custom `site.webmanifest`, it replaces the generated one enti
 The PWA service worker requires that your site is served from the root of its domain. This means:
 
 | URL | Works |
-|-----|-------|
+| ----- | ------- |
 | `https://photos.example.com/` | Yes |
 | `https://example.com/` | Yes |
 | `https://example.com/photos/` | No |
