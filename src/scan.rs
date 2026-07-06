@@ -368,9 +368,15 @@ fn parse_pages(root: &Path, site_description_stem: &str) -> Result<Vec<Page>, Sc
         let content = fs::read_to_string(md_path)?;
         let trimmed = content.trim();
 
-        // A page whose only content is a URL becomes an external link
-        let is_link = !trimmed.contains('\n')
-            && (trimmed.starts_with("http://") || trimmed.starts_with("https://"));
+        // A page whose only content is a URL becomes an external link.
+        // Accept both a bare URL and the markdown autolink form `<url>`
+        // (markdownlint's MD034 autofix rewrites bare URLs into `<url>`).
+        let url = trimmed
+            .strip_prefix('<')
+            .and_then(|s| s.strip_suffix('>'))
+            .unwrap_or(trimmed);
+        let is_link =
+            !url.contains('\n') && (url.starts_with("http://") || url.starts_with("https://"));
 
         let title = if is_link {
             link_title.clone()
@@ -382,11 +388,13 @@ fn parse_pages(root: &Path, site_description_stem: &str) -> Result<Vec<Page>, Sc
                 .unwrap_or_else(|| link_title.clone())
         };
 
+        let body = if is_link { url.to_string() } else { content };
+
         pages.push(Page {
             title,
             link_title,
             slug,
-            body: content,
+            body,
             in_nav,
             sort_key,
             is_link,
