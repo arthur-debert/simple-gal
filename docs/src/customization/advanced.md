@@ -8,45 +8,45 @@ Simple Gal generates CSS custom properties from your `config.toml` values and in
 
 ### Color Properties
 
-| Property | Default | Controls |
-| ---------- | --------- | ---------- |
-| `--color-bg` | `#ffffff` | Page background |
-| `--color-text` | `#1a1a1a` | Primary text |
+| Property             | Default   | Controls                                |
+| -------------------- | --------- | --------------------------------------- |
+| `--color-bg`         | `#ffffff` | Page background                         |
+| `--color-text`       | `#1a1a1a` | Primary text                            |
 | `--color-text-muted` | `#6b6b6b` | Secondary text (captions, descriptions) |
-| `--color-border` | `#e0e0e0` | Borders, image placeholder background |
-| `--color-link` | `#1a1a1a` | Link text |
-| `--color-link-hover` | `#4a4a4a` | Link hover state |
-| `--color-separator` | `#e8e8e8` | Header border, nav dividers |
+| `--color-border`     | `#e0e0e0` | Borders, image placeholder background   |
+| `--color-link`       | `#1a1a1a` | Link text                               |
+| `--color-link-hover` | `#4a4a4a` | Link hover state                        |
+| `--color-separator`  | `#e8e8e8` | Header border, nav dividers             |
 
 These are best set via `config.toml` under `[colors]`, but you can override them in `custom.css` when you need conditional logic (e.g., dark mode via `prefers-color-scheme`).
 
 ### Theme Properties
 
-| Property | Default | Controls |
-| ---------- | --------- | ---------- |
-| `--mat-x` | `2rem` | Horizontal mat (padding) around photos on image pages |
-| `--mat-y` | `2rem` | Vertical mat (padding) around photos on image pages |
-| `--thumbnail-gap` | `0.5rem` | Gap between thumbnails in album and index grids |
-| `--grid-padding` | `0` | Outer padding of thumbnail grids |
+| Property          | Default  | Controls                                              |
+| ----------------- | -------- | ----------------------------------------------------- |
+| `--mat-x`         | `2rem`   | Horizontal mat (padding) around photos on image pages |
+| `--mat-y`         | `2rem`   | Vertical mat (padding) around photos on image pages   |
+| `--thumbnail-gap` | `0.5rem` | Gap between thumbnails in album and index grids       |
+| `--grid-padding`  | `0`      | Outer padding of thumbnail grids                      |
 
 ### Font Properties
 
-| Property | Default | Controls |
-|----------|---------|----------|
+| Property        | Default                 | Controls                |
+| --------------- | ----------------------- | ----------------------- |
 | `--font-family` | `system-ui, sans-serif` | Font stack for all text |
-| `--font-weight` | `400` | Base font weight |
+| `--font-weight` | `400`                   | Base font weight        |
 
 ### Internal Properties
 
 These are defined in the stylesheet and not generated from config, but you can still override them:
 
-| Property | Default | Controls |
-| ---------- | --------- | ---------- |
-| `--header-height` | `3rem` | Height of the fixed header bar |
-| `--font-size-base` | `18px` | Base font size |
-| `--font-size-small` | `14px` | Small text (captions, metadata) |
-| `--font-size-heading` | `1.5rem` | Album and page headings |
-| `--transition-speed` | `0.2s` | Duration of hover transitions |
+| Property              | Default  | Controls                        |
+| --------------------- | -------- | ------------------------------- |
+| `--header-height`     | `3rem`   | Height of the fixed header bar  |
+| `--font-size-base`    | `18px`   | Base font size                  |
+| `--font-size-small`   | `14px`   | Small text (captions, metadata) |
+| `--font-size-heading` | `1.5rem` | Album and page headings         |
+| `--transition-speed`  | `0.2s`   | Duration of hover transitions   |
 
 ## Key CSS Classes
 
@@ -54,53 +54,53 @@ These are the main classes in the generated HTML. Target them in `custom.css` fo
 
 ### Layout
 
-| Class | Element | Description |
-| ------- | --------- | ------------- |
+| Class          | Element    | Description                                  |
+| -------------- | ---------- | -------------------------------------------- |
 | `.site-header` | `<header>` | Fixed top bar with breadcrumb and navigation |
-| `.breadcrumb` | `<nav>` | Breadcrumb trail inside the header |
-| `.site-nav` | `<nav>` | Navigation container (hamburger menu) |
-| `.nav-panel` | `<div>` | Slide-in navigation panel |
+| `.breadcrumb`  | `<nav>`    | Breadcrumb trail inside the header           |
+| `.site-nav`    | `<nav>`    | Navigation container (hamburger menu)        |
+| `.nav-panel`   | `<div>`    | Slide-in navigation panel                    |
 
 ### Index and Gallery-List Pages
 
 The index page and group gallery-list pages (e.g. `/Travel/`) share the same HTML structure and CSS classes.
 
-| Class | Element | Description |
-| ------- | --------- | ------------- |
-| `.index-page` | `<main>` | Page main container (used on both index and gallery-list pages) |
-| `.index-header` | `<div>` | Title and description block |
-| `.album-grid` | `<div>` | Grid of album/group cards |
-| `.album-card` | `<a>` | Individual card with thumbnail and title |
-| `.album-title` | `<span>` | Title text below thumbnail |
+| Class           | Element  | Description                                                     |
+| --------------- | -------- | --------------------------------------------------------------- |
+| `.index-page`   | `<main>` | Page main container (used on both index and gallery-list pages) |
+| `.index-header` | `<div>`  | Title and description block                                     |
+| `.album-grid`   | `<div>`  | Grid of album/group cards                                       |
+| `.album-card`   | `<a>`    | Individual card with thumbnail and title                        |
+| `.album-title`  | `<span>` | Title text below thumbnail                                      |
 
 ### Album Page
 
-| Class | Element | Description |
-| ------- | --------- | ------------- |
-| `.album-page` | `<main>` | Album page main container |
-| `.album-header` | `<div>` | Album title and description block |
-| `.album-description` | `<div>` | Album description text |
-| `.thumbnail-grid` | `<div>` | Grid of image thumbnails |
-| `.thumb-link` | `<a>` | Individual thumbnail link |
+| Class                | Element  | Description                       |
+| -------------------- | -------- | --------------------------------- |
+| `.album-page`        | `<main>` | Album page main container         |
+| `.album-header`      | `<div>`  | Album title and description block |
+| `.album-description` | `<div>`  | Album description text            |
+| `.thumbnail-grid`    | `<div>`  | Grid of image thumbnails          |
+| `.thumb-link`        | `<a>`    | Individual thumbnail link         |
 
 ### Image Page
 
-| Class | Element | Description |
-| ------- | --------- | ------------- |
-| `body.image-view` | `<body>` | Body class on image pages (sets `overflow: hidden`) |
-| `.image-page` | `<div>` | Image page main container |
-| `.image-frame` | `<div>` | Container for the photo itself |
-| `.image-caption` | `<div>` | Short caption below the image |
-| `.image-description` | `<div>` | Long description (scrollable) |
-| `.image-nav` | `<div>` | Navigation dots between images |
-| `.nav-prev`, `.nav-next` | `<a>` | Invisible click zones for prev/next navigation |
+| Class                    | Element  | Description                                         |
+| ------------------------ | -------- | --------------------------------------------------- |
+| `body.image-view`        | `<body>` | Body class on image pages (sets `overflow: hidden`) |
+| `.image-page`            | `<div>`  | Image page main container                           |
+| `.image-frame`           | `<div>`  | Container for the photo itself                      |
+| `.image-caption`         | `<div>`  | Short caption below the image                       |
+| `.image-description`     | `<div>`  | Long description (scrollable)                       |
+| `.image-nav`             | `<div>`  | Navigation dots between images                      |
+| `.nav-prev`, `.nav-next` | `<a>`    | Invisible click zones for prev/next navigation      |
 
 ### Content Pages
 
-| Class | Element | Description |
-|-------|---------|-------------|
-| `.page` | `<main>` | Content page main container |
-| `.page-content` | `<div>` | Rendered markdown content |
+| Class           | Element  | Description                 |
+| --------------- | -------- | --------------------------- |
+| `.page`         | `<main>` | Content page main container |
+| `.page-content` | `<div>`  | Rendered markdown content   |
 
 ## Examples
 

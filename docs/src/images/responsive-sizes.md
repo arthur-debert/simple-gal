@@ -34,11 +34,11 @@ For example, a 4000x3000 landscape source at size 800 produces an 800x600 AVIF. 
 
 The defaults cover most use cases:
 
-| Size | Target |
-|------|--------|
-| 800  | Phones, small tablets |
+| Size | Target                     |
+| ---- | -------------------------- |
+| 800  | Phones, small tablets      |
 | 1400 | Laptops, standard desktops |
-| 2080 | Large/retina displays |
+| 2080 | Large/retina displays      |
 
 If your audience skews toward high-end monitors, add a larger size:
 

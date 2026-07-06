@@ -49,9 +49,9 @@ content/
 
 A directory becomes one of two things, determined by what it contains:
 
-| Contains | Type | Behavior |
-|----------|------|----------|
-| Image files | **Album** | Generates a gallery page with thumbnails and individual photo pages |
+| Contains       | Type      | Behavior                                                                                                                                   |
+| -------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Image files    | **Album** | Generates a gallery page with thumbnails and individual photo pages                                                                        |
 | Subdirectories | **Group** | Generates a gallery-list page showing thumbnail cards for each child album or sub-group; appears as a clickable parent entry in navigation |
 
 A directory cannot contain both images and subdirectories. This is enforced by the scanner and will produce an error:
@@ -75,12 +75,12 @@ All other files in album directories are ignored during scanning (except for spe
 
 The generated site mirrors the directory hierarchy with number prefixes stripped:
 
-| Filesystem path | URL | Page type |
-| ----------------- | ----- | ----------- |
-| `010-Landscapes/` | `/Landscapes/` | Album (thumbnail grid) |
-| `020-Travel/` | `/Travel/` | Gallery list (child album cards) |
-| `020-Travel/010-Japan/` | `/Travel/Japan/` | Album (thumbnail grid) |
-| `wip-drafts/` | `/wip-drafts/` | Album (thumbnail grid, hidden from nav) |
+| Filesystem path         | URL              | Page type                               |
+| ----------------------- | ---------------- | --------------------------------------- |
+| `010-Landscapes/`       | `/Landscapes/`   | Album (thumbnail grid)                  |
+| `020-Travel/`           | `/Travel/`       | Gallery list (child album cards)        |
+| `020-Travel/010-Japan/` | `/Travel/Japan/` | Album (thumbnail grid)                  |
+| `wip-drafts/`           | `/wip-drafts/`   | Album (thumbnail grid, hidden from nav) |
 
 Number prefixes control ordering and navigation visibility, but they are removed from the output paths and URLs.
 
@@ -88,19 +88,19 @@ Number prefixes control ordering and navigation visibility, but they are removed
 
 These files are recognized at the content root:
 
-| File | Purpose |
-| ------ | --------- |
-| `config.toml` | Site configuration |
+| File                    | Purpose                                    |
+| ----------------------- | ------------------------------------------ |
+| `config.toml`           | Site configuration                         |
 | `site.md` or `site.txt` | Site description rendered on the home page |
-| `NNN-name.md` | Pages (appear in navigation if numbered) |
+| `NNN-name.md`           | Pages (appear in navigation if numbered)   |
 
 These files are recognized inside album and group directories:
 
-| File | Purpose |
-| ------ | --------- |
-| `config.toml` | Per-album/group configuration override |
+| File                                  | Purpose                                                                      |
+| ------------------------------------- | ---------------------------------------------------------------------------- |
+| `config.toml`                         | Per-album/group configuration override                                       |
 | `description.md` or `description.txt` | Description shown above the thumbnail grid (albums) or gallery list (groups) |
-| `NNN-name.txt` | Sidecar description for the image with the same stem (albums only) |
+| `NNN-name.txt`                        | Sidecar description for the image with the same stem (albums only)           |
 
 ## Files and directories that are ignored
 

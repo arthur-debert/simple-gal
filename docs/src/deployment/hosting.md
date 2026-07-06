@@ -22,10 +22,10 @@ Then set the Pages source to the `gh-pages` branch in your repository settings.
 
 Connect your GitHub repository and configure the build:
 
-| Setting | Value |
-|---------|-------|
-| Build command | *(leave blank -- use a GitHub Action to build, or install simple-gal in a build plugin)* |
-| Publish directory | `dist` |
+| Setting           | Value                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| Build command     | _(leave blank -- use a GitHub Action to build, or install simple-gal in a build plugin)_ |
+| Publish directory | `dist`                                                                                   |
 
 The simplest approach is to build with GitHub Actions and deploy the `dist/` directory. Alternatively, commit the built `dist/` directory and point Netlify at it directly.
 

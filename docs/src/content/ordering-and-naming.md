@@ -16,23 +16,23 @@ The number can be any non-negative integer. Leading zeros are stripped during pa
 
 Common numbering patterns:
 
-| Pattern | Use case |
-| --------- | ---------- |
-| `001`, `002`, `003` | Sequential, no room for insertion |
-| `010`, `020`, `030` | Gaps of 10, easy to insert between |
+| Pattern             | Use case                                      |
+| ------------------- | --------------------------------------------- |
+| `001`, `002`, `003` | Sequential, no room for insertion             |
+| `010`, `020`, `030` | Gaps of 10, easy to insert between            |
 | `100`, `200`, `300` | Large gaps for frequently reorganized content |
 
 ## Display titles
 
 The name portion after the numeric prefix becomes the display title. Dashes in the name are converted to spaces:
 
-| Filename | Display title |
-| ---------- | -------------- |
+| Filename              | Display title  |
+| --------------------- | -------------- |
 | `020-My-Best-Photos/` | My Best Photos |
-| `010-Landscapes/` | Landscapes |
-| `001-dawn.jpg` | dawn |
-| `001-My-Museum.jpg` | My Museum |
-| `040-who-am-i.md` | who am i |
+| `010-Landscapes/`     | Landscapes     |
+| `001-dawn.jpg`        | dawn           |
+| `001-My-Museum.jpg`   | My Museum      |
+| `040-who-am-i.md`     | who am i       |
 
 This conversion applies to all entry types: albums, images, and pages. For pages, the display title is used as the navigation label (link title). For images, it is used as the photo title in breadcrumbs and image detail pages.
 
@@ -67,10 +67,10 @@ content/
 
 An entry can be just a number with no name:
 
-| Filename | Number | Name | Display title |
-|----------|--------|------|---------------|
-| `001.jpg` | 1 | (empty) | (none) |
-| `001-.jpg` | 1 | (empty) | (none) |
+| Filename   | Number | Name    | Display title |
+| ---------- | ------ | ------- | ------------- |
+| `001.jpg`  | 1      | (empty) | (none)        |
+| `001-.jpg` | 1      | (empty) | (none)        |
 
 Number-only images have no title and will not display a title in the breadcrumb.
 

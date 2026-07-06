@@ -4,8 +4,8 @@ Simple Gal has **no system-level dependencies**. All image processing (JPEG/PNG/
 
 ## Build Requirements
 
-| Tool | Purpose |
-|------|---------|
+| Tool           | Purpose                                      |
+| -------------- | -------------------------------------------- |
 | Rust toolchain | Compile the binary (`cargo build --release`) |
 
 That's it. The resulting binary is fully self-contained.
