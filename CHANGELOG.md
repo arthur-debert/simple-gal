@@ -1,10 +1,15 @@
-<!-- generated - do not edit. See CHANGELOG/README.txt -->
+<!-- generated - do not edit; fragments live in CHANGELOG/ (`shipit changelog render` regenerates this file) -->
 
 # Changelog
 
 ## Unreleased
 
+- remove dead-orphan homebrew render pair
+- iptc_parser: strip trailing NULs from values, and add JPEG/TIFF synthetic-fixture tests covering APP13/8BIM scanning, RST/stuffed-byte/SOS marker walk, both-endian TIFF parsing, and Photoshop 8BIM fallback (coverage 48% → 98%).
 - Internal: changelog migrated to fragment-directory model (release/#201). Author entries via `bin/changelog add <slug>`; render is automated on release. See `CHANGELOG/README.txt`.
+- ci: migrate release reusable-workflow callers from @v2 to @v3
+- Remove dead release.toml (cargo-release config superseded by release-core cut)
+
 
 All notable changes to this project will be documented in this file.
 
