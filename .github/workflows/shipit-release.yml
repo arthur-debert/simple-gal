@@ -28,12 +28,16 @@ name: shipit-release
 # the signer's archive leg (shipit#800 — raw darwin CLI binary
 # codesign+notarize); the linux and windows lanes ship unsigned.
 #
-# Secrets — the UNIFORM plan-required set (shipit#896): preflight
-# re-validates the WHOLE release plan at every stage entry, so EVERY
-# stage job (`prepare`, `sign`, `publish`) forwards the SAME secret set
-# as `full` — no per-stage subsetting; which secrets a stage actually
-# spends is the plan's call, not this caller's. (`build` declares no
-# secrets, so it forwards none.)
+# Secrets (shipit#896): preflight re-validates the WHOLE release plan at
+# `prepare`'s entry, so `prepare` fails on any plan-required secret it
+# wasn't granted — it forwards the SAME full set as `full` (this PR; it
+# previously forwarded only RELEASE_TOKEN). The tag-dispatched artifact
+# stages forward ONLY the subset their called block DECLARES — a `uses:`
+# job cannot forward a secret its callee does not declare, and which
+# secrets a stage actually spends is the plan's call: `sign` the
+# Apple/ASC codesign + notary set (all wf-sign-mac declares), `publish`
+# the registry + brew set. (`build` declares no secrets, so it forwards
+# none.)
 #   RELEASE_TOKEN             prepare's tag+branch push through the
 #                             ruleset (a GITHUB_TOKEN push would not
 #                             re-trigger workflows).
