@@ -65,22 +65,22 @@ local = true
 
 # [artifacts] — simple-gal's declared Artifact set for the shipit release
 # pipeline (ADP02-WS08, arthur-debert/shipit#841; modeled on dodot's
-# signed-darwin consumer map, #239 — plus the fleet's FIRST windows
-# cross-target lane). The legacy surface it replaces is release.yml →
-# rust-cli.yml@v3 (`crates: simple-gal`, `bin-name: simple-gal`,
-# `windows-archs: 'x86_64'`, defaults: darwin arm64 + linux gnu
-# x86_64/aarch64, brew, apt, signed darwin via `secrets: inherit`).
+# signed-darwin consumer map, #239). The legacy surface it replaces is
+# release.yml → rust-cli.yml@v3 (`crates: simple-gal`, `bin-name:
+# simple-gal`, `windows-archs: 'x86_64'`, defaults: darwin arm64 + linux
+# gnu x86_64/aarch64, brew, apt, signed darwin via `secrets: inherit`).
+# Windows is OMITTED per the fleet-wide windows pause (shipit#895,
+# asset-parity-minus-windows): legacy release.yml REMAINS the windows
+# producer until #895 resumes the leg.
 #   - [artifacts.simple-gal] is the binary archive artifact (the brew
 #     formula subject): archive composition over the three native-runner
-#     platforms the legacy matrix built PLUS windows-x86_64 — the first
-#     live consumer of the TOL02-WS11 cross-target `--target` plumbing
-#     (shipit#817). The composition emits `<name>-<triple>.tar.gz` per
-#     unix lane and `<name>-x86_64-pc-windows-msvc.zip` (+ `.exe` binary)
-#     for the windows lane — exact legacy asset-name parity. Distributed
-#     to gh-release + crates (single crate) + brew (the tap is shipit's
-#     portfolio constant, arthur-debert/homebrew-tools, which already
-#     carries simple-gal.rb — same as legacy; the brew formula assembler
-#     keys off the darwin/linux triples only and ignores the windows zip).
+#     platforms the legacy matrix built. The composition emits
+#     `<name>-<triple>.tar.gz` per unix lane — exact legacy asset-name
+#     parity for the non-windows surface. Distributed to gh-release +
+#     crates (single crate) + brew (the tap is shipit's portfolio
+#     constant, arthur-debert/homebrew-tools, which already carries
+#     simple-gal.rb — same as legacy; the brew formula assembler keys
+#     off the darwin/linux triples only).
 #   - [artifacts.simple-gal-deb] is the legacy `apt: true` leg: cargo-deb
 #     against the pre-built release binary (riding the
 #     [package.metadata.deb] variants in Cargo.toml), linux platforms
@@ -91,10 +91,10 @@ local = true
 # raw darwin CLI binaries codesigned + notarized in-place, tarballs
 # re-emitted under their original filenames). The bare flag derives the
 # Apple cert pair + notary-trio secret requirements in preflight; the
-# non-darwin lanes (linux, windows) ship unsigned, as legacy did.
+# non-darwin (linux) lanes ship unsigned, as legacy did.
 [artifacts.simple-gal]
 build = [{ toolchain = "rust", package = "simple-gal" }]
-platforms = ["darwin-arm64", "linux-x86_64", "linux-arm64", "windows-x86_64"]
+platforms = ["darwin-arm64", "linux-x86_64", "linux-arm64"]
 bundle = { composition = "archive" }
 sign = true
 endpoints = ["gh-release", "crates", "brew"]
